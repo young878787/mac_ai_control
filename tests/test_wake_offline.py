@@ -21,7 +21,7 @@ def clock():
 
 @pytest.fixture
 def gate(clock):
-    return WakeGate(WORDS, window_s=8.0, clock=clock)
+    return WakeGate(WORDS, window_s=8.0, clock=clock, enabled=True)
 
 
 # ---------- split_wake ----------
@@ -62,20 +62,20 @@ def test_split_wake_prefers_longest_word():
 # ---------- 詞庫 ----------
 @pytest.mark.parametrize("text", ["露西婭，打開小算盤", "露醬，打開小算盤", "露西亞，打開小算盤", "露西娅，打開小算盤", "露酱，打開小算盤"])
 def test_lexicon_names_and_misheard_variants_wake(text):
-    assert WakeGate(clock=Clock()).feed(text).command == "打開小算盤"
+    assert WakeGate(clock=Clock(), enabled=True).feed(text).command == "打開小算盤"
 
 
 @pytest.mark.parametrize("text", [
     "Lucy幫我開Google", "lucy，幫我開Google", "西亞幫我開Google", "的路線幫我開Google",  # 實測 STT 輸出
 ])
 def test_observed_misheard_wake_words_wake(text):
-    r = WakeGate(clock=Clock()).feed(text)
+    r = WakeGate(clock=Clock(), enabled=True).feed(text)
     assert (r.status, r.command) == ("command", "幫我開Google")
 
 
 @pytest.mark.parametrize("text", ["不行幫我開一個檔案總管", "我跟Lucy說開Google", "你好西亞"])
 def test_common_phrases_and_non_prefix_do_not_wake(text):
-    assert WakeGate(clock=Clock()).feed(text).status == "ignored"
+    assert WakeGate(clock=Clock(), enabled=True).feed(text).status == "ignored"
 
 
 def test_lexicon_wake_words_include_names_and_variants():
@@ -86,7 +86,7 @@ def test_lexicon_wake_words_include_names_and_variants():
 
 def test_gate_without_wake_words_is_rejected():
     with pytest.raises(ValueError):
-        WakeGate([])
+        WakeGate([], enabled=True)
 
 
 # ---------- 閘門行為 ----------
@@ -145,3 +145,34 @@ def test_wake_word_with_command_while_armed_strips_wake_word_and_ends_standby(ga
     r = gate.feed("露西婭，打開計算機")
     assert (r.status, r.command) == ("command", "打開計算機")
     assert gate.feed("打開小算盤").status == "ignored"
+
+
+# ---------- 停用喚醒詞（預設，常啟動） ----------
+def test_wake_word_is_disabled_by_default():
+    assert WakeGate(WORDS).enabled is False
+
+
+@pytest.mark.parametrize("text, command", [
+    ("打開小算盤", "打開小算盤"),
+    ("  把音量調到 30 ", "把音量調到 30"),
+    ("露醬，打開小算盤", "打開小算盤"),  # 仍帶喚醒詞也可用，會被去掉
+    ("我跟露醬說打開小算盤", "我跟露醬說打開小算盤"),  # 非句首不是喚醒詞，整句照常執行
+])
+def test_disabled_gate_treats_every_sentence_as_command(text, command):
+    r = WakeGate(WORDS, enabled=False).feed(text)
+    assert (r.status, r.command) == ("command", command)
+
+
+@pytest.mark.parametrize("text", ["", "   ", "。", "露醬", "露西婭，"])
+def test_disabled_gate_ignores_empty_or_wake_word_only(text):
+    assert WakeGate(WORDS, enabled=False).feed(text).status == "ignored"
+
+
+def test_disabled_gate_never_arms(clock):
+    g = WakeGate(WORDS, clock=clock, enabled=False)
+    assert g.feed("露西婭").status == "ignored"
+    assert g.feed("打開小算盤").command == "打開小算盤"
+
+
+def test_disabled_gate_accepts_empty_wake_words():
+    assert WakeGate([], enabled=False).feed("打開小算盤").command == "打開小算盤"

@@ -82,7 +82,14 @@ def test_full_start_order_and_cleanup(env, capsys):
     assert "露醬" in hints and "Google Chrome" in hints  # 詞表逐行讀入，含空白的詞不被拆開
     assert log[9:] == ["mic.close", ("stop_all", ["llm", "stt"])]
     out = capsys.readouterr().out
-    assert "LLM 就緒" in out and "STT 就緒" in out and "露西婭" in out and "露醬" in out
+    assert "LLM 就緒" in out and "STT 就緒" in out and "喚醒詞已關閉" in out
+
+
+def test_start_message_names_wake_words_when_enabled(env, monkeypatch, capsys):
+    monkeypatch.setattr(main.config, "WAKE_WORD_ENABLED", True)
+    assert main.main([]) == 0
+    out = capsys.readouterr().out
+    assert "露西婭" in out and "露醬" in out and "喚醒詞已關閉" not in out
 
 
 def test_no_stt_only_runs_llm_and_waits(env):

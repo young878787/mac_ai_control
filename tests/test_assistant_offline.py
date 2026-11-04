@@ -33,7 +33,7 @@ def said():
 
 @pytest.fixture
 def router(clock, commands, said):
-    return CommandRouter(WakeGate(["露西婭", "露醬"], window_s=8.0, clock=clock), commands, said.append)
+    return CommandRouter(WakeGate(["露西婭", "露醬"], window_s=8.0, clock=clock, enabled=True), commands, said.append)
 
 
 def queued(commands):
@@ -66,12 +66,12 @@ def test_wake_word_only_announces_standby_then_next_sentence_is_queued(router, c
 
 def test_partial_never_executes_and_only_shows_when_enabled(clock, commands, said):
     shown = []
-    r = CommandRouter(WakeGate(["露醬"], clock=clock), commands, said.append, shown.append)
+    r = CommandRouter(WakeGate(["露醬"], clock=clock, enabled=True), commands, said.append, shown.append)
     r({"type": "partial", "text": "露醬打開小算"})
     assert shown == ["露醬打開小算"] and queued(commands) == []
     r({"type": "connected"})
     assert said[-1].startswith("\r\033[K")  # 有顯示 partial 時，訊息前先清掉那一行
-    CommandRouter(WakeGate(["露醬"], clock=clock), commands, said.append)({"type": "partial", "text": "x"})  # 不報錯
+    CommandRouter(WakeGate(["露醬"], clock=clock, enabled=True), commands, said.append)({"type": "partial", "text": "x"})  # 不報錯
 
 
 def test_blank_text_is_ignored_silently(router, commands, said):
@@ -136,7 +136,7 @@ def test_voice_loop_end_to_end():
     executed, said = [], []
     stop = threading.Event()
     t = threading.Thread(target=run_voice_loop, args=(FakeAudio(), executed.append, stop),
-                         kwargs={"url": server.url, "say": said.append}, daemon=True)
+                         kwargs={"url": server.url, "say": said.append, "gate": WakeGate(enabled=True)}, daemon=True)
     t.start()
     try:
         assert wait_until(lambda: executed == ["打開小算盤", "把音量調到 30"])
@@ -146,3 +146,10 @@ def test_voice_loop_end_to_end():
         t.join(timeout=5)
         server.stop()
     assert not t.is_alive()
+
+
+def test_disabled_gate_queues_every_sentence_and_prints_no_unwoken_notice(commands, said):
+    r = CommandRouter(WakeGate(["露醬"], enabled=False), commands, said.append)
+    r({"type": "final", "text": "打開小算盤"})
+    r({"type": "final", "text": "。"})
+    assert queued(commands) == ["打開小算盤"] and said == []

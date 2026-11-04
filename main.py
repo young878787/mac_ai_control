@@ -94,8 +94,11 @@ def run(args: argparse.Namespace) -> int:
         except OSError as e:
             print(f"❌ {e}（請確認終端機已授權麥克風）")
             return 1
-        names = "、".join(LEXICON["wake_words"]["names"])
-        print(f"🎤 開始收音：說「{names}」加上指令，Ctrl+C 結束")
+        if config.WAKE_WORD_ENABLED:
+            names = "、".join(LEXICON["wake_words"]["names"])
+            print(f"🎤 開始收音：說「{names}」加上指令，Ctrl+C 結束")
+        else:
+            print("🎤 開始收音：喚醒詞已關閉，直接說出指令，Ctrl+C 結束")
         hints = config.STT_HINTS_PATH.read_text(encoding="utf-8").splitlines()
         show_partial = (lambda t: print(f"\r\033[K👂 {t}", end="", flush=True)) if sys.stdout.isatty() else None
         run_voice_loop(mic, process_voice_command, threading.Event(), hints=hints, show_partial=show_partial)

@@ -19,6 +19,7 @@ VISION_TIMEOUT_S = 30.0
 WARMUP_TIMEOUT_S = 60.0  # 首次載入較慢
 BREAKER_COOLDOWN_S = 30.0  # LLM 連不上之後，這段時間內不再嘗試
 
+WAKE_WORD_ENABLED = False  # False＝常啟動，每一句都當指令；True＝句首要有喚醒詞才執行
 WAKE_WINDOW_S = 8.0  # 只說喚醒詞之後，這段時間內的下一句不用喚醒詞也會執行
 
 # macos-stt 是獨立子專案（自己的 venv），語音辨識授權必須在它的 .app bundle 內取得，所以用 start.py serve 啟動
