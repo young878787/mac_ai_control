@@ -1,0 +1,136 @@
+# mac_ai_control
+
+在 Mac 上用語音控制電腦的本地語音助手。說出喚醒詞加上指令，就能開啟或關閉 App 等操作。語音辨識與語言模型都在本機執行，不需要雲端 API。
+
+- 喚醒詞：**露西婭**（別名：露醬、露西亞）
+- 範例：「露西婭 打開小算盤」「露西婭 關掉 Safari」
+
+## 運作方式
+
+```
+麥克風 ──▶ macos-stt（系統語音辨識，WebSocket :8765）──▶ 喚醒詞閘門
+                                                          │
+                                  ┌───────────────────────┴───────────────────────┐
+                                  ▼                                               ▼
+                    Fast Path：詞典／規則直接比對                 Slow Path：本地 LLM 規劃工具呼叫
+                    （不需 LLM，LLM 掛掉仍可用）                  （mlx_vlm.server，HTTP :8080）
+                                  └───────────────────────┬───────────────────────┘
+                                                          ▼
+                                                  執行動作（開啟／關閉 App 等）
+```
+
+- **語音辨識**交給 [macos-stt](#感謝)，它會呼叫 Apple 內建的 `SFSpeechRecognizer`，不需下載模型。
+- **語言模型**使用 `mlx_vlm.server` 載入的本地模型（預設 `AI_models/LFM3-VL-2B-MLX-4bit`）。
+- 模型不可用時，Fast Path 仍能執行常見指令。
+
+## 需要搭配 macos-stt
+
+本專案的語音辨識**依賴另一個子專案 `macos-stt`**，兩者必須放在同一個目錄下：
+
+```
+mac_ai_control/
+├── main.py
+├── mac_ai/
+├── ...
+└── macos-stt/          ← 另外 clone，自帶 .venv，本 repo 不包含
+```
+
+原因：macOS 要求語音辨識程式必須是 `.app` bundle 才能取得授權，所以 `mac_ai` 會透過 `macos-stt/start.py serve` 啟動它，而不是直接 import。`mac_ai/config.py` 會去找 `macos-stt/.venv/bin/python`。
+
+## 環境需求
+
+- macOS（Apple Silicon，`mlx` 需要）
+- Python 3.12（開發時使用的版本）
+- [uv](https://docs.astral.sh/uv/)（建議，用於建立 `macos-stt` 的虛擬環境）
+
+## 安裝
+
+### 1. Clone 本專案與 macos-stt
+
+```bash
+git clone <本專案 URL> mac_ai_control
+cd mac_ai_control
+git clone https://github.com/young878787/macos-stt.git macos-stt
+```
+
+### 2. 安裝 macos-stt 的環境
+
+```bash
+cd macos-stt
+uv sync
+cd ..
+```
+
+### 3. 安裝本專案的環境
+
+本專案目前沒有 `requirements.txt`，開發時使用的主要套件如下：
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install mlx-vlm sounddevice websockets pytest
+```
+
+開發時的版本：`mlx-vlm 0.7.11`、`sounddevice 0.5.6`、`websockets 17.4`、`pytest 9.2.0`。
+
+### 4. 準備語言模型
+
+模型權重不在 repo 內（目前 `AI_models/` 已加入 `.gitignore`），請自行放到：
+
+```
+AI_models/LFM3-VL-2B-MLX-4bit/
+```
+
+若改用其他模型，請同步修改 `mac_ai/config.py` 的 `MODEL_ID`。
+
+### 5. 系統權限
+
+第一次執行時，macOS 會要求以下授權，請在 **系統設定 → 隱私權與安全性** 中允許：
+
+- **麥克風**：終端機（或你執行的 IDE）需要麥克風權限
+- **語音辨識**：允許 `MacSTT`
+
+若曾拒絕授權，請到上述位置改回允許後重新啟動。
+
+## 使用方式
+
+```bash
+source .venv/bin/activate
+
+python main.py                    # 啟動所有服務並開始收音（Ctrl+C 結束）
+python main.py --no-stt           # 只啟動 LLM 服務，不收音
+python main.py --text 打開小算盤  # 直接送入文字指令後結束（不檢查喚醒詞）
+python main.py --device 1         # 指定麥克風裝置編號
+```
+
+啟動後會依序啟動 LLM（`mlx_vlm.server`）與 STT（`macos-stt serve`），等兩者就緒後開始收音。
+
+## 測試
+
+```bash
+pytest              # 離線測試（預設）
+pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
+```
+
+## 專案結構
+
+| 路徑 | 說明 |
+|---|---|
+| `main.py` | 啟動入口：起服務、收音、主迴圈 |
+| `mac_ai/config.py` | 路徑、埠號、逾時等設定（單一來源） |
+| `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
+| `mac_ai/wake.py` | 喚醒詞閘門 |
+| `mac_ai/router/` | 正規化、Fast Path、Slow Path（LLM）、動作執行 |
+| `mac_ai/stt/` | 麥克風收音（`mic.py`）與 STT WebSocket 用戶端（`client.py`） |
+| `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
+| `vocab/stt_hints.txt` | 由 `build_vocab.py` 產生，餵給語音辨識當提示詞 |
+| `docs/` | 設計與實作計畫 |
+| `tests/` | 離線測試與 live 測試 |
+
+修改 `vocab/lexicon.json` 後，`main.py` 啟動時會自動重新產生詞表；也可以手動執行 `python build_vocab.py`。
+
+## 感謝
+
+本專案的語音辨識能力來自 **[bannana/macos-stt](https://github.com/bannana/macos-stt)**，作者 **bannana** 以 MIT 授權釋出這個 Python 函式庫，讓 Python 能直接使用 macOS 內建的語音辨識引擎，不必下載任何模型。這個專案的 `macos-stt/` 目錄是在原版基礎上另外加入 `serve` 子命令（HTTP／WebSocket 串流伺服器）等修改，感謝原作者的設計與實作。
+
+同時感謝 [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) 與 Apple [MLX](https://github.com/ml-explore/mlx) 團隊，讓本地語言模型能在 Apple Silicon 上順利執行。
