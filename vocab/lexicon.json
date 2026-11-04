@@ -1,0 +1,56 @@
+{
+  "apps": [
+    {"name": "Google Chrome", "kind": "browser", "aliases": ["chrome", "google chrome", "google", "谷歌", "谷歌瀏覽器", "瀏覽器"], "misheard": [{"text": "谷哥瀏覽器", "source": "observed"}, {"text": "谷哥", "source": "observed"}, {"text": "古歌瀏覽器", "source": "seed"}]},
+    {"name": "Safari", "kind": "browser", "aliases": ["safari"], "misheard": []},
+    {"name": "Visual Studio Code", "kind": "editor", "aliases": ["vscode", "vs code"], "misheard": [{"text": "VS扣", "source": "seed"}, {"text": "Miss call", "source": "observed"}]},
+    {"name": "Cursor", "kind": "editor", "aliases": ["cursor"], "misheard": [{"text": "科索", "source": "observed"}]},
+    {"name": "Terminal", "kind": "other", "aliases": ["terminal", "終端機"], "misheard": []},
+    {"name": "iTerm", "kind": "other", "aliases": ["iterm"], "misheard": []},
+    {"name": "Finder", "kind": "other", "aliases": ["finder", "訪達", "檔案總管", "檔案資料夾"], "misheard": []},
+    {"name": "Calculator", "kind": "other", "aliases": ["小算盤", "計算機"], "misheard": []},
+    {"name": "Notes", "kind": "other", "aliases": ["備忘錄", "記事本"], "misheard": []},
+    {"name": "System Settings", "kind": "other", "aliases": ["系統設定", "設定"], "misheard": []},
+    {"name": "Music", "kind": "other", "aliases": ["音樂"], "misheard": []},
+    {"name": "Spotify", "kind": "other", "aliases": ["spotify"], "misheard": []},
+    {"name": "LINE", "kind": "other", "aliases": ["line"], "misheard": []},
+    {"name": "Discord", "kind": "other", "aliases": ["discord"], "misheard": []}
+  ],
+  "projects": [
+    {"name": "mac_ai_control", "aliases": ["語音助手"], "path": "/Users/owo/projects/mac_ai_control"}
+  ],
+  "project_roots": ["/Users/owo/projects"],
+  "term_misheard": [
+    {"text": "因量", "to": "音量", "source": "seed"},
+    {"text": "英量", "to": "音量", "source": "seed"},
+    {"text": "淨音", "to": "靜音", "source": "seed"},
+    {"text": "競音", "to": "靜音", "source": "seed"},
+    {"text": "營幕", "to": "螢幕", "source": "seed"},
+    {"text": "中端機", "to": "終端機", "source": "seed"}
+  ],
+  "s2t": {
+    "打开": "打開", "开启": "開啟", "开": "開", "关掉": "關掉", "关闭": "關閉", "关": "關",
+    "启动": "啟動", "屏幕": "螢幕", "设置": "設定", "设定": "設定", "设": "設",
+    "搜索": "搜尋", "查询": "查詢", "浏览器": "瀏覽器", "计算器": "小算盤", "计算机": "計算機",
+    "备忘录": "備忘錄", "终端": "終端", "静音": "靜音", "静": "靜", "声音": "聲音", "调到": "調到",
+    "调成": "調成", "调整": "調整", "调": "調", "锁定": "鎖定", "锁": "鎖", "页面": "頁面",
+    "网页": "網頁", "页": "頁", "画面": "畫面", "识别": "識別", "辨识": "辨識", "项目": "專案",
+    "专案": "專案", "夜间": "夜間", "应用": "應用", "软件": "軟體", "内容": "內容", "显示": "顯示",
+    "请": "請", "帮": "幫", "给": "給", "这": "這", "个": "個", "么": "麼", "还": "還", "说": "說",
+    "话": "話", "记": "記", "图": "圖", "语": "語", "写": "寫", "为": "為", "点": "點",
+    "然后": "然後", "接着": "接著", "顺便": "順便", "并且": "並且",
+    "气": "氣", "东": "東", "车": "車", "们": "們", "会": "會", "时": "時", "间": "間", "问": "問", "题": "題", "对": "對", "没": "沒", "样": "樣", "来": "來", "过": "過", "现": "現", "学": "學", "实": "實", "经": "經", "无": "無", "与": "與", "边": "邊", "种": "種", "体": "體", "电": "電", "脑": "腦", "机": "機", "视": "視", "频": "頻", "络": "絡", "输": "輸", "务": "務", "户": "戶", "资": "資", "档": "檔", "译": "譯", "网": "網", "览": "覽", "约": "約", "买": "買", "读": "讀", "侧": "側", "连": "連", "应": "應", "该": "該", "当": "當", "选": "選", "项": "項", "统": "統", "联": "聯", "单": "單", "击": "擊", "钮": "鈕", "显": "顯", "终": "終", "颜": "顏", "转": "轉", "换": "換"
+  },
+  "verbs": {
+    "open": ["打開", "開啟", "啟動", "叫出", "開"],
+    "quit": ["關掉", "關閉", "退出", "結束", "關"]
+  },
+  "fillers": {
+    "prefix": ["嗯", "呃", "欸", "啊", "喂", "那個", "就是", "請", "幫我", "麻煩你", "麻煩", "給我", "可以", "能不能", "你", "幫忙", "我要", "我想要", "我想", "我需要", "來", "先"],
+    "suffix": ["吧", "啦", "喔", "哦", "呢", "囉", "啊", "好嗎", "好不好", "可以嗎", "謝謝", "一下下", "一下", "看看", "就好", "就行"]
+  },
+  "terms": ["深色模式", "暗黑模式", "夜間模式", "靜音", "鎖定螢幕", "螢幕亮度"],
+  "wake_words": {
+    "names": ["露西婭", "露醬", "露西亞"],
+    "misheard": [{"text": "露西雅", "source": "seed"}, {"text": "露西娅", "source": "seed"}, {"text": "露酱", "source": "seed"}, {"text": "Lucy", "source": "observed"}, {"text": "西亞", "source": "observed"}, {"text": "的路線", "source": "observed"}]
+  }
+}

@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets / local config
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+# Local runtime output
+logs/
+
+# Large local model weights (3.6G+, keep out of git)
+AI_models/
+*.safetensors
+*.gguf
+*.onnx
+*.pt
+*.bin
+
+# 獨立 git repo（自有 remote），不納入本專案
+macos-stt/
