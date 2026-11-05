@@ -68,10 +68,10 @@ cd ..
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install mlx-vlm sounddevice websockets pytest
+pip install mlx-vlm sounddevice websockets pytest onnxruntime numpy
 ```
 
-開發時的版本：`mlx-vlm 0.7.11`、`sounddevice 0.5.6`、`websockets 17.4`、`pytest 9.2.0`。
+開發時的版本：`mlx-vlm 0.7.11`、`sounddevice 0.5.6`、`websockets 17.4`、`pytest 9.2.0`、`onnxruntime 1.31.1`、`numpy 2.5.4`。
 
 ### 4. 準備語言模型
 
@@ -82,6 +82,19 @@ AI_models/LFM3-VL-2B-MLX-4bit/
 ```
 
 若改用其他模型，請同步修改 `mac_ai/config.py` 的 `MODEL_ID`。
+
+### 4-1. 準備語音活動偵測模型（Silero VAD）
+
+端點偵測（`ENDPOINT_MODE = "client"`）與測試會用到 Silero VAD v5（MIT 授權，約 2.3 MB）。同樣因為 `*.onnx` 已加入 `.gitignore`，請自行下載：
+
+```bash
+curl -L -o AI_models/silero_vad.onnx \
+  https://raw.githubusercontent.com/snakers4/silero-vad/v5.1.2/src/silero_vad/data/silero_vad.onnx
+shasum -a 256 AI_models/silero_vad.onnx
+# 應為 2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f
+```
+
+沒有這個檔案時，預設的 `ENDPOINT_MODE = "client"` 會在啟動語音迴圈時因找不到模型而失敗；此時請把 `mac_ai/config.py` 的 `ENDPOINT_MODE` 改成 `"server"`（舊行為，不需要 VAD 模型），VAD 相關測試則會被略過。
 
 ### 5. 系統權限
 
@@ -105,6 +118,20 @@ python main.py --device 1         # 指定麥克風裝置編號
 
 啟動後會依序啟動 LLM（`mlx_vlm.server`）與 STT（`macos-stt serve`），等兩者就緒後開始收音。
 
+## 端點偵測（說完就收）
+
+預設 `mac_ai/config.py` 的 `ENDPOINT_MODE = "client"`：本端用 Silero VAD 判斷何時開始／結束說話，並看辨識中的文字是不是一句完整的指令（完整就早點收、句尾是「然後」之類就多等），決定後主動要求 macos-stt 收尾。改成 `"server"` 即回到舊行為（macos-stt 的能量 VAD，靜音 1.5 秒才斷句）。每句的計時寫在 `logs/latency.jsonl`。設計、參數與實測結果見 [docs/語音端點偵測與延遲改善：實作計畫.md](docs/語音端點偵測與延遲改善：實作計畫.md)。
+
+量測與比較（需要 macos-stt 已啟動）：
+
+```bash
+python scripts/make_bench_corpus.py synth      # 產生合成測試語料到 bench/synth/
+python scripts/stt_bench.py run --corpus bench/synth --mode server --out logs/bench_base.jsonl
+python scripts/stt_bench.py run --corpus bench/synth --mode client --out logs/bench_new.jsonl
+python scripts/stt_bench.py report logs/bench_base.jsonl logs/bench_new.jsonl   # A/B 比較與驗收判定
+python scripts/record_human.py                 # 錄真人測試語料（清單在 bench/human/manifest.csv）
+```
+
 ## 測試
 
 ```bash
@@ -121,7 +148,9 @@ pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
 | `mac_ai/wake.py` | 喚醒詞閘門 |
 | `mac_ai/router/` | 正規化、Fast Path、Slow Path（LLM）、動作執行 |
-| `mac_ai/stt/` | 麥克風收音（`mic.py`）與 STT WebSocket 用戶端（`client.py`） |
+| `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
+| `scripts/` | 端點偵測的測試語料產生、bench、真人錄音 |
+| `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
 | `vocab/stt_hints.txt` | 由 `build_vocab.py` 產生，餵給語音辨識當提示詞 |
 | `docs/` | 設計與實作計畫 |
