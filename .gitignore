@@ -30,3 +30,7 @@ AI_models/
 
 # 獨立 git repo（自有 remote），不納入本專案
 macos-stt/
+
+# 端點偵測測試語料：合成語料可重新產生；真人錄音只留清單（manifest.csv），音檔不入版控
+bench/synth/
+bench/human/*.wav

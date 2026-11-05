@@ -1,0 +1,41 @@
+clip,category,ref_text,expected_actions,speech_end_s,voice,noise,note
+A01,A,打開小算盤,"[[""control_mac_app"", {""app_name"": ""Calculator"", ""action"": ""open""}]]",,human,,正常語速說完整句，說完就停｜顯示：打開小算盤｜錄 7 秒
+A02,A,打開小算盤,"[[""control_mac_app"", {""app_name"": ""Calculator"", ""action"": ""open""}]]",,human,,正常語速說完整句，說完就停｜顯示：打開小算盤｜錄 7 秒
+A03,A,打開小算盤,"[[""control_mac_app"", {""app_name"": ""Calculator"", ""action"": ""open""}]]",,human,,正常語速說完整句，說完就停｜顯示：打開小算盤｜錄 7 秒
+A04,A,關掉 Safari,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""quit""}]]",,human,,正常語速說完整句，說完就停｜顯示：關掉 Safari｜錄 7 秒
+A05,A,關掉 Safari,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""quit""}]]",,human,,正常語速說完整句，說完就停｜顯示：關掉 Safari｜錄 7 秒
+A06,A,關掉 Safari,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""quit""}]]",,human,,正常語速說完整句，說完就停｜顯示：關掉 Safari｜錄 7 秒
+A07,A,音量調到三十,"[[""set_system_volume"", {""level"": 30}]]",,human,,正常語速說完整句，說完就停｜顯示：音量調到三十｜錄 7 秒
+A08,A,音量調到三十,"[[""set_system_volume"", {""level"": 30}]]",,human,,正常語速說完整句，說完就停｜顯示：音量調到三十｜錄 7 秒
+A09,A,音量調到三十,"[[""set_system_volume"", {""level"": 30}]]",,human,,正常語速說完整句，說完就停｜顯示：音量調到三十｜錄 7 秒
+A10,A,靜音,"[[""set_system_volume"", {""mute"": true}]]",,human,,正常語速說完整句，說完就停｜顯示：靜音｜錄 7 秒
+A11,A,靜音,"[[""set_system_volume"", {""mute"": true}]]",,human,,正常語速說完整句，說完就停｜顯示：靜音｜錄 7 秒
+A12,A,靜音,"[[""set_system_volume"", {""mute"": true}]]",,human,,正常語速說完整句，說完就停｜顯示：靜音｜錄 7 秒
+A13,A,鎖定螢幕,"[[""system_power_action"", {""action"": ""lock_screen""}]]",,human,,正常語速說完整句，說完就停｜顯示：鎖定螢幕｜錄 7 秒
+A14,A,鎖定螢幕,"[[""system_power_action"", {""action"": ""lock_screen""}]]",,human,,正常語速說完整句，說完就停｜顯示：鎖定螢幕｜錄 7 秒
+A15,A,鎖定螢幕,"[[""system_power_action"", {""action"": ""lock_screen""}]]",,human,,正常語速說完整句，說完就停｜顯示：鎖定螢幕｜錄 7 秒
+B01,B,打開小算盤,"[[""control_mac_app"", {""app_name"": ""Calculator"", ""action"": ""open""}]]",,human,,照括號停頓：在『|』處停頓 0.6~1.0 秒再接著說｜顯示：打開 | 小算盤｜錄 9 秒
+B02,B,打開小算盤,"[[""control_mac_app"", {""app_name"": ""Calculator"", ""action"": ""open""}]]",,human,,照括號停頓：在『|』處停頓 0.6~1.0 秒再接著說｜顯示：打開 | 小算盤｜錄 9 秒
+B03,B,音量調到五十,"[[""set_system_volume"", {""level"": 50}]]",,human,,照括號停頓：在『|』處停頓 0.6~1.0 秒再接著說｜顯示：音量調到 | 五十｜錄 9 秒
+B04,B,音量調到五十,"[[""set_system_volume"", {""level"": 50}]]",,human,,照括號停頓：在『|』處停頓 0.6~1.0 秒再接著說｜顯示：音量調到 | 五十｜錄 9 秒
+B05,B,打開 Safari 然後搜尋天氣,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""open""}], [""web_search_or_open_url"", {""query"": ""天氣""}]]",,human,,照括號停頓：在『|』處停頓 0.6~1.0 秒再接著說｜顯示：打開 Safari 然後 | 搜尋天氣｜錄 9 秒
+B06,B,打開 Safari 然後搜尋天氣,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""open""}], [""web_search_or_open_url"", {""query"": ""天氣""}]]",,human,,照括號停頓：在『|』處停頓 0.6~1.0 秒再接著說｜顯示：打開 Safari 然後 | 搜尋天氣｜錄 9 秒
+B07,B,關掉Safari,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""quit""}]]",,human,,照括號停頓：在『|』處停頓 0.6~1.0 秒再接著說｜顯示：關掉 | Safari｜錄 9 秒
+B08,B,關掉Safari,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""quit""}]]",,human,,照括號停頓：在『|』處停頓 0.6~1.0 秒再接著說｜顯示：關掉 | Safari｜錄 9 秒
+C01,C,打開小算盤,"[[""control_mac_app"", {""app_name"": ""Calculator"", ""action"": ""open""}]]",,human,fan,請先開風扇／冷氣／音樂／邊打字，再說指令｜顯示：打開小算盤｜錄 8 秒
+C02,C,關掉 Safari,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""quit""}]]",,human,hum,請先開風扇／冷氣／音樂／邊打字，再說指令｜顯示：關掉 Safari｜錄 8 秒
+C03,C,音量調到三十,"[[""set_system_volume"", {""level"": 30}]]",,human,typing,請先開風扇／冷氣／音樂／邊打字，再說指令｜顯示：音量調到三十｜錄 8 秒
+C04,C,靜音,"[[""set_system_volume"", {""mute"": true}]]",,human,fan@late,請先開風扇／冷氣／音樂／邊打字，再說指令｜顯示：靜音｜錄 8 秒
+C05,C,鎖定螢幕,"[[""system_power_action"", {""action"": ""lock_screen""}]]",,human,music@late,請先開風扇／冷氣／音樂／邊打字，再說指令｜顯示：鎖定螢幕｜錄 8 秒
+C06,C,打開 Line,"[[""control_mac_app"", {""app_name"": ""LINE"", ""action"": ""open""}]]",,human,fan+typing@late,請先開風扇／冷氣／音樂／邊打字，再說指令｜顯示：打開 Line｜錄 8 秒
+D01,D,,[],,human,fan,不要說話，只保持背景聲音（風扇／冷氣／音樂／打字）20 秒｜錄 20 秒
+D02,D,,[],,human,hum,不要說話，只保持背景聲音（風扇／冷氣／音樂／打字）20 秒｜錄 20 秒
+D03,D,,[],,human,typing,不要說話，只保持背景聲音（風扇／冷氣／音樂／打字）20 秒｜錄 20 秒
+D04,D,,[],,human,music,不要說話，只保持背景聲音（風扇／冷氣／音樂／打字）20 秒｜錄 20 秒
+E01,E,打開小算盤，然後打開 Safari,"[[""control_mac_app"", {""app_name"": ""Calculator"", ""action"": ""open""}], [""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""open""}]]",,human,,一口氣說完整句（多步驟）｜顯示：打開小算盤，然後打開 Safari｜錄 11 秒
+E02,E,打開 Safari 然後搜尋今天天氣,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""open""}], [""web_search_or_open_url"", {""query"": ""今天天氣""}]]",,human,,一口氣說完整句（多步驟）｜顯示：打開 Safari 然後搜尋今天天氣｜錄 11 秒
+E03,E,關掉 Safari，然後靜音,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""quit""}], [""set_system_volume"", {""mute"": true}]]",,human,,一口氣說完整句（多步驟）｜顯示：關掉 Safari，然後靜音｜錄 11 秒
+E04,E,打開小算盤，然後鎖定螢幕,"[[""control_mac_app"", {""app_name"": ""Calculator"", ""action"": ""open""}], [""system_power_action"", {""action"": ""lock_screen""}]]",,human,,一口氣說完整句（多步驟）｜顯示：打開小算盤，然後鎖定螢幕｜錄 11 秒
+F01,F,打開 Line,"[[""control_mac_app"", {""app_name"": ""LINE"", ""action"": ""open""}]]",,human,,正常語速，句尾字不要拖或吃掉｜顯示：打開 Line｜錄 7 秒
+F02,F,關掉音樂,"[[""control_mac_app"", {""app_name"": ""Music"", ""action"": ""quit""}]]",,human,,正常語速，句尾字不要拖或吃掉｜顯示：關掉音樂｜錄 7 秒
+F03,F,打開 Safari,"[[""control_mac_app"", {""app_name"": ""Safari"", ""action"": ""open""}]]",,human,,正常語速，句尾字不要拖或吃掉｜顯示：打開 Safari｜錄 7 秒
