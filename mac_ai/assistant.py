@@ -6,6 +6,9 @@ from typing import Callable, Optional, Sequence
 
 from mac_ai import config
 from mac_ai.stt.client import SttClient
+from mac_ai.stt.endpoint import EndpointDetector
+from mac_ai.stt.latency_log import JsonlLog
+from mac_ai.stt.vad import SileroVad
 from mac_ai.wake import WakeGate
 
 _CLEAR_LINE = "\r\033[K"
@@ -67,14 +70,21 @@ def command_worker(commands: "queue.Queue[str]", execute: Callable[[str], object
 def run_voice_loop(audio, execute: Callable[[str], object], stop: threading.Event, *,
                    url: str = config.STT_WS_URL, hints: Sequence[str] = (), gate: Optional[WakeGate] = None,
                    say: Callable[[str], None] = print, show_partial: Optional[Callable[[str], None]] = None,
-                   reconnect_min_s: float = config.STT_RECONNECT_MIN_S) -> None:
-    """收音 → STT → 喚醒詞 → 執行，直到 stop 被設定。指令在另一條執行緒依序執行，不擋住收音"""
+                   reconnect_min_s: float = config.STT_RECONNECT_MIN_S,
+                   endpoint_mode: str = config.ENDPOINT_MODE) -> None:
+    """收音 → STT → 喚醒詞 → 執行，直到 stop 被設定。指令在另一條執行緒依序執行，不擋住收音。
+    endpoint_mode="client"：本端神經網路 VAD＋語意判斷說完了就要求 server 收尾，並把每句的計時寫進 logs/latency.jsonl"""
     commands: "queue.Queue[str]" = queue.Queue()
     router = CommandRouter(gate or WakeGate(), commands, say, show_partial)
     worker = threading.Thread(target=command_worker, args=(commands, execute, stop), daemon=True)
     worker.start()
     try:
-        SttClient(audio, router, url=url, hints=hints, reconnect_min_s=reconnect_min_s).run(stop)
+        endpoint_args = {}
+        if endpoint_mode == "client":
+            endpoint_args = dict(vad=SileroVad(), endpoint=EndpointDetector(), flush=True,
+                                 vad_flush_s=config.EP_SERVER_BACKUP_FLUSH_S, pre_delay_s=config.EP_FLUSH_PRE_DELAY_S,
+                                 latency_sink=JsonlLog().write, send_s=config.EP_SEND_S)
+        SttClient(audio, router, url=url, hints=hints, reconnect_min_s=reconnect_min_s, **endpoint_args).run(stop)
     finally:
         stop.set()  # 例外離開（如 Ctrl+C）時也讓指令執行緒結束
         worker.join(timeout=2)

@@ -19,9 +19,13 @@ def wait_until(cond, timeout=5.0, interval=0.01):
 class FakeSttServer:
     """events：每條連線收到 config 後立刻送出的事件；drop_first：第一條連線收到 config 就掛斷（測重連）"""
 
-    def __init__(self, events=(), drop_first=False):
+    def __init__(self, events=(), drop_first=False, after_frames=None, reply_on_flush=None):
+        """after_frames：{收到第 N 幀後: [事件...]}；reply_on_flush：收到 flush 時回的事件"""
         self.events = list(events)
         self.drop_first = drop_first
+        self.after_frames = dict(after_frames or {})
+        self.reply_on_flush = reply_on_flush
+        self.flush_at_frame = []  # 每次 flush 到達時，已經收到幾幀
         self.connections = 0
         self.configs = []
         self.frames = []
@@ -41,8 +45,16 @@ class FakeSttServer:
             for message in ws:
                 if isinstance(message, bytes):
                     self.frames.append(message)
-                elif json.loads(message).get("type") == "close":
+                    for event in self.after_frames.get(len(self.frames), ()):
+                        ws.send(json.dumps(event, ensure_ascii=False))
+                    continue
+                kind = json.loads(message).get("type")
+                if kind == "close":
                     self.closed_by_client = True
+                elif kind == "flush":
+                    self.flush_at_frame.append(len(self.frames))
+                    if self.reply_on_flush:
+                        ws.send(json.dumps(self.reply_on_flush, ensure_ascii=False))
         except ConnectionClosed:
             pass
 

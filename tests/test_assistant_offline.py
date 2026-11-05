@@ -5,6 +5,7 @@ import threading
 import pytest
 from fake_stt import FakeAudio, FakeSttServer, wait_until
 
+from mac_ai import config
 from mac_ai.assistant import CommandRouter, command_worker, run_voice_loop
 from mac_ai.wake import WakeGate
 
@@ -153,3 +154,66 @@ def test_disabled_gate_queues_every_sentence_and_prints_no_unwoken_notice(comman
     r({"type": "final", "text": "打開小算盤"})
     r({"type": "final", "text": "。"})
     assert queued(commands) == ["打開小算盤"] and said == []
+
+
+# ---------- 端點偵測模式 ----------
+class _ScriptedVad:
+    """每個 chunk 一窗：前 8 窗是語音，之後靜音"""
+
+    def __init__(self):
+        self.n = 0
+        self.infer_ms = [0.1]
+
+    def feed(self, pcm):
+        self.n += 1
+        return [0.9 if self.n <= 8 else 0.02]
+
+    def reset(self):
+        self.n = 0
+
+
+def test_voice_loop_client_endpoint_mode_flushes_when_sentence_is_done_and_logs_latency(monkeypatch):
+    import mac_ai.assistant as assistant
+
+    logged = []
+
+    class _Log:
+        def write(self, record):
+            logged.append(record)
+
+    monkeypatch.setattr(assistant, "SileroVad", _ScriptedVad)
+    monkeypatch.setattr(assistant, "JsonlLog", _Log)
+    final = {"type": "final", "text": "打開小算盤", "timing": {"reason": "client_flush", "pre_delay_ms": 100, "finish_ms": 60}}
+    server = FakeSttServer(after_frames={5: [{"type": "partial", "text": "打開小算盤"}]}, reply_on_flush=final)
+    executed, stop = [], threading.Event()
+    t = threading.Thread(target=run_voice_loop, args=(FakeAudio([b"\x01\x00" * 512] * 400, pace=0.01), executed.append, stop),
+                         kwargs={"url": server.url, "say": lambda m: None, "gate": WakeGate(enabled=False),
+                                 "endpoint_mode": "client"}, daemon=True)
+    t.start()
+    try:
+        assert wait_until(lambda: executed == ["打開小算盤"] and logged, timeout=8)
+        assert server.flush_at_frame and server.configs[0]["vad_flush_seconds"] == config.EP_SERVER_BACKUP_FLUSH_S
+        assert logged[0]["mode"] == "client" and logged[0]["reason"] in ("complete", "default")
+    finally:
+        stop.set()
+        t.join(timeout=5)
+        server.stop()
+
+
+def test_voice_loop_default_mode_does_not_load_vad_or_send_flush(monkeypatch):
+    import mac_ai.assistant as assistant
+
+    monkeypatch.setattr(assistant, "SileroVad", lambda: pytest.fail("server 模式不該載入 VAD"))
+    server = FakeSttServer(events=[{"type": "final", "text": "打開小算盤"}])
+    executed, stop = [], threading.Event()
+    t = threading.Thread(target=run_voice_loop, args=(FakeAudio([b"\x01\x00" * 512] * 5), executed.append, stop),
+                         kwargs={"url": server.url, "say": lambda m: None, "gate": WakeGate(enabled=False),
+                                 "endpoint_mode": "server"}, daemon=True)
+    t.start()
+    try:
+        assert wait_until(lambda: executed == ["打開小算盤"])
+        assert server.flush_at_frame == []
+    finally:
+        stop.set()
+        t.join(timeout=5)
+        server.stop()
