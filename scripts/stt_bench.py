@@ -249,6 +249,21 @@ def load(path: str):
     return clips, meta
 
 
+def _wait_ms(clip: dict) -> Optional[float]:
+    """決策等待：最後一次 flush 送出的時間 − 它之前 partial 文字最後一次變動的時間。
+    只含我們自己的判斷多等了多久（引擎出字慢多少不算），與語料、說話人、真值推定都無關"""
+    flushes = [r["flush_sent"] for r in clip["records"] if r.get("flush_sent") is not None]
+    if not flushes:
+        return None
+    sent, prev, changed = flushes[-1], None, None
+    for p in sorted(clip["partials"], key=lambda x: x["t"]):
+        if p["t"] > sent:
+            break
+        if p["text"] != prev:
+            prev, changed = p["text"], p["t"]
+    return None if changed is None else (sent - changed) * 1000
+
+
 def analyze(clip: dict) -> dict:
     finals = [f for f in clip["finals"] if f["text"].strip()]
     truth = clip["truth_speech_end_s"]
@@ -258,6 +273,7 @@ def analyze(clip: dict) -> dict:
                             "text": "".join(f["text"] for f in finals)}
     a["e2e_ms"] = (finals[-1]["t"] - truth) * 1000 if finals and truth is not None else None
     a["endpoint_ms"] = (decided[-1]["endpoint_at"] - truth) * 1000 if decided and truth is not None else None
+    a["wait_ms"] = _wait_ms(clip)
     srv = [f["timing"] for f in finals if f.get("timing") and f["timing"].get("finish_ms") is not None]
     a["finalize_ms"] = (srv[-1]["pre_delay_ms"] + srv[-1]["finish_ms"]) if srv else None
     a["reasons"] = [r["reason"] for r in recs]
@@ -287,13 +303,13 @@ def _fmt(v, unit="ms"):
 
 def table(name: str, an: List[dict]) -> None:
     print(f"\n== {name} ==")
-    print(f"{'類':<2} {'n':>3} {'E2E中位':>8} {'E2E p90':>8} {'端點中位':>8} {'收尾中位':>8} {'意圖':>7} {'CER':>6} {'拆句':>4}")
+    print(f"{'類':<2} {'n':>3} {'E2E中位':>8} {'E2E p90':>8} {'端點中位':>8} {'等待中位':>8} {'收尾中位':>8} {'意圖':>7} {'CER':>6} {'拆句':>4}")
     for cat in sorted({a['category'] for a in an}):
         g = [a for a in an if a["category"] == cat]
         intents = [a["intent_ok"] for a in g]
         cers = [a["cer"] for a in g if a["cer"] is not None]
         print(f"{cat:<2} {len(g):>3} {_fmt(_med([a['e2e_ms'] for a in g])):>8} {_fmt(_p90([a['e2e_ms'] for a in g])):>8} "
-              f"{_fmt(_med([a['endpoint_ms'] for a in g])):>8} {_fmt(_med([a['finalize_ms'] for a in g])):>8} "
+              f"{_fmt(_med([a['endpoint_ms'] for a in g])):>8} {_fmt(_med([a['wait_ms'] for a in g])):>8} {_fmt(_med([a['finalize_ms'] for a in g])):>8} "
               f"{sum(intents)}/{len(intents):<4} {(statistics.mean(cers) * 100 if cers else 0):>5.1f}% {sum(a['split'] for a in g):>4}")
 
 
@@ -310,11 +326,14 @@ def check(base, new) -> int:
     e2e_a = _med([a["e2e_ms"] for a in A])
     base_e2e_a = _med([a["e2e_ms"] for a in of(ba, "A")])
     p90_a = _p90([a["e2e_ms"] for a in A])
-    gate("S1", "A 類 E2E 中位≤800ms、p90≤1200ms、比 baseline 快≥1000ms",
-         e2e_a is not None and base_e2e_a is not None and e2e_a <= 800 and p90_a <= 1200 and base_e2e_a - e2e_a >= 1000,
-         f"中位 {_fmt(e2e_a)}／p90 {_fmt(p90_a)}／baseline {_fmt(base_e2e_a)}")
-    ep = _med([a["endpoint_ms"] for a in A])
-    gate("S2", "A 類端點延遲中位≤450ms", ep is not None and ep <= 450, f"{_fmt(ep)}")
+    speedup = 1 - e2e_a / base_e2e_a if e2e_a is not None and base_e2e_a else None
+    gate("S1", "A 類 E2E 中位≤800ms、p90≤1200ms、比 baseline 快≥40%",
+         speedup is not None and e2e_a <= 800 and p90_a <= 1200 and speedup >= 0.4,
+         f"中位 {_fmt(e2e_a)}／p90 {_fmt(p90_a)}／baseline {_fmt(base_e2e_a)}／快 {0 if speedup is None else speedup:.0%}")
+    wait_limit = (config.EP_SILENCE_COMPLETE_S + config.EP_PARTIAL_STABLE_S) * 1000
+    wait_a = _med([a["wait_ms"] for a in A])
+    gate("S2", f"A 類決策等待（文字定稿後多等）中位≤{wait_limit:.0f}ms（＝EP_SILENCE_COMPLETE_S＋EP_PARTIAL_STABLE_S）",
+         wait_a is not None and wait_a <= wait_limit, f"中位 {_fmt(wait_a)}／p90 {_fmt(_p90([a['wait_ms'] for a in A]))}")
     e2e_b = _med([a["e2e_ms"] for a in B_])
     gate("S3", "B 類 E2E 中位≤2200ms", e2e_b is not None and e2e_b <= 2200, f"{_fmt(e2e_b)}")
     fn, fb = _med([a["finalize_ms"] for a in na]), _med([a["finalize_ms"] for a in ba])

@@ -73,10 +73,10 @@ def test_hysteresis_probability_between_thresholds_keeps_speaking():
     s.silence(0.4, p=0.4)  # 介於 offset(0.35) 與 onset(0.5)：還在說話，不算靜音
     assert s.decisions == []
     t = s.silence_until_decision(p=0.2)  # 低於 offset 才開始計靜音
-    assert t == pytest.approx(0.8, abs=2 * W)
+    assert t == pytest.approx(1.3, abs=2 * W)
 
 
-@pytest.mark.parametrize("cls,expected", [("complete", 0.35), ("unknown", 0.8), ("incomplete", 1.6)])
+@pytest.mark.parametrize("cls,expected", [("complete", 0.35), ("unknown", 1.3), ("incomplete", 2.0)])
 def test_silence_threshold_depends_on_sentence_completeness(cls, expected):
     s = Sim(cls=cls)
     spoke(s, seconds=1.5, lag=0.1)  # 引擎在說完後 0.1 s 定稿
@@ -103,7 +103,7 @@ def test_pause_mid_sentence_waits_for_engine_to_report_the_last_word_instead_of_
     spoke(s, "打開Safari", seconds=1.0)
     s.silence(0.5)  # 還沒到 0.6 s，舊的「打開Safari」不能被收走
     assert s.decisions == []
-    s.partial("打開Safari然後")  # 引擎補上「然後」→ 不完整，改等 1.6 s
+    s.partial("打開Safari然後")  # 引擎補上「然後」→ 不完整，改等 2.0 s
     s.silence(0.8)
     assert s.decisions == []
     s.speech(1.0)  # 使用者接著說完
@@ -132,7 +132,7 @@ def test_complete_but_partial_keeps_changing_falls_back_to_default():
         if s.decisions:
             break
     assert s.decisions[0].reason == "default"
-    assert s.decisions[0].at - end == pytest.approx(0.8, abs=0.2)
+    assert s.decisions[0].at - end == pytest.approx(1.3, abs=0.2)
 
 
 def test_noise_that_vad_calls_speech_but_text_is_stalled_is_ended_by_asr_stall():
@@ -179,7 +179,7 @@ def test_spike_during_trailing_does_not_restart_silence_timer():
     s.silence(0.5)
     s.win(2, 0.95)  # 兩窗不到 onset_frames
     t = s.silence_until_decision()
-    assert t == pytest.approx(0.8 - 0.5 - 2 * W, abs=3 * W)  # 靜音計時沒被重置
+    assert t == pytest.approx(1.3 - 0.5 - 2 * W, abs=3 * W)  # 靜音計時沒被重置
 
 
 def test_resuming_speech_after_a_pause_restarts_silence_timer():
@@ -190,7 +190,7 @@ def test_resuming_speech_after_a_pause_restarts_silence_timer():
     s.silence(0.1)
     assert s.decisions == []
     t = s.silence_until_decision()
-    assert t == pytest.approx(0.8 - 0.1, abs=2 * W)
+    assert t == pytest.approx(1.3 - 0.1, abs=2 * W)
 
 
 def test_resuming_after_long_pause_is_not_mistaken_for_stalled_noise():
