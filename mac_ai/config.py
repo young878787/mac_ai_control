@@ -58,6 +58,15 @@ STT_RECONNECT_MIN_S = 1.0  # 斷線重連的等待時間（每次加倍，最多
 STT_RECONNECT_MAX_S = 10.0
 STT_PID_FILE = "/tmp/macstt_pid"  # start.py 寫入的後端（.app 內）PID
 
+# --- 桌面角色介面（main.py --ui）。UI 是另一個程序（Electron），透過本機 WebSocket 收事件、送指令
+UI_BUS_HOST = "127.0.0.1"  # 只綁本機
+UI_BUS_PORT = 8766
+UI_QUEUE_MAX = 256  # 每個 UI 連線最多積壓幾則事件，滿了丟最舊的（UI 不讀也不會拖住語音）
+UI_COMMAND_MAX_CHARS = 200  # 從 UI 打字送來的指令最長字數
+UI_DIR = ROOT / "desktop"
+UI_MODEL_PATH = ROOT / "Rushia_hd" / "runtime-swing" / "RushiaHD.model3.json"
+UI_START_TIMEOUT_S = 30.0  # 等 Electron 連上事件匯流排
+
 LLM_START_TIMEOUT_S = 90.0
 STT_START_TIMEOUT_S = 60.0  # 首次執行要留時間給使用者按下語音辨識授權
 STOP_SIGINT_GRACE_S = 3.0  # 結束服務：先送 SIGINT 等這麼久，沒結束再 SIGTERM，最後 SIGKILL

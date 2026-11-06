@@ -21,6 +21,9 @@ class FakeService:
         if self.ready_error:
             raise self.ready_error
 
+    def alive(self):
+        return True
+
 
 class FakeMic:
     def __init__(self, log, device=None, start_error=None):
@@ -158,3 +161,75 @@ def test_keyboard_interrupt_anywhere_cleans_up_and_exits_zero(env, monkeypatch, 
                             lambda self, timeout: (_ for _ in ()).throw(KeyboardInterrupt) if self.name == name else None)
     assert main.main([]) == 0
     assert log[-1][0] == "stop_all"
+
+
+# ---------- --ui（桌面角色介面） ----------
+class FakeBus:
+    def __init__(self, log, start_error=None, **kw):
+        self.log, self.start_error = log, start_error
+        self.url, self.health_url = "ws://127.0.0.1:1/?token=t", "http://127.0.0.1:1/health"
+
+    def start(self):
+        self.log.append("bus.start")
+        if self.start_error:
+            raise self.start_error
+
+    def stop(self):
+        self.log.append("bus.stop")
+
+
+@pytest.fixture
+def ui_env(env, monkeypatch):
+    log, cfg = env
+    cfg["ui"] = {}
+    cfg["bus"] = {}
+    monkeypatch.setattr(main, "check_ui_ready", lambda: cfg.get("ui_problem"))
+    monkeypatch.setattr(main, "UiBus", lambda **kw: FakeBus(log, **cfg["bus"]))
+    monkeypatch.setattr(main, "ui_service", lambda url, health: FakeService("ui", log, **cfg["ui"]))
+    monkeypatch.setattr(main, "run_voice_loop", lambda mic, execute, stop, **kw: log.append(("voice_loop", sorted(kw), kw.get("gate"), kw.get("bus"))))
+    return log, cfg
+
+
+def test_ui_mode_starts_bus_and_ui_then_shuts_both_down(ui_env, capsys):
+    log, _ = ui_env
+    assert main.main(["--ui"]) == 0
+    assert log.index("bus.start") < log.index("ui.start") < log.index("ui.wait_ready") < log.index("mic.start")
+    kind, kw_names, gate, bus = next(e for e in log if isinstance(e, tuple) and e[0] == "voice_loop")
+    assert "gate" in kw_names and gate.enabled is True and isinstance(bus, FakeBus)  # UI 模式預設啟用喚醒詞
+    assert ("stop_all", ["llm", "stt", "ui"]) in log and log[-1] == "bus.stop"
+    out = capsys.readouterr().out
+    assert "桌面角色就緒" in out and "露西婭" in out and "喚醒詞已關閉" not in out
+
+
+def test_ui_not_installed_exits_with_hint_before_starting_anything(ui_env, capsys):
+    log, cfg = ui_env
+    cfg["ui_problem"] = "找不到 Electron，請先安裝：cd desktop && npm install"
+    assert main.main(["--ui"]) == 1
+    assert log == []
+    assert "npm install" in capsys.readouterr().out
+
+
+def test_ui_failing_to_start_keeps_voice_running(ui_env, capsys):
+    log, cfg = ui_env
+    cfg["ui"] = {"ready_error": ServiceError("UI（Electron） 提前結束（結束碼 1）")}
+    assert main.main(["--ui"]) == 0
+    assert any(isinstance(e, tuple) and e[0] == "voice_loop" for e in log)
+    assert "沒有桌面角色，語音仍可使用" in capsys.readouterr().out
+    assert ("stop_all", ["llm", "stt", "ui"]) in log
+
+
+def test_ui_bus_port_in_use_exits_and_cleans_up(ui_env, capsys):
+    log, cfg = ui_env
+    cfg["bus"] = {"start_error": OSError("UI 事件匯流排無法啟動：Address already in use")}
+    assert main.main(["--ui"]) == 1
+    assert ("stop_all", ["llm", "stt"]) in log
+    assert "Address already in use" in capsys.readouterr().out
+
+
+def test_without_ui_flag_nothing_ui_related_happens(ui_env):
+    log, _ = ui_env
+    assert main.main([]) == 0
+    assert "bus.start" not in log and "ui.start" not in log
+    kind, kw_names, gate, bus = next(e for e in log if isinstance(e, tuple) and e[0] == "voice_loop")
+    assert gate is None and bus is None
+    assert ("stop_all", ["llm", "stt"]) in log

@@ -278,3 +278,42 @@ def test_stt_service_without_its_venv_explains_how_to_fix(monkeypatch, tmp_path)
     monkeypatch.setattr(config, "STT_PYTHON", tmp_path / "missing" / "python")
     with pytest.raises(ServiceError, match="uv sync"):
         services.stt_service()
+
+
+# ---------- 桌面角色介面（Electron） ----------
+def make_ui_dir(tmp_path, electron=True, core=True):
+    ui = tmp_path / "desktop"
+    (ui / "vendor").mkdir(parents=True)
+    if electron:
+        (ui / "node_modules" / "electron" / "dist" / "Electron.app" / "Contents" / "MacOS").mkdir(parents=True)
+        (ui / "node_modules" / "electron" / "dist" / "Electron.app" / "Contents" / "MacOS" / "Electron").write_text("")
+        (ui / "node_modules" / "electron" / "path.txt").write_text("Electron.app/Contents/MacOS/Electron")
+    if core:
+        (ui / "vendor" / "live2dcubismcore.min.js").write_text("")
+    return ui
+
+
+def test_find_electron_and_readiness_checks(tmp_path, monkeypatch):
+    model = tmp_path / "m.model3.json"
+    monkeypatch.setattr(config, "UI_MODEL_PATH", model)
+    monkeypatch.setattr(config, "UI_DIR", make_ui_dir(tmp_path, electron=False))
+    assert services.find_electron() is None
+    assert "npm install" in services.check_ui_ready()
+    monkeypatch.setattr(config, "UI_DIR", make_ui_dir(tmp_path / "b", core=False))
+    assert services.find_electron().name == "Electron"
+    assert "Cubism Core" in services.check_ui_ready()
+    monkeypatch.setattr(config, "UI_DIR", make_ui_dir(tmp_path / "c"))
+    assert "找不到 Live2D 模型" in services.check_ui_ready()
+    model.write_text("{}")
+    assert services.check_ui_ready() is None
+
+
+def test_ui_service_is_ready_only_when_a_ui_client_is_connected(tmp_path, monkeypatch):
+    monkeypatch.setenv("ELECTRON_RUN_AS_NODE", "1")  # 從 VS Code 終端機啟動時會有；留著 Electron 只會當 Node 跑
+    monkeypatch.setattr(config, "UI_DIR", make_ui_dir(tmp_path))
+    svc = services.ui_service("ws://127.0.0.1:1/?token=t", "http://127.0.0.1:1/health")
+    assert svc.cmd[0].endswith("Electron") and svc.cmd[1] == str(config.UI_DIR)
+    assert svc.env["MAC_AI_UI_URL"] == "ws://127.0.0.1:1/?token=t" and svc.env["MAC_AI_UI_MODEL"] == str(config.UI_MODEL_PATH)
+    assert "ELECTRON_RUN_AS_NODE" not in svc.env
+    assert svc.ready({"status": "ok", "clients": 0}) is False
+    assert svc.ready({"status": "ok", "clients": 1}) is True
