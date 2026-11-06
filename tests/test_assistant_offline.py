@@ -34,7 +34,7 @@ def said():
 
 @pytest.fixture
 def router(clock, commands, said):
-    return CommandRouter(WakeGate(["露西婭", "露醬"], window_s=8.0, clock=clock, enabled=True), commands, said.append)
+    return CommandRouter(WakeGate(["露西婭", "露醬"], session_s=8.0, clock=clock, enabled=True), commands, said.append)
 
 
 def queued(commands):
@@ -55,14 +55,15 @@ def test_sentence_without_wake_word_is_shown_dimmed_and_not_queued(router, comma
     assert said == ["\033[90m（未喚醒）打開小算盤\033[0m"]
 
 
-def test_wake_word_only_announces_standby_then_next_sentence_is_queued(router, commands, said, clock):
+def test_wake_word_only_announces_session_then_following_sentences_are_queued(router, commands, said, clock):
     router({"type": "final", "text": "露西婭"})
     assert "已喚醒" in said[0] and "8 秒" in said[0] and queued(commands) == []
     clock.now += 3
     router({"type": "final", "text": "把音量調到 30"})
     assert queued(commands) == ["把音量調到 30"]
-    router({"type": "final", "text": "打開小算盤"})  # 待命只管一次
-    assert queued(commands) == ["把音量調到 30"]
+    clock.now += 3  # 距上一句 3 秒，會話仍在（每句重新計時）
+    router({"type": "final", "text": "打開小算盤"})
+    assert queued(commands) == ["把音量調到 30", "打開小算盤"]
 
 
 def test_partial_never_executes_and_only_shows_when_enabled(clock, commands, said):
@@ -129,8 +130,8 @@ def test_worker_survives_a_failing_command(commands, capsys):
 # ---------- 端到端：假麥克風 → 假 STT server → 閘門 → 執行 ----------
 def test_voice_loop_end_to_end():
     server = FakeSttServer(events=[
+        {"type": "utterance", "text": "今天天氣很好"},  # 沒喚醒（會話尚未開始）
         {"type": "utterance", "text": "露醬，打開小算盤"},
-        {"type": "utterance", "text": "今天天氣很好"},  # 沒喚醒
         {"type": "final", "text": "露西婭"},
         {"type": "final", "text": "把音量調到 30"},
     ])

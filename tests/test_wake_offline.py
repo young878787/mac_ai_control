@@ -21,7 +21,7 @@ def clock():
 
 @pytest.fixture
 def gate(clock):
-    return WakeGate(WORDS, window_s=8.0, clock=clock, enabled=True)
+    return WakeGate(WORDS, session_s=8.0, clock=clock, enabled=True)
 
 
 # ---------- split_wake ----------
@@ -95,21 +95,20 @@ def test_wake_word_with_command_executes_without_waiting(gate):
     assert (r.status, r.command) == ("command", "打開小算盤")
 
 
-def test_wake_word_only_arms_then_next_sentence_executes_once(gate, clock):
+def test_wake_word_only_arms_then_following_sentences_execute(gate, clock):
     assert gate.feed("露西婭").status == "armed"
     clock.now += 3
     r = gate.feed("把音量調到 30")
     assert (r.status, r.command) == ("command", "把音量調到 30")
-    assert gate.feed("打開小算盤").status == "ignored"  # 執行一次後待命結束
+    assert gate.feed("打開小算盤").status == "command"  # 會話內每一句都執行
 
 
-def test_armed_window_boundary(gate, clock):
+def test_session_boundary(gate, clock):
     gate.feed("露醬")
     clock.now += 8.0
     assert gate.feed("打開小算盤").status == "command"  # 剛好 8 秒仍有效
-    gate.feed("露醬")
     clock.now += 8.01
-    assert gate.feed("打開小算盤").status == "ignored"  # 逾時
+    assert gate.feed("打開小算盤").status == "ignored"  # 距上一句超過 8 秒，逾時
 
 
 def test_expired_armed_state_stays_expired(gate, clock):
@@ -140,11 +139,11 @@ def test_repeated_wake_word_refreshes_window(gate, clock):
     assert gate.feed("打開小算盤").status == "command"
 
 
-def test_wake_word_with_command_while_armed_strips_wake_word_and_ends_standby(gate, clock):
+def test_wake_word_with_command_while_in_session_strips_wake_word_and_keeps_session(gate, clock):
     gate.feed("露醬")
     r = gate.feed("露西婭，打開計算機")
     assert (r.status, r.command) == ("command", "打開計算機")
-    assert gate.feed("打開小算盤").status == "ignored"
+    assert gate.feed("打開小算盤").status == "command"
 
 
 # ---------- 停用喚醒詞（預設，常啟動） ----------
@@ -176,3 +175,74 @@ def test_disabled_gate_never_arms(clock):
 
 def test_disabled_gate_accepts_empty_wake_words():
     assert WakeGate([], enabled=False).feed("打開小算盤").command == "打開小算盤"
+
+
+# ---------- 會話（預設 60 秒、每句重新計時） ----------
+@pytest.fixture
+def gate60(clock):
+    return WakeGate(WORDS, session_s=60.0, clock=clock, enabled=True)
+
+
+def test_default_session_is_60_seconds():
+    assert WakeGate(WORDS, enabled=True).session_s == 60.0
+
+
+def test_session_lasts_60_seconds_then_expires(gate60, clock):  # W1
+    gate60.feed("露西婭")
+    clock.now += 59.9
+    assert gate60.feed("打開小算盤").status == "command"
+    clock.now += 59.9
+    assert gate60.feed("把音量調到 30").status == "command"
+    clock.now += 60.01
+    assert gate60.feed("打開小算盤").status == "ignored"
+    assert gate60.feed("打開小算盤").status == "ignored"  # 逾時後維持失效
+
+
+def test_every_sentence_restarts_the_timer(gate60, clock):  # W2
+    gate60.feed("露西婭")
+    for _ in range(4):
+        clock.now += 50
+        assert gate60.feed("打開小算盤").status == "command"  # 總共 200 秒，每句都在上一句之後 50 秒
+
+
+def test_wake_word_with_command_starts_session(gate60, clock):  # W3
+    r = gate60.feed("露西婭 打開小算盤")
+    assert (r.status, r.command) == ("command", "打開小算盤")
+    clock.now += 30
+    assert gate60.feed("把音量調到 30").status == "command"
+
+
+def test_blank_or_punctuation_does_not_extend_session(gate60, clock):  # W4
+    gate60.feed("露西婭")
+    clock.now += 50
+    assert gate60.feed("。").status == "ignored"
+    assert gate60.feed("  ").status == "ignored"
+    clock.now += 10.01
+    assert gate60.feed("打開小算盤").status == "ignored"
+
+
+def test_session_api(gate60, clock):  # W6
+    assert gate60.session_remaining() == 0
+    gate60.start_session()
+    assert gate60.session_remaining() == pytest.approx(60.0, abs=1e-6)
+    clock.now += 20
+    assert gate60.session_remaining() == pytest.approx(40.0, abs=1e-6)
+    gate60.end_session()
+    assert gate60.session_remaining() == 0
+    assert gate60.feed("打開小算盤").status == "ignored"
+    clock.now += 100
+    gate60.start_session()
+    clock.now += 61
+    assert gate60.session_remaining() == 0  # 逾時
+
+
+def test_feed_reports_remaining_time_after_command(gate60, clock):
+    gate60.feed("露西婭")
+    clock.now += 45
+    gate60.feed("打開小算盤")
+    assert gate60.session_remaining() == pytest.approx(60.0, abs=1e-6)
+
+
+def test_start_session_lets_sentences_without_wake_word_run(gate60):
+    gate60.start_session()
+    assert gate60.feed("打開小算盤").status == "command"

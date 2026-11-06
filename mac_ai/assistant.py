@@ -49,7 +49,7 @@ class CommandRouter:
         if result.status == "command":
             self.commands.put(result.command)
         elif result.status == "armed":
-            self.say(f"👂 已喚醒，請在 {self.gate.window_s:g} 秒內說出指令")
+            self.say(f"👂 已喚醒，{self.gate.session_s:g} 秒內不用再說喚醒詞（每句重新計時）")
         elif self.gate.enabled:
             self.say(f"\033[90m（未喚醒）{text}\033[0m")
 

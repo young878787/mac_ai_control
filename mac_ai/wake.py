@@ -1,10 +1,10 @@
-"""喚醒詞閘門：啟用時句首必須是喚醒詞才執行，只說喚醒詞則短暫待命、下一句免喚醒詞；停用時每一句都當指令。"""
+"""喚醒詞閘門：啟用時句首必須是喚醒詞才執行；喚醒後進入會話，會話內每一句免喚醒詞、每句重新計時；停用時每一句都當指令。"""
 import time
 import unicodedata
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence
 
-from mac_ai.config import WAKE_WINDOW_S, WAKE_WORD_ENABLED
+from mac_ai.config import WAKE_SESSION_S, WAKE_WORD_ENABLED
 from mac_ai.router.lexicon import LEXICON
 
 
@@ -36,23 +36,39 @@ def split_wake(text: str, words: Sequence[str]) -> Optional[str]:
 
 @dataclass
 class WakeResult:
-    status: str  # command＝要執行 command；armed＝只聽到喚醒詞，進入待命；ignored＝未喚醒，不執行
+    status: str  # command＝要執行 command；armed＝只聽到喚醒詞，開啟會話；ignored＝未喚醒，不執行
     command: str = ""
 
 
 class WakeGate:
-    def __init__(self, words: Optional[Sequence[str]] = None, window_s: float = WAKE_WINDOW_S,
+    def __init__(self, words: Optional[Sequence[str]] = None, session_s: float = WAKE_SESSION_S,
                  clock: Callable[[], float] = time.monotonic, enabled: bool = WAKE_WORD_ENABLED):
         self.enabled = enabled
         self.words = list(words) if words is not None else lexicon_wake_words()
         if enabled and not self.words:
             raise ValueError("沒有設定喚醒詞（vocab/lexicon.json 的 wake_words）")
-        self.window_s = window_s
+        self.session_s = session_s
         self._clock = clock
-        self._armed_at: Optional[float] = None
+        self._session_at: Optional[float] = None  # 會話最後一次開始或延長的時間；None＝不在會話中
+
+    def start_session(self) -> None:
+        """開始（或重新計時）會話；UI 點擊角色時使用"""
+        self._session_at = self._clock()
+
+    def end_session(self) -> None:
+        self._session_at = None
+
+    def session_remaining(self) -> float:
+        """會話剩餘秒數；不在會話中或已逾時為 0"""
+        if self._session_at is None:
+            return 0.0
+        return max(0.0, self.session_s - (self._clock() - self._session_at))
+
+    def _in_session(self) -> bool:
+        return self._session_at is not None and self._clock() - self._session_at <= self.session_s
 
     def feed(self, text: str) -> WakeResult:
-        """處理 STT 辨識出的一句話。待命只管一次：下一個指令送出後即結束待命"""
+        """處理 STT 辨識出的一句話。會話內每個有內容的句子都重新計時；空白或只有標點的句子不算"""
         rest = split_wake(text, self.words)
         if not self.enabled:  # 常啟動：整句就是指令；句首若仍帶喚醒詞就去掉
             command = text if rest is None else rest
@@ -60,14 +76,11 @@ class WakeGate:
                 return WakeResult("ignored")
             return WakeResult("command", command.strip())
         if rest is not None:
-            if rest:
-                self._armed_at = None
-                return WakeResult("command", rest)
-            self._armed_at = self._clock()
-            return WakeResult("armed")
+            self.start_session()
+            return WakeResult("command", rest) if rest else WakeResult("armed")
         if all(_skippable(ch) for ch in unicodedata.normalize("NFKC", text)):  # 空白或只有標點
             return WakeResult("ignored")
-        if self._armed_at is not None and self._clock() - self._armed_at <= self.window_s:
-            self._armed_at = None
+        if self._in_session():
+            self.start_session()
             return WakeResult("command", text.strip())
         return WakeResult("ignored")
