@@ -3,7 +3,8 @@
 在 Mac 上用語音控制電腦的本地語音助手。直接說出指令，就能開啟或關閉 App 等操作（預設常啟動，不需喚醒詞）。語音辨識與語言模型都在本機執行，不需要雲端 API。
 
 - 範例：「打開小算盤」「關掉 Safari」
-- 喚醒詞（預設關閉）：**露西婭**（別名：露醬、露西亞）。要啟用，把 `mac_ai/config.py` 的 `WAKE_WORD_ENABLED` 改成 `True`，之後須說「露西婭 打開小算盤」才會執行
+- 喚醒詞（終端機模式預設關閉）：**露西婭**（別名：露醬、露西亞）。要啟用，把 `mac_ai/config.py` 的 `WAKE_WORD_ENABLED` 改成 `True`，之後須說「露西婭 打開小算盤」才會執行。喚醒後進入 60 秒的**會話**（`WAKE_SESSION_S`）：期間每一句都不用再說喚醒詞，每說一句重新計時；逾時後要再喊一次
+- 桌面角色（`python main.py --ui`）：Rushia（Live2D）常駐螢幕右下角，平常從下緣探頭，喚醒時出場、依執行結果做動作並以泡泡顯示；可用快捷鍵叫出輸入框打字。此模式預設啟用喚醒詞。見下方「桌面角色」
 
 ## 運作方式
 
@@ -114,9 +115,41 @@ python main.py                    # 啟動所有服務並開始收音（Ctrl+C �
 python main.py --no-stt           # 只啟動 LLM 服務，不收音
 python main.py --text 打開小算盤  # 直接送入文字指令後結束（不檢查喚醒詞）
 python main.py --device 1         # 指定麥克風裝置編號
+python main.py --ui               # 同時顯示桌面角色（需先完成「桌面角色」一節的安裝）
 ```
 
 啟動後會依序啟動 LLM（`mlx_vlm.server`）與 STT（`macos-stt serve`），等兩者就緒後開始收音。
+
+## 桌面角色
+
+`--ui` 會另外啟動一個 Electron 視窗（`desktop/`）：透明、置頂、可穿透點擊（只有角色身體與泡泡會吃到滑鼠），出現在所有桌面空間。後端與視窗用本機 WebSocket（`127.0.0.1:8766`，連線需帶啟動時產生的 token）溝通；沒加 `--ui` 時完全不會啟動這些東西。
+
+### 安裝
+
+```bash
+cd desktop
+npm install                                   # electron、pixi.js、pixi-live2d-display（版本已鎖定）
+ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/install.js   # npm 沒有下載到 Electron 執行檔時補這行
+```
+
+另外兩樣東西不入版控，需自行準備：
+
+- **Live2D Cubism Core**：到 [Live2D 官網](https://www.live2d.com/en/sdk/download/web/) 下載 Cubism SDK for Web，把 `Core/live2dcubismcore.min.js` 放到 `desktop/vendor/`（專有授權，不可散布）。Core 5.x 與 6.x 都可用；6.x 會由 `desktop/renderer/app.js` 的 `bridgeRenderOrders` 補上 pixi-live2d-display 0.4.0 讀不到的繪製順序。
+- **模型**：`Rushia_hd/runtime-swing/RushiaHD.model3.json`（路徑在 `mac_ai/config.py` 的 `UI_MODEL_PATH`）。
+
+`python main.py --ui` 啟動時會檢查以上三樣，缺什麼就印出怎麼補。
+
+### 操作
+
+| 操作 | 效果 |
+|---|---|
+| 說喚醒詞 | 角色出場、頭上出現會話光環（倒數環）；60 秒內每句免喚醒詞、每句重新計時 |
+| `⌥Space`（可在 Electron 的 `userData/settings.json` 的 `shortcut` 改） | 叫出／關閉輸入框，Enter 送出（不用喚醒詞）、Esc 關閉；收音時 partial 以灰字顯示在輸入框裡 |
+| 點頭部 | 出場並開啟會話；點身體：開心動作 |
+| 拖曳 | 只能沿螢幕下緣左右移動，位置會記住 |
+| 右鍵 | 對話紀錄／暫停聽指令／結束 |
+
+不用麥克風也能預覽演出：`python scripts/ui_demo.py`（`--hold` 播完後保持執行，可手動操作）。效能量測：`python scripts/ui_perf.py`。
 
 ## 端點偵測（說完就收）
 
@@ -137,6 +170,7 @@ python scripts/record_human.py                 # 錄真人測試語料（清單�
 ```bash
 pytest              # 離線測試（預設）
 pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
+cd desktop && node --test   # 桌面角色的狀態機與路徑白名單測試
 ```
 
 ## 專案結構
@@ -146,14 +180,16 @@ pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
 | `main.py` | 啟動入口：起服務、收音、主迴圈 |
 | `mac_ai/config.py` | 路徑、埠號、逾時等設定（單一來源） |
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
-| `mac_ai/wake.py` | 喚醒詞閘門 |
+| `mac_ai/wake.py` | 喚醒詞閘門與會話 |
+| `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
 | `mac_ai/router/` | 正規化、Fast Path、Slow Path（LLM）、動作執行 |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
-| `scripts/` | 端點偵測的測試語料產生、bench、真人錄音 |
+| `desktop/` | 桌面角色（Electron）：`main.js` 視窗與連線、`state.js` 狀態機、`renderer/` 畫面與 Live2D |
+| `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`） |
 | `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
 | `vocab/stt_hints.txt` | 由 `build_vocab.py` 產生，餵給語音辨識當提示詞 |
-| `docs/` | 設計與實作計畫 |
+| `docs/` | 設計與實作計畫（端點偵測、桌面角色與喚醒會話） |
 | `tests/` | 離線測試與 live 測試 |
 
 修改 `vocab/lexicon.json` 後，`main.py` 啟動時會自動重新產生詞表；也可以手動執行 `python build_vocab.py`。
