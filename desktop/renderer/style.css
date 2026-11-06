@@ -1,0 +1,35 @@
+:root { --ink: #f2f7f5; --panel: rgba(22, 30, 34, .9); --mint: #8fe3c0; --coral: #ff9a8a; --muted: #a9bbb5; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; -webkit-user-select: none;
+  font: 14px/1.45 -apple-system, "PingFang TC", system-ui, sans-serif; color: var(--ink); }
+#stage { position: absolute; left: 0; top: 0; }
+#halo { position: absolute; width: 140px; height: 40px; pointer-events: none; display: none; filter: drop-shadow(0 0 6px rgba(143, 227, 192, .8)); }
+#halo ellipse { fill: none; stroke-width: 3; stroke-linecap: round; }
+#halo .track { stroke: rgba(255, 255, 255, .25); }
+#halo .ring { stroke: var(--mint); }
+#bubbles { position: absolute; left: 4px; right: 4px; padding: 8px 10px 14px; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; gap: 6px; overflow: hidden; pointer-events: none; }
+.bubble { pointer-events: auto; max-width: 300px; padding: 8px 12px; border-radius: 14px 14px 14px 4px; background: var(--panel); color: var(--ink);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .28); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  animation: bubble-in .18s ease-out; transition: opacity .25s; }
+.bubble.leaving { opacity: 0; }
+.bubble.partial { opacity: .8; font-style: italic; }
+.bubble.pending { letter-spacing: 3px; }
+.bubble.result { border-left: 3px solid var(--mint); }
+.bubble.error { border-left: 3px solid var(--coral); }
+@keyframes bubble-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+#input-box { position: absolute; left: 24px; right: 24px; bottom: 18px; margin: 0; }
+#input-box[hidden], #history[hidden] { display: none; }
+#input { width: 100%; padding: 10px 16px; border: 1px solid rgba(255, 255, 255, .25); border-radius: 22px; outline: none; background: rgba(22, 30, 34, .94);
+  color: var(--ink); font: inherit; user-select: text; -webkit-user-select: text; box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
+#input:focus { border-color: var(--mint); }
+#input::placeholder { color: var(--muted); }
+#history { position: absolute; top: 12px; left: 12px; right: 12px; height: 300px; display: flex; flex-direction: column; border-radius: 14px;
+  background: rgba(22, 30, 34, .82); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: 0 8px 24px rgba(0, 0, 0, .35); overflow: hidden; }
+#history header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; color: var(--muted); font-size: 12px; border-bottom: 1px solid rgba(255, 255, 255, .1); }
+#history button { border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+#history button:hover { background: rgba(255, 255, 255, .12); color: var(--ink); }
+#history-list { list-style: none; margin: 0; padding: 8px 12px; overflow-y: auto; flex: 1; user-select: text; -webkit-user-select: text; }
+#history-list li { padding: 3px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#history-list li.empty { color: var(--muted); }
+#history-list li.error { color: var(--coral); }
+#status { position: absolute; left: 14px; right: 14px; top: 10px; margin: 0; padding: 8px 12px; border-radius: 10px; background: rgba(120, 30, 30, .9); font-size: 12px; white-space: pre-wrap; }

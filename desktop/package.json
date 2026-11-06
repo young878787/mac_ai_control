@@ -1,0 +1,19 @@
+{
+  "name": "mac-ai-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "mac_ai_control 的桌面角色介面（Electron＋Live2D）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "pixi-live2d-display": "0.4.0",
+    "pixi.js": "6.5.10"
+  },
+  "devDependencies": {
+    "electron": "45.2.3"
+  }
+}

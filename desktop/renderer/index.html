@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src app: 'unsafe-eval' 'wasm-unsafe-eval'; style-src app: 'unsafe-inline'; img-src app: data: blob:; connect-src app:; worker-src blob:">
+  <title>Rushia</title>
+  <link rel="stylesheet" href="app://ui/renderer/style.css">
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <svg id="halo" viewBox="0 0 140 40" aria-hidden="true">
+    <ellipse class="track" cx="70" cy="20" rx="60" ry="12" pathLength="100"/>
+    <ellipse class="ring" cx="70" cy="20" rx="60" ry="12" pathLength="100" stroke-dasharray="100 100"/>
+  </svg>
+  <div id="bubbles" aria-live="polite"></div>
+  <section id="history" class="interactive" hidden>
+    <header><span>對話紀錄</span><button type="button" id="history-close" aria-label="關閉">✕</button></header>
+    <ol id="history-list"></ol>
+  </section>
+  <form id="input-box" class="interactive" hidden>
+    <input id="input" type="text" autocomplete="off" spellcheck="false" maxlength="200" placeholder="輸入指令，Enter 送出，Esc 關閉">
+  </form>
+  <p id="status" hidden></p>
+  <script src="app://ui/vendor/live2dcubismcore.min.js"></script>
+  <script src="app://ui/lib/pixi.min.js"></script>
+  <script src="app://ui/lib/cubism4.min.js"></script>
+  <script type="module" src="app://ui/renderer/app.js"></script>
+</body>
+</html>

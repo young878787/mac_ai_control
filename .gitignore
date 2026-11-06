@@ -34,3 +34,10 @@ macos-stt/
 # 端點偵測測試語料：合成語料可重新產生；真人錄音只留清單（manifest.csv），音檔不入版控
 bench/synth/
 bench/human/*.wav
+
+# 桌面角色介面（desktop/）：npm 依賴與 Live2D Cubism Core（專有授權，不可散布）不入版控
+desktop/node_modules/
+desktop/vendor/
+
+# Live2D 模型（他人角色，僅限個人使用，約 665 MB）
+Rushia_hd/
