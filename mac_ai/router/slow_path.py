@@ -6,8 +6,8 @@ from typing import List, Optional, Tuple
 
 from mac_ai.config import PLAN_TIMEOUT_S, WARMUP_TIMEOUT_S
 from mac_ai.router.actions import ExecContext, chat_reply, run_tool
-from mac_ai.router.fast_path import _NARR_RE, _NEG_RE
-from mac_ai.router.lexicon import build_hint_lines
+from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match
+from mac_ai.router.lexicon import _compact, build_hint_lines
 from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
 from mac_ai.router.tools import validate_tool_call
 
@@ -47,20 +47,50 @@ def _is_look_at_screen(text: str) -> bool:
     return bool(_LOOK_AT_SCREEN_RE.search(text)) and not any(p.search(text) for p in (_NEG_RE, _NARR_RE, _NOT_A_REQUEST_RE))
 
 
-def plan_slow_path(utterance: str, meta: Optional[dict] = None) -> Tuple[List[Tuple[str, dict]], Optional[str], List[str]]:
+def _local_reroute(utterance: str, query: str) -> Optional[Match]:
+    """LLM 要開網頁搜尋時，依原句重新判斷範圍：原句是『找／打開』（或帶本機範圍詞），而且受詞是 App、專案、資料夾、
+    檔案時，改走本機（本機優先）。『搜尋／查』沒帶範圍詞的維持網頁；否定、敘述、提問句也不導向"""
+    matcher = FastPathMatcher()
+    q = _compact(query)
+    for clause in matcher.split_clauses(utterance):
+        m = matcher.match_local(clause)
+        if m is not None and m.intent.domain == "file" and not m.intent.slots.get("local_only"):
+            continue  # 沒有本機證據：模型判斷要上網，就尊重它（本機已由 Fast Path 先找過）
+        if m is not None and m.intent is not None and q and (q in _compact(m.intent.target) or _compact(m.intent.target) in q):
+            return m
+    return None
+
+
+def local_miss_hint(miss: dict) -> str:
+    """只陳述事實，不指示模型怎麼做。實測（34 句）：陳述事實 23/26 該上網的上網、7/8 其他沒亂上網；
+    加上『除非…否則請搜尋』會變成一律上網（0/8）；原本的長指示放在使用者訊息只剩 17/26"""
+    return f"本機沒有名為「{miss['label']}」的檔案。"
+
+
+def local_miss_reply(miss: dict, reason: str) -> str:
+    """轉交模型後仍沒有任何動作時的保底回覆：告訴使用者找不到、為什麼，以及下一步（要上網查就明說『搜尋』）"""
+    return f"⚠️ 找不到「{miss['label']}」：本機沒有符合的檔案（範圍：{miss['scope']}）；{reason}。要上網查請說「搜尋 {miss['label']}」"
+
+
+def plan_slow_path(utterance: str, meta: Optional[dict] = None,
+                   local_miss: Optional[dict] = None) -> Tuple[List[Tuple[str, dict]], Optional[str], List[str]]:
     """送 LLM 規劃工具呼叫。回傳 (通過驗證的 [(工具, 參數)], LLM 純文字回覆, 被拒絕的原因)。
-    meta 若有傳入，回填 llm（server timings）與 validate_ms；LLM 不可用時拋出 LLMError"""
+    meta 若有傳入，回填 llm（server timings）與 validate_ms；LLM 不可用時拋出 LLMError。
+    local_miss：本機搜尋 0 筆而轉交過來（{"label", "scope"}）→ 提示模型本機結果，且不再導回本機（避免繞圈）"""
     hints = build_hint_lines(utterance)
     system = SYSTEM_PROMPT + (f"\n已知詞庫：{'；'.join(hints)}" if hints else "")
+    # 本機結果放在使用者訊息：system＋工具定義的前綴才會命中快取（放在 system 尾巴實測每次多 2 秒）
+    user = utterance + (f"\n（{local_miss_hint(local_miss)}）" if local_miss is not None else "")
     llm_meta: dict = {}
     message = _llm(
-        [{"role": "system", "content": system}, {"role": "user", "content": utterance}],
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
         timeout=PLAN_TIMEOUT_S, meta=llm_meta,
     )
 
     t = time.perf_counter()
     calls: List[Tuple[str, dict]] = []
     rejected: List[str] = []
+    reroutes: List[str] = []
     for call in message.get("tool_calls") or []:
         func = call.get("function") if isinstance(call, dict) else None
         if not isinstance(func, dict):
@@ -77,31 +107,49 @@ def plan_slow_path(utterance: str, meta: Optional[dict] = None) -> Tuple[List[Tu
             err = _search_intent_error(utterance, clean["query"])
         if err:
             rejected.append(err)
-        else:
-            calls.append((func["name"], clean))
+            continue
+        if func["name"] == "web_search_or_open_url" and local_miss is None:
+            local = _local_reroute(utterance, clean["query"])
+            if local is not None:
+                calls.extend(local.actions)
+                reroutes.append(f"[Domain 導向] 搜尋「{clean['query']}」→ {local.intent.domain}")
+                if meta is not None:
+                    meta["intent"] = local.intent.to_log()
+                continue
+        calls.append((func["name"], clean))
     if meta is not None:
         meta["llm"] = llm_meta
         meta["validate_ms"] = (time.perf_counter() - t) * 1000
+        meta["reroutes"] = reroutes
     return calls, message.get("content"), rejected
 
 
-def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Optional[ExecContext] = None) -> List[str]:
+def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Optional[ExecContext] = None,
+                          local_miss: Optional[dict] = None) -> List[str]:
     """將未命中的自然語言指令送入本地 LLM 進行多工具拆解與執行；
     若傳入 timing，會回填 llm_ms（規劃耗時）、llm（server timings）、validate_ms。
-    LLM 不可用時拋出 LLMError，由呼叫端決定補救"""
+    LLM 不可用時拋出 LLMError，由呼叫端決定補救。
+    local_miss：本機搜尋 0 筆轉交過來；模型沒有選任何動作時回保底的『找不到』，不另外閒聊"""
     step = timing if timing is not None else {}
     ctx = ctx or ExecContext()
     ctx.utterance = utterance
+    if local_miss is not None:
+        ctx.chat_hint = local_miss_hint(local_miss) + "不要說已經找到。"
     t0 = time.perf_counter()
     try:
-        calls, reply, rejected = plan_slow_path(utterance, step)
+        calls, reply, rejected = plan_slow_path(utterance, step, local_miss)
     finally:
         step["llm_ms"] = (time.perf_counter() - t0) * 1000
     llm = step.get("llm") or {}
     if llm.get("prefill_ms") is not None and llm.get("decode_ms") is not None:
         llm["overhead_ms"] = max(0.0, step["llm_ms"] - llm["prefill_ms"] - llm["decode_ms"])
 
-    logs = [f"⚠️ 已拒絕不合法的工具呼叫：{r}" for r in rejected]
+    logs = [f"⚠️ 已拒絕不合法的工具呼叫：{r}" for r in rejected] + list(step.get("reroutes") or [])
+    if local_miss is not None and not calls:  # 模型判斷不是網路查詢、也沒有別的事要做：確認找不到
+        text = local_miss_reply(local_miss, "AI 沒有選擇上網搜尋")
+        ctx.replies.append(text)
+        ctx.results.append(text)  # 這一步的結果是『找不到』（狀態算失敗，UI 顯示錯誤泡泡）
+        return logs + [text]
     if not calls and not rejected:
         if _is_look_at_screen(utterance):
             return [f"[Slow Path - 補救] read_screen({{}}) -> {run_tool('read_screen', {}, ctx)}"]

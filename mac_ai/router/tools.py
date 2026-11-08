@@ -1,7 +1,8 @@
 """LLM 工具定義（OpenAI function calling schema）與呼叫參數驗證。"""
 from typing import Any, Dict, Optional, Tuple
 
-from mac_ai.router.lexicon import APP_KIND, resolve_app, resolve_project
+from mac_ai.router import catalog
+from mac_ai.router.lexicon import APP_KIND, MAC_APP_ALIASES, resolve_app, resolve_project
 
 
 def _fn(name: str, description: str, properties: dict, required: tuple = ()) -> dict:
@@ -122,6 +123,13 @@ def validate_tool_call(name: str, args: Any) -> Tuple[Optional[dict], Optional[s
     # 實測：LLM 在 mute=true 時偶爾多塞 level（如 30），靜音語意以 mute 為準
     if name == "set_system_volume" and clean.get("mute") is True:
         clean.pop("level", None)
+    # App 名稱必須是詞庫或已安裝的 App，LLM 編出來的名稱不會被拿去 open -a
+    if name == "control_mac_app":
+        hit = catalog.DEFAULT.resolve_app(clean["app_name"])
+        if hit is not None:
+            clean["app_name"] = hit[0]
+        elif clean["app_name"].strip().lower() not in {n.lower() for n in MAC_APP_ALIASES.values()}:
+            return None, f"control_mac_app 找不到 App：{clean['app_name']}（沒有安裝）"
     # 專案只能從白名單解析，不接受 LLM 給的任意名稱／路徑；editor 必須是編輯器類 App
     if name == "open_project":
         hit = resolve_project(clean["project_name"])

@@ -373,7 +373,7 @@ def test_failed_editor_skips_project(monkeypatch, projects):
 def test_llm_search_uses_browser_opened_earlier(monkeypatch, sh):
     monkeypatch.setattr(llm_client, "_chat", lambda messages, **kw: {"tool_calls": [
         _tc("web_search_or_open_url", '{"query":"台北天氣"}')]})
-    r.process_voice_command("開 Safari，幫我找一下台北天氣")
+    r.process_voice_command("開 Safari，今天台北會下雨嗎")
     assert sh == [APP("Safari"), SEARCH("台北天氣", "Safari")]
 
 
@@ -389,7 +389,7 @@ def test_timing_structure(monkeypatch, sh):
                                _tc("web_search_or_open_url", '{"query":"台北天氣"}')]}
 
     monkeypatch.setattr(llm_client, "_chat", fake)
-    out = r.process_voice_command("開 Chrome，螢幕太亮了，還有幫我找台北天氣，靜音")
+    out = r.process_voice_command("開 Chrome，螢幕太亮了，還有今天台北會下雨嗎，靜音")
     assert set(out) == {"stages", "steps", "replies", "total_ms"}
     assert set(out["stages"]) == {"normalize_ms", "split_ms", "match_ms"}
     assert all(v >= 0 for v in out["stages"].values())
@@ -504,11 +504,12 @@ def test_duplicate_chat_reply_calls_chat_once(monkeypatch, sh):
     assert len(seen) == 2 and out["replies"] == ["這是回覆"]
 
 
-def test_tools_and_chat_run_in_listed_order(monkeypatch, sh):
+def test_tools_and_chat_run_in_listed_order(monkeypatch, sh, installed_apps):
+    installed_apps({"slack": "Slack"})
     fake, seen = _scripted({"tool_calls": [_tc("control_mac_app", '{"app_name":"Slack","action":"open"}'),
                                            _tc("chat_reply", "{}")]})
     monkeypatch.setattr(llm_client, "_chat", fake)
-    out = r.process_voice_command("開 Slack 並且跟我說聲嗨")
+    out = r.process_voice_command("我想用 Slack 聊天並且跟我說聲嗨")
     assert sh == [APP("Slack")] and out["replies"] == ["這是回覆"]
 
 

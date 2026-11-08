@@ -22,6 +22,12 @@ BREAKER_COOLDOWN_S = 30.0  # LLM 連不上之後，這段時間內不再嘗試
 WAKE_WORD_ENABLED = False  # False＝常啟動，每一句都當指令；True＝句首要有喚醒詞才執行
 WAKE_SESSION_S = 60.0  # 喚醒後的會話長度：這段時間內每一句都不用喚醒詞，且每句都會重新計時
 
+# --- 找東西（App／資料夾／檔案）。檔案搜尋用 Spotlight（mdfind），只搜家目錄且排除 ~/Library
+FIND_RESULTS_MAX = 5  # 多筆結果最多列幾筆（也是語音／UI 可選的最大序號）
+FIND_CHOICE_TTL_S = 60.0  # 結果清單有效時間，與喚醒會話一致
+FILE_SEARCH_TIMEOUT_S = 3.0  # mdfind 逾時
+APP_INDEX_REFRESH_S = 60.0  # 已安裝 App 清單：查不到時，最短隔這麼久才重掃一次
+
 # macos-stt 是獨立子專案（自己的 venv），語音辨識授權必須在它的 .app bundle 內取得，所以用 start.py serve 啟動
 STT_DIR = ROOT / "macos-stt"
 STT_PYTHON = STT_DIR / ".venv" / "bin" / "python"

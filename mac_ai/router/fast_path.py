@@ -2,10 +2,13 @@
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from mac_ai.router import catalog as catalog_mod
 from mac_ai.router.actions import ExecContext, run_tool
+from mac_ai.router.domain import Intent, parse_find, resolve_intent, starts_with_find_verb
 from mac_ai.router.lexicon import (
-    APP_KIND, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_app, resolve_project,
+    APP_KIND, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_project,
 )
+from mac_ai.router.local_actions import plan_actions
 
 
 _PREFIX_RE = re.compile(rf"^(?:{_alt(_FILLERS.get('prefix', []))})\s*") if _FILLERS.get("prefix") else None
@@ -18,6 +21,12 @@ _TOPIC_RE = re.compile(rf"^(?P<x>.+?)\s*(?P<v>{_LONG_VERB})$")
 _NEG_RE = re.compile(r"不要|不用|不必|不想|不能|不可以|不行|不需要|別|勿|沒有|先不")
 _NARR_RE = re.compile(rf"昨天|前天|剛剛|剛才|之前|已經|以前|上次|曾經|本來|原本|(?:{_VERB})了")
 _QUESTION_RE = re.compile(r"嗎|什麼|怎麼|為什麼|為何|如何|是不是|有沒有|哪|幾|多少|\?")
+
+
+def _narrative_exempt(s: str) -> bool:
+    """『找昨天下載的 PDF』的『昨天』是檔案的時間條件，不是敘述過去：句首是『找』、沒有『了』、
+    敘述詞只有『昨天』才放行（『我昨天找過了』不會）"""
+    return starts_with_find_verb(s) and "了" not in s and all(m.group(0) == "昨天" for m in _NARR_RE.finditer(s))
 
 
 def canonicalize_clause(clause: str) -> str:
@@ -43,10 +52,12 @@ def canonicalize_clause(clause: str) -> str:
 class Match:
     """Fast Path 比對結果：可呼叫（執行全部動作）。比對與執行分開，路由器才能依說話順序決定何時執行"""
 
-    def __init__(self, actions: List[Tuple[str, dict]], confidence: str = "exact", note: str = ""):
+    def __init__(self, actions: List[Tuple[str, dict]], confidence: str = "exact", note: str = "",
+                 intent: Optional[Intent] = None):
         self.actions = actions
         self.confidence = confidence  # exact／fuzzy／candidate
         self.note = note
+        self.intent = intent  # 範圍判斷的結果（找／搜尋／打開走這條路時才有），給 step["intent"] 追查用
 
     def run(self, ctx: Optional[ExecContext] = None) -> List[str]:
         ctx = ctx or ExecContext()
@@ -111,6 +122,14 @@ class FastPathMatcher:
     _tab_next_re = re.compile(rf"^(?:(?:切換|跳|切|換)(?:到|去)?)?(?:下一個|下個|下一張|後一個|右邊的?){_TAB}$")
     _tab_prev_re = re.compile(rf"^(?:(?:切換|跳|切|換)(?:到|去)?)?(?:上一個|上個|上一張|前一個|左邊的?){_TAB}$")
     _app_re = re.compile(rf"^(?P<v>{_VERB})(?:一下|個|一個)?\s*(?:那個|這個)?\s*(?P<app>.+)$", _I)
+    # 選擇多筆結果：『第二個』『打開第三個』『在 Finder 顯示第一個』『最後一個』（一定要有序號，不會和『下一個分頁』混淆）
+    _pick_re = re.compile(
+        rf"^(?:(?P<open>{_OPEN})|(?P<reveal>顯示|在\s*Finder\s*(?:中)?\s*(?:顯示|打開)))?(?:就是)?"
+        r"(?:第(?P<n>[一二三四五1-5])(?:個|項|筆)?|(?P<last>最後(?:一)?(?:個|項|筆)))$", _I)
+    _PICK_N = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5}
+
+    def __init__(self, catalog=None):
+        self.catalog = catalog if catalog is not None else catalog_mod.DEFAULT
 
     def split_clauses(self, text: str) -> List[str]:
         """將 STT 輸出的長句依據標點符號與中文口語連接詞切分為獨立子句（不以空白切分，以免拆壞「VS Code」「調到 50」）"""
@@ -125,7 +144,7 @@ class FastPathMatcher:
         if raw == "讓電腦睡眠":  # 睡眠誤觸成本高：只接受這個固定句，不做放寬
             return Match([("system_power_action", {"action": "sleep"})])
         s = canonicalize_clause(raw)
-        if not s or _NEG_RE.search(s) or _NARR_RE.search(s):
+        if not s or self._blocked(s):
             return None
         for pattern in self._read_screen_re:
             if pattern.match(s):
@@ -139,12 +158,41 @@ class FastPathMatcher:
             return None
         for rule in (
             self._r_tab, self._r_project, self._r_volume, self._r_mute,
-            self._r_brightness, self._r_dark, self._r_lock, self._r_app,
+            self._r_brightness, self._r_dark, self._r_lock, self._r_find, self._r_pick, self._r_app,
         ):
             m = rule(s, candidates)
             if m is not None:
                 return m
         return None
+
+    @staticmethod
+    def _blocked(s: str) -> bool:
+        return bool(_NEG_RE.search(s)) or (bool(_NARR_RE.search(s)) and not _narrative_exempt(s))
+
+    def match_local(self, clause: str) -> Optional[Match]:
+        """給 LLM 導向用：只做『找／打開』的範圍判斷（守門規則與 Fast Path 相同）。
+        命中 App、專案、資料夾、檔案才回傳；網頁（維持 LLM 的搜尋）與不確定都回傳 None。
+        『搜尋／查』沒帶 App 或本機範圍詞時也不處理（決策：維持網頁搜尋）"""
+        s = canonicalize_clause(clause.strip())
+        if not s or self._blocked(s) or _QUESTION_RE.search(s):
+            return None
+        req = parse_find(s)
+        if req is None or (req.verb_class == "search" and not req.scope & {"app", "local"}):
+            return None
+        intent = resolve_intent(req, self.catalog)
+        if intent is None or intent.domain == "web":
+            return None
+        return Match(plan_actions(intent), intent.confidence, intent.note, intent)
+
+    def _intent_match(self, s: str, candidates: bool, verbs: Tuple[str, ...], domains: Tuple[str, ...] = ()) -> Optional[Match]:
+        """範圍判斷（第一層）→ 對應表（第二層）。verbs＝只處理這幾類動詞；domains＝只接受這幾種範圍"""
+        req = parse_find(s)
+        if req is None or req.verb_class not in verbs:
+            return None
+        intent = resolve_intent(req, self.catalog, candidates)
+        if intent is None or (domains and intent.domain not in domains):
+            return None
+        return Match(plan_actions(intent), intent.confidence, intent.note, intent)
 
     # ---- 規則：命中回傳 Match，否則 None ----
     def _r_open_search(self, s: str, candidates: bool) -> Optional[Match]:
@@ -158,7 +206,7 @@ class FastPathMatcher:
         search = ("web_search_or_open_url", {"query": query})
         if _compact(m["app"]) in ("瀏覽器", "browser"):
             return Match([search])
-        res = resolve_app(m["app"], candidates)
+        res = self.catalog.resolve_app(m["app"], candidates)
         if res is None or APP_KIND.get(res[0]) != "browser":
             return None
         name, conf, note = res
@@ -170,7 +218,14 @@ class FastPathMatcher:
             if m:
                 query = m["q"].strip()
                 if query and not query.startswith("看") and not _QUESTION_END_RE.search(query):  # 『查看…』不是搜尋
+                    if pattern is self._search_res[0]:  # 『搜尋 Xcode 這個 App』『查 X 專案』『搜尋 a.pdf』走本機；其餘維持網頁
+                        local = self._intent_match(s, candidates, ("search",), ("app", "project", "folder", "file"))
+                        if local is not None:
+                            return local
                     return Match([("web_search_or_open_url", {"query": query})])
+        req = parse_find(s)
+        if req is not None and req.verb_class == "search" and "local" in req.scope:  # 『在電腦裡搜尋 X』：句首不是搜尋動詞
+            return self._intent_match(s, candidates, ("search",), ("app", "project", "folder", "file"))
         return None
 
     def _r_tab(self, s: str, candidates: bool) -> Optional[Match]:
@@ -189,7 +244,7 @@ class FastPathMatcher:
         args: Dict[str, Any] = {}
         conf, note = "exact", ""
         if m["ed"]:
-            ed = resolve_app(m["ed"], candidates)
+            ed = self.catalog.resolve_app(m["ed"], candidates)
             if ed is None or APP_KIND.get(ed[0]) != "editor":
                 return None
             args["editor"], conf, note = ed
@@ -255,16 +310,36 @@ class FastPathMatcher:
             return Match([("system_power_action", {"action": "lock_screen"})])
         return None
 
+    def _r_find(self, s: str, candidates: bool) -> Optional[Match]:
+        """『找 X』：先判斷範圍（App／專案／資料夾／檔案／網頁），本機優先"""
+        return self._intent_match(s, candidates, ("find",))
+
+    def _r_pick(self, s: str, candidates: bool) -> Optional[Match]:
+        m = self._pick_re.match(s)
+        if not m:
+            return None
+        n = -1 if m["last"] else self._PICK_N.get(m["n"]) or int(m["n"])
+        args: Dict[str, Any] = {"n": n}
+        if m["open"]:
+            args["action"] = "open"
+        elif m["reveal"]:
+            args["action"] = "reveal"
+        return Match([("pick_choice", args)], intent=Intent("choice", "pick", s, dict(args), "scope_word"))
+
     def _r_app(self, s: str, candidates: bool) -> Optional[Match]:
         m = self._app_re.match(s)
         if not m:
             return None
-        res = resolve_app(m["app"], candidates)
+        res = self.catalog.resolve_app(m["app"], candidates)
         if res is None:
-            return None
+            if re.fullmatch(_QUIT, m["v"]):
+                return None
+            # 不是 App：『打開下載資料夾』『打開履歷.pdf』。判斷不出範圍就交給 LLM
+            return self._intent_match(s, candidates, ("open",), ("app", "project", "folder", "file"))
         name, conf, note = res
         action = "quit" if re.fullmatch(_QUIT, m["v"]) else "open"
-        return Match([("control_mac_app", {"app_name": name, "action": action})], conf, note)
+        intent = Intent("app", action, m["app"], {"app": name}, "catalog", conf, note)
+        return Match([("control_mac_app", {"app_name": name, "action": action})], conf, note, intent)
 
     def try_execute(self, clause: str) -> Optional[str]:
         """嘗試以 Fast Path 匹配並立即執行單一子句，若未命中則回傳 None"""

@@ -10,7 +10,7 @@ import time
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from mac_ai.config import CHAT_TIMEOUT_S, VISION_TIMEOUT_S
 from mac_ai.router.lexicon import APP_KIND, MAC_APP_ALIASES, project_index, resolve_project
@@ -208,6 +208,8 @@ class ExecContext:
     results: List[str] = field(default_factory=list)
     status: Optional[str] = None
     chat_done: bool = False
+    escalate: Optional[dict] = None  # 這一步的本機搜尋 0 筆、要轉交模型判斷：{"label", "scope"}（由 find_file 設定）
+    chat_hint: Optional[str] = None  # 轉交時給 chat call 的本機結果，避免模型假裝找到
 
 
 PAGE_SETTLE_S = 1.0  # 開網頁後至少等這麼久才開始問「載入完了嗎」（避免讀到舊頁面的 loading=false）
@@ -348,7 +350,8 @@ def chat_reply(ctx: Optional[ExecContext] = None) -> str:
     t = time.perf_counter()
     try:
         message = _llm(
-            [{"role": "system", "content": CHAT_SYSTEM_PROMPT}, {"role": "user", "content": ctx.utterance}],
+            [{"role": "system", "content": CHAT_SYSTEM_PROMPT + (f"\n{ctx.chat_hint}" if ctx.chat_hint else "")},
+             {"role": "user", "content": ctx.utterance}],
             timeout=CHAT_TIMEOUT_S, tools=False, max_tokens=128, meta=meta,
         )
     except LLMError as e:
@@ -375,6 +378,10 @@ AVAILABLE_FUNCTIONS = {
     "read_screen": read_screen,
     "chat_reply": chat_reply,
 }
+
+
+# 本機範圍的內部工具（find_file 等）由 local_actions 在載入時登錄；不在 TOOLS_SCHEMA，所以 LLM 叫不到
+LOCAL_TOOLS: Dict[str, Callable[..., str]] = {}
 
 
 def _skipped(name: str) -> str:
@@ -421,6 +428,8 @@ def _dispatch(name: str, args: dict, ctx: ExecContext) -> str:
         return read_screen(ctx)
     if name == "chat_reply":
         return chat_reply(ctx)
+    if name in LOCAL_TOOLS:
+        return LOCAL_TOOLS[name](ctx=ctx, **args)
     return AVAILABLE_FUNCTIONS[name](**args)
 
 

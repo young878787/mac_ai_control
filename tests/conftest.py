@@ -25,6 +25,65 @@ def _isolate_router(request, monkeypatch, tmp_path):
     r.reset_llm_breaker()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_catalog(monkeypatch):
+    """離線測試不能依賴這台電腦裝了哪些 App，也不能真的跑 mdfind：已安裝 App 清單固定為空（只剩詞庫），
+    選擇清單每個測試各自獨立。需要已安裝 App 的測試用 installed_apps fixture 加。"""
+    from mac_ai.router import catalog, choices
+    monkeypatch.setattr(catalog, "_scan_installed", lambda: {})
+    monkeypatch.setattr(catalog, "DEFAULT", catalog.Catalog())
+    monkeypatch.setattr(choices, "STORE", choices.ChoiceStore())
+    yield
+
+
+@pytest.fixture
+def installed_apps(monkeypatch):
+    """設定『已安裝』的 App：{顯示名稱或別名: 標準名稱}（key 會轉成 compact）"""
+    from mac_ai.router import catalog, lexicon
+
+    def setup(mapping):
+        index = {lexicon._compact(k): v for k, v in mapping.items()}
+        monkeypatch.setattr(catalog, "_scan_installed", lambda: dict(index))
+        monkeypatch.setattr(catalog, "DEFAULT", catalog.Catalog())
+    return setup
+
+
+@pytest.fixture
+def find_env(monkeypatch, tmp_path):
+    """檔案搜尋用的假環境：HOME 換成暫存資料夾，mdfind 回傳 env.mdfind_paths（或拋 env.mdfind_error），
+    open 等其他指令只記錄。env.touch 在假家目錄建檔；env.opens() 取出所有 open 呼叫"""
+    import os
+    import types
+    home = tmp_path.resolve() / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    env = types.SimpleNamespace(home=home, calls=[], mdfind_paths=[], mdfind_error=None)
+
+    def fake_run(cmd, **kw):
+        env.calls.append(cmd)
+        if cmd[0] == "mdfind":
+            if env.mdfind_error is not None:
+                raise env.mdfind_error
+            return subprocess.CompletedProcess(cmd, 0, "\n".join(str(p) for p in env.mdfind_paths), "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    def touch(rel, mtime=None, mode=None):
+        path = home / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+        if mtime is not None:
+            os.utime(path, (mtime, mtime))
+        if mode is not None:
+            path.chmod(mode)
+        return path
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    env.touch = touch
+    env.opens = lambda: [c for c in env.calls if c[0] == "open"]
+    env.mdfinds = lambda: [c for c in env.calls if c[0] == "mdfind"]
+    return env
+
+
 @pytest.fixture
 def sh(monkeypatch):
     """記錄所有 subprocess.run 呼叫，不真的執行（一律回傳結束碼 0）"""

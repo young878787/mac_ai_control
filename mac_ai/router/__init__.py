@@ -10,6 +10,6 @@ from mac_ai.router.lexicon import (
 )
 from mac_ai.router.llm_client import LLMUnavailable, reset_llm_breaker
 from mac_ai.router.normalize import normalize_utterance, to_traditional, zh_to_int
-from mac_ai.router.pipeline import process_voice_command
+from mac_ai.router.pipeline import process_choice, process_voice_command
 from mac_ai.router.slow_path import execute_slow_path_llm, plan_slow_path, warmup_llm
 from mac_ai.router.tools import TOOLS_SCHEMA, validate_tool_call

@@ -106,15 +106,17 @@ def test_pipeline_open_app_then_other_action(sh, utterance, second_check):
 
 VOL = lambda n: ["osascript", "-e", f"set volume output volume {n}"]
 ORDER_CASES = [
-    ("開 Slack，開 Notion，把音量調到20", "SF", [["open", "-a", "Slack"], ["open", "-a", "Notion"], VOL(20)]),
+    # LLM 只能開詞庫或已安裝的 App（見 installed_apps），所以『開 Slack，開 Notion』現在是 Fast Path
+    ("開 Slack，開 Notion，把音量調到20", "FFF", [["open", "-a", "Slack"], ["open", "-a", "Notion"], VOL(20)]),
     ("把音量調到35，把音量調到五十，把音量調到60", "FFF", [VOL(35), VOL(50), VOL(60)]),  # 『五十』經正規化後走 Fast
-    ("把音量調大一點，靜音，幫我找一下台北天氣", "SFS", None),  # 兩段 LLM 夾一個 Fast；逐項檢查見下
+    ("把音量調大一點，靜音，今天台北會下雨嗎", "SFS", None),  # 兩段 LLM 夾一個 Fast；逐項檢查見下（『找一下台北天氣』已走 Fast Path）
 ]
 
 
 @pytest.mark.parametrize("utterance,shape,expected", ORDER_CASES, ids=[c[0] for c in ORDER_CASES])
-def test_pipeline_spoken_order_and_time(sh, utterance, shape, expected):
+def test_pipeline_spoken_order_and_time(sh, installed_apps, utterance, shape, expected):
     """依說話順序執行（Fast／Slow 交錯），並要求總時間在預算內（subprocess 為假，量到的是決策＋分派時間）"""
+    installed_apps({"slack": "Slack", "notion": "Notion"})
     rec = sh
     out = r.process_voice_command(utterance)
     assert "".join("F" if s["kind"] == "fast" else "S" for s in out["steps"]) == shape
@@ -231,7 +233,7 @@ STAGE_SCENARIOS = [
     ("全 Fast", "幫我打開小算盤，然後把音量調到 40"),
     ("單一 LLM 工具", "把音量調大一點"),
     ("F-S-F", "開 Chrome，把音量調大一點，靜音"),
-    ("LLM 多工具", "開 Slack，開 Notion，把音量調到20"),
+    ("LLM 多工具", "我想用 Slack 跟 Notion，把音量調到20"),
     ("提問（規劃＋chat call）", "Python 是什麼"),
 ]
 
@@ -240,8 +242,9 @@ def _med(xs):
     return statistics.median(xs) if xs else float("nan")
 
 
-def test_stage_timing_report(sh):
+def test_stage_timing_report(sh, installed_apps):
     """每個情境跑 5 次，『首次』與『其餘中位』分列（subprocess 為假，量到的是決策＋分派＋LLM 時間）"""
+    installed_apps({"slack": "Slack", "notion": "Notion"})
     r.warmup_llm()
     rows = []
     for label, text in STAGE_SCENARIOS:

@@ -44,6 +44,36 @@
     "open": ["打開", "開啟", "啟動", "叫出", "開"],
     "quit": ["關掉", "關閉", "退出", "結束", "關"]
   },
+  "find_verbs": ["尋找", "找出", "找找", "找一下", "找"],
+  "search_verbs": ["搜尋", "搜索", "查詢", "查一下", "查查", "查"],
+  "scope_words": {
+    "web": ["網路上", "上網", "網上", "線上", "google", "谷歌"],
+    "local": ["電腦裡面", "電腦裡", "電腦上", "電腦中", "本機", "mac裡", "mac上"],
+    "app": ["應用程式", "app", "程式", "軟體"],
+    "file": ["檔案"],
+    "folder": ["資料夾", "目錄"]
+  },
+  "realtime_words": ["天氣", "下雨", "氣溫", "新聞", "股價", "股票", "匯率"],
+  "time_words": {"今天": "today", "昨天": "yesterday", "這個禮拜": "this_week", "這禮拜": "this_week", "這個星期": "this_week", "這星期": "this_week", "這週": "this_week", "最近": "recent"},
+  "known_folders": [
+    {"key": "Downloads", "path": "~/Downloads", "names": ["下載", "下載項目", "downloads"]},
+    {"key": "Desktop", "path": "~/Desktop", "names": ["桌面", "desktop"]},
+    {"key": "Documents", "path": "~/Documents", "names": ["文件", "documents"], "folder_only": true},
+    {"key": "Applications", "path": "/Applications", "names": ["應用程式", "applications"]},
+    {"key": "Home", "path": "~", "names": ["家目錄", "home"]}
+  ],
+  "file_kinds": {
+    "pdf": {"words": ["pdf"], "ext": ["pdf"], "uti": ["com.adobe.pdf"]},
+    "image": {"words": ["圖片", "照片", "截圖", "圖檔", "相片"], "ext": ["png", "jpg", "jpeg", "heic", "gif", "webp", "bmp", "tiff"], "uti": ["public.image"]},
+    "video": {"words": ["影片", "視頻"], "ext": ["mp4", "mov", "mkv", "avi", "m4v"], "uti": ["public.movie"]},
+    "audio": {"words": ["音樂", "歌曲", "音檔", "錄音檔"], "ext": ["mp3", "m4a", "wav", "aac", "flac"], "uti": ["public.audio"]},
+    "doc": {"words": ["文件", "文檔"], "ext": ["doc", "docx", "pages", "rtf"], "uti": ["com.microsoft.word.doc", "org.openxmlformats.wordprocessingml.document", "com.apple.iwork.pages.sffpages", "public.rtf"]},
+    "presentation": {"words": ["簡報"], "ext": ["ppt", "pptx", "key"], "uti": ["com.microsoft.powerpoint.ppt", "org.openxmlformats.presentationml.presentation", "com.apple.iwork.keynote.key"]},
+    "spreadsheet": {"words": ["試算表"], "ext": ["xls", "xlsx", "csv", "numbers"], "uti": ["com.microsoft.excel.xls", "org.openxmlformats.spreadsheetml.sheet", "public.comma-separated-values-text", "com.apple.iwork.numbers.sffnumbers"]},
+    "text": {"words": ["純文字", "文字檔"], "ext": ["txt", "md"], "uti": ["public.plain-text"]},
+    "folder": {"words": [], "ext": [], "uti": ["public.folder"]}
+  },
+  "other_ext": ["command", "sh", "py", "js", "ts", "json", "yaml", "yml", "toml", "zip", "dmg", "pkg", "log", "html", "css", "swift", "cpp", "java"],
   "fillers": {
     "prefix": ["嗯", "呃", "欸", "啊", "喂", "那個", "那你", "就是", "請", "幫我", "麻煩你", "麻煩", "給我", "可以", "能不能", "你", "幫忙", "我要", "我想要", "我想", "我需要", "來", "先"],
     "suffix": ["吧", "啦", "喔", "哦", "呢", "囉", "啊", "好嗎", "好不好", "可以嗎", "謝謝", "一下下", "一下", "看看", "就好", "就行"]

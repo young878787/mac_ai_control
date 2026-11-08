@@ -219,9 +219,9 @@ def test_pipeline_mixed_routes_unmatched_to_llm(monkeypatch, sh):
                                _tc("web_search_or_open_url", '{"query":"台北天氣"}')]}
 
     monkeypatch.setattr(llm_client, "_chat", fake_chat)
-    r.process_voice_command("打開終端機，順便螢幕太亮了，還有幫我找一下台北天氣")
+    r.process_voice_command("打開終端機，順便螢幕太亮了，還有今天台北會下雨嗎")
     assert sh[0] == ["open", "-a", "Terminal"]
-    assert seen == ["螢幕太亮了，幫我找一下台北天氣"]
+    assert seen == ["螢幕太亮了，今天台北會下雨嗎"]
     assert sh[2] == ["open", "https://www.google.com/search?q=%E5%8F%B0%E5%8C%97%E5%A4%A9%E6%B0%A3"]
 
 
@@ -251,27 +251,28 @@ def test_match_does_not_execute(sh):
     assert sh == [["open", "-a", "Google Chrome"]]
 
 
-def test_pipeline_keeps_spoken_order(monkeypatch, sh):
-    """未命中的『開 Slack，開 Notion』在前、Fast Path 的音量在後 → 執行順序仍照說話順序"""
-    fake, seen = _scripted_chat({"開 Slack，開 Notion": [
+def test_pipeline_keeps_spoken_order(monkeypatch, sh, installed_apps):
+    """未命中的『我想用 Slack，用 Notion』在前、Fast Path 的音量在後 → 執行順序仍照說話順序"""
+    installed_apps({"slack": "Slack", "notion": "Notion"})  # LLM 只能開詞庫或已安裝的 App
+    fake, seen = _scripted_chat({"我想用 Slack，用 Notion": [
         ("control_mac_app", '{"app_name":"Slack","action":"open"}'),
         ("control_mac_app", '{"app_name":"Notion","action":"open"}'),
     ]})
     monkeypatch.setattr(llm_client, "_chat", fake)
-    r.process_voice_command("開 Slack，開 Notion，把音量調到20")
+    r.process_voice_command("我想用 Slack，用 Notion，把音量調到20")
     assert sh == [["open", "-a", "Slack"], ["open", "-a", "Notion"],
                   ["osascript", "-e", "set volume output volume 20"]]
-    assert seen == ["開 Slack，開 Notion"]  # 連續未命中合併成一次 LLM 呼叫
+    assert seen == ["我想用 Slack，用 Notion"]  # 連續未命中合併成一次 LLM 呼叫
 
 
 def test_pipeline_slow_fast_slow_splits_segments(monkeypatch, sh):
     fake, seen = _scripted_chat({
         "螢幕太亮了": [("adjust_screen_brightness", '{"direction":"down","steps":3}')],
-        "幫我找一下台北天氣": [("web_search_or_open_url", '{"query":"台北天氣"}')],
+        "今天台北會下雨嗎": [("web_search_or_open_url", '{"query":"台北天氣"}')],
     })
     monkeypatch.setattr(llm_client, "_chat", fake)
-    out = r.process_voice_command("螢幕太亮了，靜音，幫我找一下台北天氣")
-    assert seen == ["螢幕太亮了", "幫我找一下台北天氣"]  # 被 Fast Path 的『靜音』隔開 → 兩次 LLM
+    out = r.process_voice_command("螢幕太亮了，靜音，今天台北會下雨嗎")
+    assert seen == ["螢幕太亮了", "今天台北會下雨嗎"]  # 被 Fast Path 的『靜音』隔開 → 兩次 LLM
     assert [c[2] if c[0] == "osascript" else c[0] for c in sh] == [
         sh[0][2], "set volume output muted true", "open"]
     assert "key code 145" in sh[0][2]

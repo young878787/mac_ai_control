@@ -2,11 +2,12 @@
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from mac_ai.router.actions import ExecContext
+from mac_ai.router import catalog
+from mac_ai.router.actions import ExecContext, run_tool
 from mac_ai.router.fast_path import FastPathMatcher, Match
 from mac_ai.router.llm_client import LLMError, LLMUnavailable
 from mac_ai.router.normalize import log_normalization, normalize_utterance
-from mac_ai.router.slow_path import execute_slow_path_llm
+from mac_ai.router.slow_path import execute_slow_path_llm, local_miss_reply
 
 
 def _step_status(ctx: ExecContext) -> str:
@@ -36,11 +37,27 @@ def _recover_slow_segment(clauses: List[str], matcher: FastPathMatcher, ctx: Exe
     return logs
 
 
+def _escalate_to_llm(text: str, step: dict, ctx: ExecContext) -> List[str]:
+    """本機搜尋 0 筆、又沒有明確的本機證據（例如『找 python 教學』）：同一步把原句交給模型判斷。
+    模型可以改成網頁搜尋；沒有選任何動作或 LLM 不可用，都回保底的『找不到』並說明原因"""
+    miss, ctx.escalate = ctx.escalate, None
+    step["escalated"] = miss
+    print(f"🧠 [本機沒有「{miss['label']}」，轉交 AI 判斷]")
+    try:
+        return execute_slow_path_llm(text, step, ctx, local_miss=miss)
+    except LLMError as e:
+        ctx.status = "llm_unavailable" if isinstance(e, LLMUnavailable) else "llm_error"
+        msg = local_miss_reply(miss, f"AI 目前無法判斷要不要上網找（{e}）")
+        ctx.replies.append(msg)
+        return [msg]
+
+
 def process_voice_command(stt_text: str) -> dict:
     """依說話順序執行。命中 Fast Path 的子句各自成一步；連續未命中的子句合併成一步送 LLM。
     回傳 {"stages", "steps": [{kind, text, ms, status, logs, ...}], "replies", "total_ms"}，ms 含該步的執行時間"""
     print(f"\n🎙️ 收到語音辨識文字：「{stt_text}」")
     start_time = time.perf_counter()
+    catalog.DEFAULT.refresh_if_stale()  # 已安裝 App 清單超過一段時間就重掃（在指令執行緒做，不影響收音）
 
     t = time.perf_counter()
     normalized = normalize_utterance(stt_text)
@@ -73,12 +90,20 @@ def process_voice_command(stt_text: str) -> dict:
         step_start = time.perf_counter()
         step: Dict[str, Any] = {"kind": kind, "text": text}
         ctx.step, ctx.utterance, ctx.results, ctx.status, ctx.chat_done = step, text, [], None, False
+        ctx.escalate, ctx.chat_hint = None, None
         if kind == "fast":
             logs = run.run(ctx)
             step["match"] = {"confidence": run.confidence, "note": run.note}
-            step["ms"] = (time.perf_counter() - step_start) * 1000
+            if run.intent is not None:
+                step["intent"] = run.intent.to_log()
             for log in logs:
-                print(f"⚡ [Fast Path | {step['ms']:.2f}ms] 「{text}」 -> {log}")
+                print(f"⚡ [Fast Path | {(time.perf_counter() - step_start) * 1000:.2f}ms] 「{text}」 -> {log}")
+            if ctx.escalate is not None:
+                more = _escalate_to_llm(text, step, ctx)
+                for log in more:
+                    print(f"   {log}")
+                logs = logs + more
+            step["ms"] = (time.perf_counter() - step_start) * 1000
         else:
             print(f"🧠 [轉交 Slow Path AI 軌道] 待解析語句：「{text}」")
             try:
@@ -100,3 +125,18 @@ def process_voice_command(stt_text: str) -> dict:
     print(f"⏱️ 階段：normalize {stages['normalize_ms']:.2f}ms｜split {stages['split_ms']:.2f}ms｜match {stages['match_ms']:.2f}ms")
     print(f"⏱️ 全部完成：{total_ms:.0f}ms（{len(steps)} 步）")
     return {"stages": stages, "steps": steps, "replies": ctx.replies, "total_ms": total_ms}
+
+
+def process_choice(msg: dict) -> dict:
+    """桌面角色點選清單：{"list_id", "n", "action"}。和語音『第 N 個』走同一個 pick_choice，回傳格式同 process_voice_command"""
+    start = time.perf_counter()
+    ctx = ExecContext()
+    step: Dict[str, Any] = {"kind": "fast", "text": f"選擇第 {msg['n']} 筆（{'打開' if msg['action'] == 'open' else '顯示'}）"}
+    ctx.step, ctx.utterance = step, step["text"]
+    logs = [run_tool("pick_choice", {"n": msg["n"], "action": msg["action"], "list_id": msg["list_id"]}, ctx)]
+    step["ms"] = (time.perf_counter() - start) * 1000
+    step["status"] = _step_status(ctx)
+    step["logs"] = logs
+    ctx.step = None
+    print(f"\n🖱️ {step['text']} -> {logs[0]}")
+    return {"stages": {}, "steps": [step], "replies": ctx.replies, "total_ms": step["ms"]}
