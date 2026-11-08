@@ -3,7 +3,7 @@ import json
 import re
 import time
 import unicodedata
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 from mac_ai.config import NORMALIZE_LOG
 from mac_ai.router.lexicon import APP_MISHEARD, S2T, TERM_MISHEARD, _LONG_VERB, _alt
@@ -68,15 +68,49 @@ def _basic_normalize(text: str) -> str:
     return re.sub(r"(?<=[一-鿿]) (?=[一-鿿])", "", t)
 
 
-def normalize_utterance(text: str) -> str:
+def normalize_utterance(text: str, replacements: Optional[List[Tuple[str, str]]] = None) -> str:
     """正規化 STT 文字：NFKC → 空白 → 簡轉繁 → 誤聽詞（App／指令詞）→ 中文數字 → 疊詞。
-    『一點』『一下』不會被當成數字；中英之間的空白保留（VS Code）"""
+    『一點』『一下』不會被當成數字；中英之間的空白保留（VS Code）。
+    replacements 若有傳入，依出現順序附加每一次誤聽詞替換的 (替換後, 原字)，給 restore_misheard 還原用"""
     t = to_traditional(_basic_normalize(text))
     if _MISHEARD_RE is not None:
         lookup = {**APP_MISHEARD, **TERM_MISHEARD}
-        t = _MISHEARD_RE.sub(lambda m: lookup[m.group(0).lower()], t)
+
+        def swap(m):
+            to = lookup[m.group(0).lower()]
+            if replacements is not None:
+                replacements.append((to, m.group(0)))
+            return to
+
+        t = _MISHEARD_RE.sub(swap, t)
     t = _convert_numerals(t)
     return _DUP_VERB_RE.sub(r"\1", t)
+
+
+def restore_misheard(normalized: str, query: str, replacements: List[Tuple[str, str]], start: int = 0) -> str:
+    """把查詢裡被誤聽詞表換掉的字還原成使用者說的原字（『谷哥的評價』不能變成『Google Chrome的評價』）。
+    只在對得準的時候還原：正規化後的整句裡，替換字出現的次數要剛好等於替換紀錄的筆數（否則表示使用者本來就
+    說過這個字，分不出哪個是替換的，保持原樣）；用 query 在整句中的位置算它是第幾次出現，所以句子前面
+    其他子句的替換不會被錯配"""
+    if not replacements or not query:
+        return query
+    qpos = normalized.find(query, start)
+    if qpos < 0:
+        return query
+    by_to: Dict[str, List[str]] = {}
+    for to, original in replacements:
+        by_to.setdefault(to, []).append(original)
+    for to, originals in by_to.items():
+        n = query.count(to)
+        if not n or normalized.count(to) != len(originals):
+            continue
+        k = normalized.count(to, 0, qpos)
+        picked = originals[k:k + n]
+        if len(picked) != n:
+            continue
+        parts = query.split(to)
+        query = parts[0] + "".join(o + p for o, p in zip(picked, parts[1:]))
+    return query
 
 
 def log_normalization(original: str, normalized: str) -> None:

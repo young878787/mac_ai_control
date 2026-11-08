@@ -191,7 +191,7 @@ def test_fast_match_actions(utterance, expected):
 def test_match_records_intent_for_tracing():
     m = FastPathMatcher(catalog=FakeCatalog()).match("找昨天下載的 PDF")
     assert m.intent.to_log() == {
-        "domain": "file", "verb": "find", "source": "file_hint",
+        "domain": "file", "verb": "find", "source": "file_hint", "query": "昨天下載的 PDF",
         "slots": {"name": "", "kinds": ["pdf"], "since": "yesterday", "location": "Downloads", "filename": None,
                   "local_only": True}}
     assert FastPathMatcher(catalog=FakeCatalog()).match("打開 Xcode").intent.domain == "app"
@@ -254,3 +254,95 @@ def test_internal_tools_are_not_visible_to_llm():
     assert not exposed & {"find_file", "open_folder", "pick_choice"}
     for name, args in (("find_file", {"name": "x"}), ("open_folder", {"path_key": "Home"}), ("pick_choice", {"n": 1})):
         assert validate_tool_call(name, args)[1] == f"未知工具：{name}"
+
+
+# ---------- 網頁查詢：用使用者的原話（只去頭尾的指令詞與指示詞）----------
+QUERY_CASES = [
+    ("幫我找一下 python 教學", "python 教學"),
+    ("找附近的餐廳啦", "附近的餐廳"),
+    ("我想找台中好吃的早午餐", "台中好吃的早午餐"),
+    ("找個好看的電影看看", "好看的電影"),
+    ("找我的最愛清單", "我的最愛清單"),  # 「我的」是內容詞，不能刪（檔名清理會刪，查詢不會）
+    ("找那個叫做進擊的巨人的動畫", "進擊的巨人的動畫"),
+    ("找 C++ 教學", "C++ 教學"),
+    ("找 ASP.NET 教學", "ASP.NET 教學"),
+    ("找 iphone 15 的價格", "iphone 15 的價格"),
+    ("找五十嵐菜單", "五十嵐菜單"),
+    ("找一個好看的電影", "好看的電影"),
+    ("找下載速度測試", "下載速度測試"),
+    ("找桌面桌布", "桌面桌布"),
+    ("找 Taylor Swift 的歌", "Taylor Swift 的歌"),
+]
+
+
+@pytest.mark.parametrize("utterance,expected", QUERY_CASES, ids=[c[0] for c in QUERY_CASES])
+def test_query_is_the_users_own_words(utterance, expected):
+    from mac_ai.router.normalize import normalize_utterance
+    spoken = normalize_utterance(utterance)
+    req = parse_find(canonicalize_clause(spoken))
+    assert req.query == expected
+    compact = lambda t: "".join(t.split()).casefold()
+    assert compact(req.query) in compact(spoken)  # 不變式：查詢一定是原話的一段，一個字都不能是別人加的
+    intent = resolve_intent(req, FakeCatalog())
+    assert intent.domain == "file" and intent.query == expected and not intent.slots["local_only"]
+
+
+def test_query_invariant_holds_for_every_find_case_in_the_tables():
+    """表格裡所有『找』的句子：查詢都是原話的子字串（含需要清檔名的、有本機證據的）"""
+    from mac_ai.router.normalize import normalize_utterance
+    compact = lambda t: "".join(t.split()).casefold()
+    checked = 0
+    for utterance, _ in DOMAIN_CASES + [(c[0], None) for c in MATCH_CASES]:
+        spoken = normalize_utterance(utterance)
+        req = parse_find(canonicalize_clause(spoken))
+        if req is None:
+            continue
+        assert req.query and compact(req.query) in compact(spoken), utterance
+        checked += 1
+    assert checked > 40
+
+
+def test_query_extraction_cost_is_recorded_and_tiny():
+    """運算時間：截取＋範圍判斷每句的耗時（實際數字寫進計畫書；這裡的門檻很寬，只擋數量級的退步）"""
+    import statistics
+    import time
+    clause = canonicalize_clause("幫我找一下 python 教學")
+    catalog_ = FakeCatalog()
+    samples = []
+    for _ in range(300):
+        t = time.perf_counter()
+        resolve_intent(parse_find(clause), catalog_)
+        samples.append((time.perf_counter() - t) * 1000)
+    median, p95 = statistics.median(samples), sorted(samples)[int(len(samples) * 0.95)]
+    print(f"\n範圍判斷＋截取：中位 {median * 1000:.0f} µs，p95 {p95 * 1000:.0f} µs")
+    assert median < 2.0 and p95 < 10.0  # ms
+
+
+# ---------- 副檔名分級：已知文件格式才算確定的本機證據 ----------
+EXT_CASES = [
+    ("找 node.js", ("file", "find", {"local_only": False})),  # .js 也可能是網站名稱
+    ("找 vue.js 教學", ("file", "find", {"local_only": False})),
+    ("搜尋 node.js", ("web", "search", {})),
+    ("找 report.pdf", ("file", "find", {"local_only": True})),
+    ("搜尋 report.pdf", ("file", "search", {"local_only": True})),
+    ("打開驗收腳本.command", ("file", "open", {"local_only": False, "filename": "驗收腳本.command"})),
+    ("找驗收腳本.command", ("file", "find", {"local_only": False})),
+    ("找 run.sh", ("file", "find", {"local_only": False})),
+    ("找 notes.txt", ("file", "find", {"local_only": True})),
+    ("找 photo.png", ("file", "find", {"local_only": True})),
+]
+
+
+@pytest.mark.parametrize("utterance,expected", EXT_CASES, ids=[c[0] for c in EXT_CASES])
+def test_ext_grading(utterance, expected):
+    intent = intent_of(utterance)
+    domain, verb, slots = expected
+    assert (intent.domain, intent.verb) == (domain, verb)
+    for key, value in slots.items():
+        assert intent.slots[key] == value
+
+
+def test_ext_grading_fast_path_actions():
+    matcher = FastPathMatcher(catalog=FakeCatalog())
+    assert matcher.match("搜尋 node.js").actions == [("web_search_or_open_url", {"query": "node.js"})]
+    assert matcher.match("找 node.js").actions == [("find_file", {"name": "node.js", "filename": "node.js", "action": "reveal"})]

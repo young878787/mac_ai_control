@@ -33,6 +33,8 @@ _FILE_TAIL_RE = re.compile(rf"(?:這個|那個|的)?(?:{_alt(SCOPE_WORDS['file']
 _TIME_RE = re.compile(_alt(list(_TIMES)))
 _REALTIME_RE = re.compile(_alt(LEXICON["realtime_words"]))
 _NOISE_RE = re.compile(r"^(?:那個|那份|那張|那些|這個|這份|我的|一個|一份|一張|叫做|叫作|名叫|名為|名字是|名稱是|關於|有關)+")
+# 網頁查詢的清理：只去掉開頭的指示詞，內容詞（包含『我的』）一律保留，所以查詢一定是原話的一段
+_QUERY_NOISE_RE = re.compile(r"^(?:那個|那份|那張|那些|這個|這份|一個|一份|一張|叫做|叫作|名叫|名為|名字是|名稱是|關於|有關)+")
 _EXT_RE = re.compile(r"^(?P<stem>.+)\.(?P<ext>[A-Za-z0-9]{1,8})$")
 _FOLDER_NAMES: Dict[str, Tuple[str, bool]] = {
     _compact(n): (f["key"], bool(f.get("folder_only"))) for f in _FOLDERS for n in f["names"]
@@ -54,6 +56,7 @@ class FindRequest:
     scope: FrozenSet[str]  # web／local／app／file／folder
     project_target: Optional[str]  # 受詞結尾是『專案』時，去掉它之後的名稱
     raw: str
+    query: str = ""  # 給網頁搜尋用的原話：只去掉頭尾的指令詞與指示詞，其餘一個字都不動（不是檔名清理的結果）
 
 
 @dataclass(frozen=True)
@@ -68,9 +71,13 @@ class Intent:
     source: str = "default"  # scope_word／catalog／file_hint／realtime／default：判斷的依據
     confidence: str = "exact"
     note: str = ""
+    query: str = ""  # 原話查詢（file：本機 0 筆轉交模型時，模型選網頁搜尋就用它，不用模型改寫的字）
 
     def to_log(self) -> dict:
-        return {"domain": self.domain, "verb": self.verb, "slots": self.slots, "source": self.source}
+        log = {"domain": self.domain, "verb": self.verb, "slots": self.slots, "source": self.source}
+        if self.query:
+            log["query"] = self.query
+        return log
 
 
 @dataclass(frozen=True)
@@ -81,6 +88,7 @@ class FileTerms:
     location: Optional[str]
     has_ext: bool
     filename: Optional[str]
+    known_ext: bool = False  # 副檔名是已知文件格式（pdf、png…）。.js、.command 這類只算『可能是檔案』，不算確定證據
 
 
 def starts_with_find_verb(clause: str) -> bool:
@@ -113,6 +121,7 @@ def parse_find(clause: str) -> Optional[FindRequest]:
     if _LOCAL_INLINE_RE.search(target):
         scope.add("local")
         target = _LOCAL_INLINE_RE.sub("", target).strip()
+    query_src = target
     project_target = None
     pm = _PROJECT_TAIL_RE.search(target)
     if pm and target[:pm.start()].strip():
@@ -124,7 +133,17 @@ def parse_find(clause: str) -> Optional[FindRequest]:
             target = target[:tm.start()].strip()
     if not target or _compact(target) in _BARE_SCOPE_WORDS:  # 『找檔案』『找資料夾』：沒說要找什麼
         return None
-    return FindRequest(verb_class, verb, target, frozenset(scope), project_target, s)
+    return FindRequest(verb_class, verb, target, frozenset(scope), project_target, s, query=_clean_query(query_src) or target)
+
+
+def _clean_query(t: str) -> str:
+    """網頁查詢：去掉開頭的指示詞（那個、一個、叫做…）和頭尾單獨的『的』，其餘不動"""
+    t = re.sub(r"\s+", " ", t).strip()
+    while True:
+        n = re.sub(r"^的+|的+$", "", _QUERY_NOISE_RE.sub("", t).strip()).strip()
+        if n == t:
+            return t
+        t = n
 
 
 def _clean_name(t: str) -> str:
@@ -173,7 +192,7 @@ def file_terms(target: str) -> FileTerms:
     em = _EXT_RE.match(name)
     ext = em["ext"].lower() if em else ""
     if ext in _EXT_KIND:  # 『report.pdf』：有副檔名就是字面檔名，不再拆類型詞
-        return FileTerms(em["stem"].strip(), [_EXT_KIND[ext]], since, location, True, name)
+        return FileTerms(em["stem"].strip(), [_EXT_KIND[ext]], since, location, True, name, True)
     if ext in _OTHER_EXT:  # 『驗收腳本.command』：副檔名留在檔名裡一起比對
         return FileTerms(name, [], since, location, True, name)
     kinds: List[str] = []
@@ -213,11 +232,14 @@ def resolve_intent(req: FindRequest, catalog, candidates: bool = False) -> Optio
     if _REALTIME_RE.search(t) and not (ft.has_ext or sc & {"file", "local"}):
         return Intent("web", v, t, {"query": t}, "realtime")
     # 本機證據：副檔名、『檔案／電腦裡／資料夾』、位置；或只說類型、時間（『找照片』『找昨天的』）
-    strong = ft.has_ext or bool(sc & {"file", "local", "folder"}) or bool(ft.location)
+    # 已知文件格式（pdf、png…）才算確定證據；.js、.command 這類（node.js 也是）只算『可能是檔案』：
+    # 『找／打開』仍會先搜本機，但 0 筆就轉交模型；『搜尋 node.js』直接走網頁
+    strong = ft.known_ext or bool(sc & {"file", "local", "folder"}) or bool(ft.location)
     weak = bool(ft.kinds or ft.since)
+    other_ext = ft.has_ext and not ft.known_ext
     if v != "search" and weak and ft.name and not strong:
         return None  # 『找最近的電影』『找影片教學』：類型、時間詞只是話題的一部分，交給模型判斷
-    if strong or (v != "search" and weak) or v == "find":
+    if strong or (v != "search" and (weak or other_ext)) or v == "find":
         kinds = list(ft.kinds)
         if "folder" in sc and "folder" not in kinds:
             kinds.append("folder")
@@ -227,7 +249,7 @@ def resolve_intent(req: FindRequest, catalog, candidates: bool = False) -> Optio
         source = "scope_word" if sc & {"file", "local", "folder"} else ("file_hint" if local_only else "default")
         slots = {"name": ft.name, "kinds": kinds, "since": ft.since, "location": ft.location, "filename": ft.filename,
                  "local_only": local_only}
-        return Intent("file", v, t, slots, source)
+        return Intent("file", v, t, slots, source, query=req.query)
     if v == "search":
         return Intent("web", v, t, {"query": t}, "default")
     return None

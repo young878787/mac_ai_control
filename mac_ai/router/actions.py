@@ -210,6 +210,8 @@ class ExecContext:
     chat_done: bool = False
     escalate: Optional[dict] = None  # 這一步的本機搜尋 0 筆、要轉交模型判斷：{"label", "scope"}（由 find_file 設定）
     chat_hint: Optional[str] = None  # 轉交時給 chat call 的本機結果，避免模型假裝找到
+    misheard: List[Tuple[str, str]] = field(default_factory=list)  # 整句的誤聽詞替換紀錄 (替換後, 原字)，還原原話查詢用
+    normalized: str = ""  # 正規化後的整句（還原誤聽詞時要在裡面定位）
 
 
 PAGE_SETTLE_S = 1.0  # 開網頁後至少等這麼久才開始問「載入完了嗎」（避免讀到舊頁面的 loading=false）

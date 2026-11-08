@@ -6,7 +6,7 @@ from mac_ai.router import catalog
 from mac_ai.router.actions import ExecContext, run_tool
 from mac_ai.router.fast_path import FastPathMatcher, Match
 from mac_ai.router.llm_client import LLMError, LLMUnavailable
-from mac_ai.router.normalize import log_normalization, normalize_utterance
+from mac_ai.router.normalize import log_normalization, normalize_utterance, restore_misheard
 from mac_ai.router.slow_path import execute_slow_path_llm, local_miss_reply
 
 
@@ -37,10 +37,15 @@ def _recover_slow_segment(clauses: List[str], matcher: FastPathMatcher, ctx: Exe
     return logs
 
 
-def _escalate_to_llm(text: str, step: dict, ctx: ExecContext) -> List[str]:
+def _escalate_to_llm(text: str, step: dict, ctx: ExecContext, run: Match) -> List[str]:
     """本機搜尋 0 筆、又沒有明確的本機證據（例如『找 python 教學』）：同一步把原句交給模型判斷。
-    模型可以改成網頁搜尋；沒有選任何動作或 LLM 不可用，都回保底的『找不到』並說明原因"""
+    模型只決定要不要上網；網頁搜尋的關鍵字一律用使用者的原話（不用模型改寫的字）。
+    沒有選任何動作或 LLM 不可用，都回保底的『找不到』並說明原因"""
     miss, ctx.escalate = ctx.escalate, None
+    t = time.perf_counter()
+    query = run.intent.query if run.intent is not None and run.intent.query else miss["label"]
+    miss["query"] = restore_misheard(ctx.normalized, query, ctx.misheard, getattr(run, "start", 0))
+    step["extract_ms"] = (time.perf_counter() - t) * 1000  # 原話查詢（含誤聽還原）的運算時間
     step["escalated"] = miss
     print(f"🧠 [本機沒有「{miss['label']}」，轉交 AI 判斷]")
     try:
@@ -60,7 +65,8 @@ def process_voice_command(stt_text: str) -> dict:
     catalog.DEFAULT.refresh_if_stale()  # 已安裝 App 清單超過一段時間就重掃（在指令執行緒做，不影響收音）
 
     t = time.perf_counter()
-    normalized = normalize_utterance(stt_text)
+    misheard: List[Tuple[str, str]] = []
+    normalized = normalize_utterance(stt_text, misheard)
     stages = {"normalize_ms": (time.perf_counter() - t) * 1000}
     log_normalization(stt_text, normalized)
     stt_text = normalized
@@ -73,9 +79,14 @@ def process_voice_command(stt_text: str) -> dict:
 
     t = time.perf_counter()
     segments: List[Tuple[str, List[str], Optional[Match]]] = []
+    cursor = 0
     for clause in clauses:
+        pos = stt_text.find(clause, cursor)  # 子句在整句中的位置（還原誤聽詞時用）
+        if pos >= 0:
+            cursor = pos + len(clause)
         run = matcher.match(clause)
         if run:
+            run.start = max(pos, 0)
             segments.append(("fast", [clause], run))
         elif segments and segments[-1][0] == "slow":
             segments[-1][1].append(clause)
@@ -83,7 +94,7 @@ def process_voice_command(stt_text: str) -> dict:
             segments.append(("slow", [clause], None))
     stages["match_ms"] = (time.perf_counter() - t) * 1000
 
-    ctx = ExecContext()
+    ctx = ExecContext(misheard=misheard, normalized=stt_text)
     steps = []
     for kind, texts, run in segments:
         text = "，".join(texts)
@@ -99,7 +110,7 @@ def process_voice_command(stt_text: str) -> dict:
             for log in logs:
                 print(f"⚡ [Fast Path | {(time.perf_counter() - step_start) * 1000:.2f}ms] 「{text}」 -> {log}")
             if ctx.escalate is not None:
-                more = _escalate_to_llm(text, step, ctx)
+                more = _escalate_to_llm(text, step, ctx, run)
                 for log in more:
                     print(f"   {log}")
                 logs = logs + more

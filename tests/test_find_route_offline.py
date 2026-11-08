@@ -1,4 +1,5 @@
 """LLM 這一側（A6）：web_search 依原句導向本機、App 名稱必須查得到、內部工具叫不到。"""
+import json
 import subprocess
 
 import pytest
@@ -136,7 +137,7 @@ def test_escalated_query_can_become_a_web_search(monkeypatch, find_env):
     (step,) = out["steps"]
     assert len(find_env.mdfinds()) == 1  # 先搜本機一次；模型的搜尋不會再被導回本機（不繞圈）
     assert any("google.com/search" in " ".join(c) for c in find_env.opens())
-    assert step["escalated"] == {"label": "python 教學", "scope": "家目錄，不含 ~/Library"}
+    assert step["escalated"] == {"label": "python 教學", "scope": "家目錄，不含 ~/Library", "query": "python 教學"}
     assert step["status"] == "ok" and step["llm_ms"] >= 0
     assert step["logs"][0].startswith("🔎 本機沒有符合「python 教學」")
     system, user = llm.calls[0][0]["content"], llm.calls[0][-1]["content"]
@@ -230,3 +231,87 @@ def test_the_suggested_next_step_really_searches_the_web(monkeypatch, find_env):
     monkeypatch.setattr(llm_client, "_chat", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("不該呼叫 LLM")))
     r.process_voice_command("搜尋 履歷")
     assert [c for c in find_env.opens()] == [["open", "https://www.google.com/search?q=%E5%B1%A5%E6%AD%B7"]]
+
+
+# ---------- 轉交時搜尋關鍵字用使用者的原話 ----------
+def google_queries(find_env):
+    import urllib.parse
+    return [urllib.parse.unquote(c[-1].split("q=")[-1]) for c in find_env.opens() if "google.com/search" in " ".join(c)]
+
+
+@pytest.mark.parametrize("spoken,model_query,expected", [
+    ("找蘋果官網", "Apple official website", "蘋果官網"),  # 模型翻成英文
+    ("找天文望遠鏡推薦", "天文望遠鏡推薦 2025", "天文望遠鏡推薦"),  # 模型憑空加年份
+    ("找台中的早午餐", "早午餐 地點", "台中的早午餐"),  # 模型丟掉『台中』
+    ("找靈感", "灵感 概念 灵感 想法", "靈感"),  # 模型混進簡體
+    ("找 python 教學", "Python 教學", "python 教學"),  # 只差大小寫也一律用原話
+])
+def test_escalated_web_search_uses_original_words(monkeypatch, find_env, spoken, model_query, expected):
+    monkeypatch.setattr(llm_client, "_chat", FakeLLM({"tool_calls": [_tc("web_search_or_open_url", json.dumps({"query": model_query}))]}))
+    out = r.process_voice_command(spoken)
+    (step,) = out["steps"]
+    assert google_queries(find_env) == [expected] and len(find_env.mdfinds()) == 1
+    assert step["model_query"] == model_query and step["used_query"] == expected  # 兩者都記下來，方便追查
+    assert step["status"] == "ok"
+
+
+def test_escalation_with_two_web_searches_opens_one_page(monkeypatch, find_env):
+    two = {"tool_calls": [_tc("web_search_or_open_url", '{"query":"A 一"}'), _tc("web_search_or_open_url", '{"query":"A 二"}')]}
+    monkeypatch.setattr(llm_client, "_chat", FakeLLM(two))
+    r.process_voice_command("找附近的餐廳")
+    assert google_queries(find_env) == ["附近的餐廳"]
+
+
+def test_model_search_outside_escalation_keeps_the_models_keywords(monkeypatch, sh):
+    """範圍：一般由模型發起的網頁搜尋（不是本機 0 筆轉交）這次不動，仍用模型給的關鍵字"""
+    llm_returns(monkeypatch, "web_search_or_open_url", '{"query":"台北天氣"}')
+    r.process_voice_command("今天台北會下雨嗎")
+    assert sh == [["open", "https://www.google.com/search?q=%E5%8F%B0%E5%8C%97%E5%A4%A9%E6%B0%A3"]]
+
+
+# ---------- 誤聽詞：正規化照舊替換（開 App 要用），查詢用原字 ----------
+def test_normalize_records_each_misheard_replacement_in_order():
+    from mac_ai.router.normalize import normalize_utterance
+    rec = []
+    assert normalize_utterance("開谷哥瀏覽器，找科索的評價", rec) == "開Google Chrome,找Cursor的評價"
+    assert rec == [("Google Chrome", "谷哥瀏覽器"), ("Cursor", "科索")]
+    assert normalize_utterance("開谷哥") == "開Google Chrome"  # 不傳 replacements：行為不變
+
+
+def test_misheard_word_in_a_query_is_restored_to_what_the_user_said(monkeypatch, find_env):
+    monkeypatch.setattr(llm_client, "_chat", FakeLLM({"tool_calls": [_tc("web_search_or_open_url", '{"query":"x"}')]}))
+    r.process_voice_command("找谷哥的評價")
+    assert google_queries(find_env) == ["谷哥的評價"]  # 不是「Google Chrome的評價」
+
+
+def test_misheard_word_still_opens_the_app_when_it_is_a_command(find_env):
+    r.process_voice_command("開谷哥")
+    assert find_env.opens() == [["open", "-a", "Google Chrome"]]
+
+
+def test_restore_picks_the_right_occurrence_across_clauses(monkeypatch, find_env):
+    monkeypatch.setattr(llm_client, "_chat", FakeLLM({"tool_calls": [_tc("web_search_or_open_url", '{"query":"x"}')]}))
+    r.process_voice_command("開谷哥瀏覽器，找谷哥的評價")  # 兩個子句各有一個替換：第二句要對到第二筆（谷哥），不是第一筆（谷哥瀏覽器）
+    assert find_env.opens()[0] == ["open", "-a", "Google Chrome"]
+    assert google_queries(find_env) == ["谷哥的評價"]
+
+
+def test_restore_is_skipped_when_it_cannot_be_matched():
+    from mac_ai.router.normalize import restore_misheard
+    rec = [("Google Chrome", "谷哥")]
+    assert restore_misheard("找谷哥的評價".replace("谷哥", "Google Chrome"), "Google Chrome的評價", rec) == "谷哥的評價"
+    # 使用者本來就說過「Google Chrome」：整句出現 2 次、替換紀錄只有 1 筆 → 分不出哪個是替換的，保持原樣
+    assert restore_misheard("找Google Chrome和Google Chrome", "Google Chrome和Google Chrome", rec) == "Google Chrome和Google Chrome"
+    assert restore_misheard("找x", "x", []) == "x" and restore_misheard("找x", "", rec) == ""
+    assert restore_misheard("找x", "不在句子裡的查詢", [("Cursor", "科索")]) == "不在句子裡的查詢"
+
+
+# ---------- 運算時間記錄 ----------
+def test_escalation_records_stage_timings(monkeypatch, find_env):
+    monkeypatch.setattr(llm_client, "_chat", FakeLLM({"tool_calls": [_tc("web_search_or_open_url", '{"query":"x"}')]}))
+    out = r.process_voice_command("找 python 教學")
+    (step,) = out["steps"]
+    assert {"find_ms", "extract_ms", "llm_ms", "validate_ms", "ms"} <= set(step)
+    assert 0 <= step["extract_ms"] < 5 and step["find_ms"] >= 0  # 原話查詢（含誤聽還原）的運算時間
+    assert step["ms"] >= step["find_ms"] + step["llm_ms"]
+    print(f"\n轉交各階段：搜本機 {step['find_ms']:.2f}ms｜截取原話 {step['extract_ms']:.3f}ms｜LLM(假) {step['llm_ms']:.2f}ms｜整步 {step['ms']:.2f}ms")

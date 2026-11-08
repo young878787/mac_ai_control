@@ -108,6 +108,13 @@ def plan_slow_path(utterance: str, meta: Optional[dict] = None,
         if err:
             rejected.append(err)
             continue
+        if func["name"] == "web_search_or_open_url" and local_miss is not None and local_miss.get("query"):
+            # 轉交：模型只決定要不要上網，關鍵字用使用者的原話（實測模型會加年份、翻成英文、丟字）
+            if meta is not None:
+                meta["model_query"], meta["used_query"] = clean["query"], local_miss["query"]
+            clean = {**clean, "query": local_miss["query"]}
+            if (func["name"], clean) in calls:
+                continue
         if func["name"] == "web_search_or_open_url" and local_miss is None:
             local = _local_reroute(utterance, clean["query"])
             if local is not None:

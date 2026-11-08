@@ -364,3 +364,48 @@ def test_read_screen_content_for_review(shots, fake_screen, name):
     assert res.startswith("✅") and ctx.replies
     assert r.to_traditional(ctx.replies[0]) == ctx.replies[0]
     assert list(Path(tempfile.gettempdir()).glob("macvoice_*")) == []
+
+
+# ---------- 量測（只報告，不設門檻）：一般路徑模型給的搜尋關鍵字 vs 使用者的原話 ----------
+REPORT_SENTENCES = [
+    "python 教學", "附近的餐廳", "咖啡廳推薦", "youtube", "蘋果官網", "taylor swift 的歌", "好看的電影", "notion", "rust 入門教材",
+    "台中的早午餐", "vim 快捷鍵", "高鐵時刻表", "docker 安裝", "周杰倫的歌", "日本旅遊攻略", "go 語言入門", "彰化的小吃", "tmux 設定",
+    "台鐵時刻表", "nginx 教學", "蔡依林的歌", "韓國旅遊攻略", "租屋資訊", "英文學習網站", "github", "天文望遠鏡推薦",
+]
+
+
+def test_report_model_keywords_vs_original_words(capsys):
+    """一般由模型發起的網頁搜尋（不是本機 0 筆轉交）目前仍用模型給的關鍵字。這個測試只量測並輸出：
+    模型的關鍵字和使用者原話差多少、每句耗時；轉交路徑已改用原話，不受這個數字影響"""
+    import re
+    from mac_ai.router.domain import parse_find
+    norm = lambda t: re.sub(r"\s+", "", t).casefold()
+    cjk = lambda t: bool(re.search(r"[一-鿿]", t))
+    kinds, rows, times = {}, [], []
+    r.warmup_llm()
+    for label in REPORT_SENTENCES:
+        text = "找" + (" " if label[0].isascii() else "") + label
+        original = parse_find(r.canonicalize_clause(r.normalize_utterance(text))).query
+        meta = {}
+        t = time.perf_counter()
+        calls, _, _ = r.plan_slow_path(text, meta)
+        ms = (time.perf_counter() - t) * 1000
+        times.append(ms)
+        queries = [a["query"] for n, a in calls if n == "web_search_or_open_url"]
+        if not queries:
+            kind = "沒選網頁搜尋"
+        else:
+            q = queries[0]
+            if norm(q) == norm(original): kind = "原話（含只差大小寫）"
+            elif cjk(original) and not cjk(q): kind = "翻成英文"
+            elif norm(original) in norm(q): kind = "原話＋額外的字"
+            elif not all(ch in norm(q) for ch in norm(original) if ch != "的"): kind = "丟掉原話的字"
+            else: kind = "改寫措辭"
+        kinds[kind] = kinds.get(kind, 0) + 1
+        rows.append(f"  {original:22s} {kind:14s} {queries[0] if queries else '-'!r:34s} {ms:6.0f}ms")
+    times.sort()
+    with capsys.disabled():
+        print(f"\n模型給的關鍵字 vs 原話（{len(REPORT_SENTENCES)} 句）：{kinds}")
+        print("\n".join(rows))
+        print(f"單次規劃耗時：中位 {times[len(times) // 2]:.0f}ms，最慢 {times[-1]:.0f}ms")
+    assert sum(kinds.values()) == len(REPORT_SENTENCES)
