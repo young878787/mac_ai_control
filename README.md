@@ -120,6 +120,22 @@ python main.py --ui               # 同時顯示桌面角色（需先完成「�
 
 啟動後會依序啟動 LLM（`mlx_vlm.server`）與 STT（`macos-stt serve`），等兩者就緒後開始收音。
 
+### 找 App、資料夾、檔案
+
+「找」「搜尋」「打開」會先判斷**範圍**（App、專案、資料夾、檔案、網頁），再決定動作，本機優先：
+
+| 說法 | 結果 |
+|---|---|
+| 找一下 ChatGPT／打開郵件 | 開啟已安裝的 App（也認系統語言的名稱，如「郵件」「計算機」） |
+| 打開下載資料夾／找桌面 | 在 Finder 開啟資料夾 |
+| 找 report.pdf／找昨天下載的 PDF／找桌面上的截圖 | 用 Spotlight 搜家目錄（排除 `~/Library`、隱藏資料夾、`node_modules`），預設**在 Finder 中顯示**；說「打開」才開檔，可執行檔（`.command`、`.sh`、`.app`…）一律只顯示 |
+| 找履歷、找 python 教學（沒有本機證據） | 先當檔名找；0 筆時轉交模型判斷，可能改開網頁搜尋；模型也判斷不用查、或模型沒開，就回「找不到」並說明原因 |
+| 找 report.pdf、在電腦裡找履歷、找下載的履歷（有本機證據） | 0 筆時只回「本機沒有」，不會改開網頁 |
+| 找到了、找不到我的鑰匙、找最近的電影 | 不是找檔案：直接交給模型判斷 |
+| 搜尋台北天氣／網路上找 Xcode／找台北天氣 | Google 搜尋（`搜尋`、`查` 沒帶「電腦裡」「App」「檔案」之類範圍詞時維持網頁搜尋） |
+
+找到多筆時列出前 5 筆（60 秒內有效）：說「第二個」「打開第三個」「在 Finder 顯示第一個」「最後一個」選擇；桌面角色會顯示清單，點整列執行預設動作，點列尾按鈕執行另一個動作。範圍判斷的結果會記在每一步的 `step["intent"]`，判斷錯了可以從這裡追查。
+
 ## 桌面角色
 
 `--ui` 會另外啟動一個 Electron 視窗（`desktop/`）：透明、置頂、可穿透點擊（只有角色身體與泡泡會吃到滑鼠），出現在所有桌面空間。後端與視窗用本機 WebSocket（`127.0.0.1:8766`，連線需帶啟動時產生的 token）溝通；沒加 `--ui` 時完全不會啟動這些東西。
@@ -148,8 +164,9 @@ ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/inst
 | 點頭部 | 出場並開啟會話；點身體：開心動作 |
 | 拖曳 | 只能沿螢幕下緣左右移動，位置會記住 |
 | 右鍵 | 對話紀錄／暫停聽指令／結束 |
+| 點搜尋結果清單的一列 | 執行清單的預設動作（顯示或打開）；列尾按鈕執行另一個 |
 
-不用麥克風也能預覽演出：`python scripts/ui_demo.py`（`--hold` 播完後保持執行，可手動操作）。效能量測：`python scripts/ui_perf.py`。
+不用麥克風也能預覽演出：`python scripts/ui_demo.py`（`--hold` 播完後保持執行，可手動操作；`--choices-test` 驗證搜尋結果清單）。效能量測：`python scripts/ui_perf.py`。
 
 ## 端點偵測（說完就收）
 
@@ -182,14 +199,14 @@ cd desktop && node --test   # 桌面角色的狀態機與路徑白名單測試
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
 | `mac_ai/wake.py` | 喚醒詞閘門與會話 |
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
-| `mac_ai/router/` | 正規化、Fast Path、Slow Path（LLM）、動作執行 |
+| `mac_ai/router/` | 正規化、Fast Path、Slow Path（LLM）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單 |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
 | `desktop/` | 桌面角色（Electron）：`main.js` 視窗與連線、`state.js` 狀態機、`renderer/` 畫面與 Live2D |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`） |
 | `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
 | `vocab/stt_hints.txt` | 由 `build_vocab.py` 產生，餵給語音辨識當提示詞 |
-| `docs/` | 設計與實作計畫（端點偵測、桌面角色與喚醒會話） |
+| `docs/` | 設計與實作計畫（端點偵測、桌面角色與喚醒會話、本機優先的找東西分流） |
 | `tests/` | 離線測試與 live 測試 |
 
 修改 `vocab/lexicon.json` 後，`main.py` 啟動時會自動重新產生詞表；也可以手動執行 `python build_vocab.py`。
