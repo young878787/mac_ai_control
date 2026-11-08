@@ -19,18 +19,29 @@ def lexicon_wake_words() -> List[str]:
     return [*wake.get("names", []), *wake.get("misheard", [])]
 
 
-def split_wake(text: str, words: Sequence[str]) -> Optional[str]:
-    """句首是喚醒詞 → 回傳去掉喚醒詞與其後標點、空白的剩餘文字（可能為空字串）；否則回傳 None。
-    只做句首的完全比對（忽略大小寫、全半形、標點與空白），不做模糊比對"""
+def lexicon_wake_greetings() -> List[str]:
+    """可以放在喚醒詞前面的招呼詞（嘿、嗨…）"""
+    return list(LEXICON.get("wake_words", {}).get("greetings", []))
+
+
+def _key(word: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFKC", word) if not _skippable(ch)).lower()
+
+
+def split_wake(text: str, words: Sequence[str], greetings: Sequence[str] = ()) -> Optional[str]:
+    """句首是喚醒詞（前面可以有一個招呼詞，如「嘿露西亞」）→ 回傳去掉喚醒詞與其後標點、空白的剩餘文字
+    （可能為空字串）；否則回傳 None。只做句首的完全比對（忽略大小寫、全半形、標點與空白），不做模糊比對"""
     t = unicodedata.normalize("NFKC", text)
     chars = [(ch, i) for i, ch in enumerate(t) if not _skippable(ch)]
     compact = "".join(ch for ch, _ in chars).lower()
-    for word in sorted(words, key=len, reverse=True):
-        key = "".join(ch for ch in unicodedata.normalize("NFKC", word) if not _skippable(ch)).lower()
-        if key and compact.startswith(key):
-            rest = t[chars[len(key) - 1][1] + 1:]
-            skip = next((i for i, ch in enumerate(rest) if not _skippable(ch)), len(rest))
-            return rest[skip:]
+    keys = [k for k in (_key(w) for w in sorted(words, key=len, reverse=True)) if k]
+    starts = [0] + [len(g) for g in (_key(g) for g in greetings) if g and compact.startswith(g)]
+    for start in starts:
+        for key in keys:
+            if compact.startswith(key, start):
+                rest = t[chars[start + len(key) - 1][1] + 1:]
+                skip = next((i for i, ch in enumerate(rest) if not _skippable(ch)), len(rest))
+                return rest[skip:]
     return None
 
 
@@ -42,9 +53,12 @@ class WakeResult:
 
 class WakeGate:
     def __init__(self, words: Optional[Sequence[str]] = None, session_s: float = WAKE_SESSION_S,
-                 clock: Callable[[], float] = time.monotonic, enabled: bool = WAKE_WORD_ENABLED):
+                 clock: Callable[[], float] = time.monotonic, enabled: bool = WAKE_WORD_ENABLED,
+                 greetings: Optional[Sequence[str]] = None):
         self.enabled = enabled
         self.words = list(words) if words is not None else lexicon_wake_words()
+        # 沒指定喚醒詞時（用詞庫）招呼詞也用詞庫的；自訂喚醒詞時預設沒有招呼詞
+        self.greetings = list(greetings) if greetings is not None else (lexicon_wake_greetings() if words is None else [])
         if enabled and not self.words:
             raise ValueError("沒有設定喚醒詞（vocab/lexicon.json 的 wake_words）")
         self.session_s = session_s
@@ -69,7 +83,7 @@ class WakeGate:
 
     def feed(self, text: str) -> WakeResult:
         """處理 STT 辨識出的一句話。會話內每個有內容的句子都重新計時；空白或只有標點的句子不算"""
-        rest = split_wake(text, self.words)
+        rest = split_wake(text, self.words, self.greetings)
         if not self.enabled:  # 常啟動：整句就是指令；句首若仍帶喚醒詞就去掉
             command = text if rest is None else rest
             if all(_skippable(ch) for ch in unicodedata.normalize("NFKC", command)):

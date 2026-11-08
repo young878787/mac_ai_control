@@ -56,11 +56,21 @@ class Match:
         return "；".join(self.run(ctx))
 
 
-_SEARCH = _alt(["搜尋", "搜索", "查詢", "查一下", "查查", "查"])
+_SEARCH = "(?:" + _alt(["搜尋", "搜索", "查詢", "查一下", "查查", "查"]) + ")(?:一下下|一下|看看)?"  # 動詞後的語氣詞不算關鍵字
+_TAB = r"(?:分頁|標籤頁|標籤|頁籤)"
+_THIS_TAB = r"(?:這個|目前的?|現在的?|當前的?)?"
+# 疑問句尾：『搜尋嗎』這種不是搜尋指令
+_QUESTION_END_RE = re.compile(r"[嗎呢?]$")
 _DARK = "(?:深色|暗黑|夜間|暗色|黑暗)"
 _LIGHT = "(?:淺色|亮色|日間)"
 _VOL_SET = r"(?:調到|調成|調整到|調整為|設為|設定為|設成|設定成|開到|改成|改為|到|成|為)?"
 _I = re.IGNORECASE
+
+
+_SNAP = r"(?:螢幕|畫面)?(?:截圖|截屏|截個圖|截張圖|截一張圖|截一下圖|擷取畫面|截取畫面|截(?:一下)?(?:這張|這個|目前的?|現在的?)(?:圖片|圖|畫面|螢幕))"
+_LOOK = r"(?:並且|並|然後|再|後)?(?:看看|看|說明|解讀|分析|辨識|辨認|描述|讀|念)?"
+_THING = r"(?:這張|這個|這幅|目前的?|現在的?)?(?:圖片|圖|畫面|螢幕|內容)"
+_WHAT = r"(?:上)?(?:在)?(?:說|寫|講|有|顯示|是)(?:了)?什麼"
 
 
 class FastPathMatcher:
@@ -69,6 +79,11 @@ class FastPathMatcher:
         re.compile(r"^(?:辨識|辨認|識別|解讀|分析|看看|看|讀|念)(?:一下)?(?:目前的?|現在的?|這個?)?(?:(?:頁面|網頁|畫面|頁|螢幕)(?:上)?(?:的)?(?:內容)?|內容)$"),
         re.compile(r"^(?:這個?)?(?:頁面|網頁|畫面|頁)(?:上)?(?:在)?(?:寫|說|講|有|顯示)(?:了)?什麼$"),
         re.compile(r"^(?:螢幕|畫面)上有什麼$"),
+        # 截圖：『截圖』『截個圖看看』『截圖看這張圖片在說什麼』『截這張圖』
+        re.compile(rf"^{_SNAP}{_LOOK}(?:{_THING}(?:{_WHAT})?)?$"),
+        # 『看這張圖片』『這張圖在說什麼』
+        re.compile(rf"^(?:看看|看|讀|念|辨識|分析|解讀|說明)(?:一下)?(?:這張|這個|這幅)(?:圖片|圖)(?:{_WHAT})?$"),
+        re.compile(rf"^(?:這張|這個|這幅)(?:圖片|圖){_WHAT}$"),
     )
     # --- 其餘規則 ---
     _open_search_re = re.compile(rf"^(?P<v>{_OPEN})(?:一下|個)?\s*(?P<app>.+?)\s*(?:並且|並|然後|再|且)?\s*(?:{_SEARCH})\s*(?P<q>.+)$", _I)
@@ -88,6 +103,11 @@ class FastPathMatcher:
     _dark_off_re = re.compile(rf"^(?:(?:關掉|關閉|關|停用|取消|退出)(?:一下)?{_DARK}模式|(?:切換到|切換成|切到|切成|換成|改成|轉成)(?:一下)?{_LIGHT}模式|(?:打開|開啟|開|啟用){_LIGHT}模式)$")
     _dark_toggle_re = re.compile(rf"^切換{_DARK}模式$")
     _lock_res = (re.compile(r"^(?:鎖定|鎖)(?:螢幕|屏幕|畫面|電腦|屏)$"), re.compile(r"^(?:把)?(?:螢幕|電腦)(?:鎖定|鎖起來|鎖住)$"))
+    _tab_new_re = re.compile(rf"^(?:再)?(?:{_OPEN}|新增|新建|建立|增加)(?:一下|一個|個|一張)?\s*(?:新的?|空白)?{_TAB}$|^新的?{_TAB}$")
+    _tab_close_re = re.compile(rf"^(?:{_QUIT})(?:一下)?\s*{_THIS_TAB}{_TAB}$")
+    _tab_reload_re = re.compile(rf"^(?:重新整理|重新載入|重新讀取|重整|刷新)(?:一下)?{_THIS_TAB}(?:{_TAB}|頁面|網頁|頁)?$")
+    _tab_next_re = re.compile(rf"^(?:(?:切換|跳|切|換)(?:到|去)?)?(?:下一個|下個|下一張|後一個|右邊的?){_TAB}$")
+    _tab_prev_re = re.compile(rf"^(?:(?:切換|跳|切|換)(?:到|去)?)?(?:上一個|上個|上一張|前一個|左邊的?){_TAB}$")
     _app_re = re.compile(rf"^(?P<v>{_VERB})(?:一下|個|一個)?\s*(?:那個|這個)?\s*(?P<app>.+)$", _I)
 
     def split_clauses(self, text: str) -> List[str]:
@@ -108,10 +128,15 @@ class FastPathMatcher:
         for pattern in self._read_screen_re:
             if pattern.match(s):
                 return Match([("read_screen", {})])
+        # 句首是明確的搜尋動詞：關鍵字裡的疑問詞（『搜尋台北天氣怎麼樣』）是搜尋內容，不是在問助理，所以先於問句守門
+        for rule in (self._r_open_search, self._r_search):
+            m = rule(s, candidates)
+            if m is not None:
+                return m
         if _QUESTION_RE.search(s):
             return None
         for rule in (
-            self._r_open_search, self._r_search, self._r_project, self._r_volume, self._r_mute,
+            self._r_tab, self._r_project, self._r_volume, self._r_mute,
             self._r_brightness, self._r_dark, self._r_lock, self._r_app,
         ):
             m = rule(s, candidates)
@@ -126,6 +151,8 @@ class FastPathMatcher:
         if not m or not m["q"].strip():
             return None
         query = m["q"].strip()
+        if _QUESTION_END_RE.search(query):
+            return None
         search = ("web_search_or_open_url", {"query": query})
         if _compact(m["app"]) in ("瀏覽器", "browser"):
             return Match([search])
@@ -140,8 +167,17 @@ class FastPathMatcher:
             m = pattern.match(s)
             if m:
                 query = m["q"].strip()
-                if query and not query.startswith("看"):  # 『查看…』不是搜尋
+                if query and not query.startswith("看") and not _QUESTION_END_RE.search(query):  # 『查看…』不是搜尋
                     return Match([("web_search_or_open_url", {"query": query})])
+        return None
+
+    def _r_tab(self, s: str, candidates: bool) -> Optional[Match]:
+        for pattern, action in (
+            (self._tab_new_re, "new"), (self._tab_close_re, "close"), (self._tab_reload_re, "reload"),
+            (self._tab_next_re, "next"), (self._tab_prev_re, "previous"),
+        ):
+            if pattern.match(s):
+                return Match([("browser_tab", {"action": action})])
         return None
 
     def _r_project(self, s: str, candidates: bool) -> Optional[Match]:

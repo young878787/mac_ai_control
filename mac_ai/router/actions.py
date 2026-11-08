@@ -1,6 +1,8 @@
 """macOS 底層控制執行器、執行上下文、讀畫面與 chat call。"""
 import base64
+import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -87,6 +89,73 @@ def web_search_or_open_url(query: str, browser: Optional[str] = None) -> str:
     return f"✅ 已開啟瀏覽器搜尋：{query}" if ok else f"❌ 開啟瀏覽器失敗（{err}）"
 
 
+TAB_BROWSERS = ("Safari", "Google Chrome")  # 支援分頁操作的瀏覽器；沒有明確目標時依此順序挑
+_FRONT_AND_RUNNING_SCRIPT = (
+    "set AppleScript's text item delimiters to \",\"\n"
+    'tell application "System Events"\n'
+    "set frontName to name of first application process whose frontmost is true\n"
+    "set appNames to (name of every application process whose background only is false) as text\n"
+    "end tell\n"
+    "return frontName & linefeed & appNames"
+)
+_SAFARI_TAB_STEP = (
+    'tell application "Safari"\ntell front window\n{body}\nend tell\nend tell'
+)
+_CHROME_TAB_STEP = (
+    'tell application "Google Chrome"\ntell front window\n{body}\nend tell\nend tell'
+)
+_TAB_SCRIPTS = {
+    "Safari": {
+        "new": (
+            'tell application "Safari"\nactivate\nif (count of windows) = 0 then\nmake new document\nelse\n'
+            "tell front window to set current tab to (make new tab)\nend if\nend tell"
+        ),
+        "close": 'tell application "Safari" to close current tab of front window',
+        "reload": 'tell application "Safari" to set URL of current tab of front window to (URL of current tab of front window)',
+        "next": _SAFARI_TAB_STEP.format(body="set n to count of tabs\nset i to index of current tab\nset current tab to tab (i mod n + 1)"),
+        "previous": _SAFARI_TAB_STEP.format(body="set n to count of tabs\nset i to index of current tab\nset current tab to tab ((i - 2 + n) mod n + 1)"),
+    },
+    "Google Chrome": {
+        "new": (
+            'tell application "Google Chrome"\nactivate\nif (count of windows) = 0 then\nmake new window\nelse\n'
+            "tell front window\nmake new tab\nset active tab index to (count of tabs)\nend tell\nend if\nend tell"
+        ),
+        "close": 'tell application "Google Chrome" to close active tab of front window',
+        "reload": 'tell application "Google Chrome" to reload active tab of front window',
+        "next": _CHROME_TAB_STEP.format(body="set active tab index to (active tab index mod (count of tabs)) + 1"),
+        "previous": _CHROME_TAB_STEP.format(body="set active tab index to ((active tab index - 2 + (count of tabs)) mod (count of tabs)) + 1"),
+    },
+}
+_TAB_DONE_TEXT = {"new": "已開新分頁", "close": "已關閉目前分頁", "reload": "已重新整理", "next": "已切到下一個分頁", "previous": "已切到上一個分頁"}
+
+
+def _pick_tab_browser(hint: Optional[str]) -> Tuple[Optional[str], str]:
+    """決定要操作哪個瀏覽器：hint（這次指令剛開的瀏覽器）→ 最前景的瀏覽器 → 正在執行的瀏覽器。
+    回傳 (瀏覽器名稱或 None, 查詢失敗的原因)"""
+    if hint in TAB_BROWSERS:
+        return hint, ""
+    ok, out = _run(["osascript", "-e", _FRONT_AND_RUNNING_SCRIPT], POLL_TIMEOUT_S)
+    if not ok:
+        return None, out
+    lines = out.splitlines()
+    front = lines[0].strip() if lines else ""
+    if front in TAB_BROWSERS:
+        return front, ""
+    running = [n.strip() for n in lines[1].split(",")] if len(lines) > 1 else []
+    return next((b for b in TAB_BROWSERS if b in running), None), ""
+
+
+def browser_tab(action: str, browser: Optional[str] = None) -> str:
+    """對 Safari／Google Chrome 的分頁操作（new／close／reload／next／previous）；browser 由執行上下文帶入"""
+    if action not in _TAB_DONE_TEXT:
+        return f"⚠️ 未知的分頁動作：{action}"
+    target, err = _pick_tab_browser(browser)
+    if target is None:
+        return f"❌ 找不到可操作的瀏覽器（支援 Safari、Google Chrome，請先開啟）" + (f"（{err}）" if err else "")
+    ok, err = _run(["osascript", "-e", _TAB_SCRIPTS[target][action]], EXTERNAL_TIMEOUT_S)
+    return f"✅ {target}：{_TAB_DONE_TEXT[action]}" if ok else f"❌ 分頁操作失敗：{target}（{err}）"
+
+
 def system_power_action(action: str) -> str:
     """控制深色模式、睡眠或鎖定螢幕"""
     if action == "toggle_dark_mode":
@@ -147,6 +216,17 @@ PAGE_FIXED_WAIT_S = 2.5  # 非 Chrome 無法查載入狀態，固定等待
 EXTERNAL_TIMEOUT_S = 15.0  # screencapture／sips 逾時
 POLL_TIMEOUT_S = 5.0  # 查 Chrome 載入狀態的 osascript 逾時（第一次可能跳出自動化授權）
 SCREEN_MAX_PX = 1280
+# 說到「頁面／網頁」就只截前景瀏覽器的視窗（被其他視窗擋住也截得到）；其餘（螢幕、截圖、畫面）截整個主螢幕
+_PAGE_WORDS_RE = re.compile(r"頁|網站")
+# CGWindowList 由前到後排序：第一個符合的就是最前面的瀏覽器視窗（layer 0＝一般視窗，排除選單列、浮動面板）
+_FRONT_BROWSER_WINDOW_SCRIPT = (
+    'ObjC.import("CoreGraphics");'
+    "const owners = __OWNERS__;"
+    "const wins = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, 0)));"
+    "const w = wins.find(w => w.kCGWindowLayer === 0 && owners.includes(w.kCGWindowOwnerName)"
+    " && w.kCGWindowBounds.Width > 300 && w.kCGWindowBounds.Height > 200);"
+    'w ? [w.kCGWindowNumber, w.kCGWindowOwnerName, (w.kCGWindowName || "").replace(/\\s+/g, " ")].join("\\t") : ""'
+)
 SCREEN_QUESTION = "這個畫面在顯示什麼？用繁體中文條列重點。"
 SCREEN_SYSTEM_PROMPT = "你是螢幕內容辨識助手。用繁體中文條列重點，最多 5 點，只描述畫面上看得到的內容，不要編造。"
 CHAT_SYSTEM_PROMPT = (
@@ -174,20 +254,47 @@ def _wait_for_page(ctx: ExecContext) -> None:
     ctx.page_pending = None
 
 
+def _front_browser_window(browser: Optional[str]) -> Optional[Tuple[str, str, str]]:
+    """最前面的瀏覽器視窗 → (視窗編號, 瀏覽器, 標題)；browser 是這次指令剛開的瀏覽器，有的話只找它。
+    沒有瀏覽器視窗（沒開、最小化、在別的桌面）或查詢失敗回傳 None"""
+    owners = [browser] if browser in TAB_BROWSERS else list(TAB_BROWSERS)
+    script = _FRONT_BROWSER_WINDOW_SCRIPT.replace("__OWNERS__", json.dumps(owners))
+    ok, out = _run(["osascript", "-l", "JavaScript", "-e", script], POLL_TIMEOUT_S)
+    parts = out.split("\t") if ok else []
+    if len(parts) < 2 or not parts[0].isdigit():
+        return None
+    return parts[0], parts[1], parts[2] if len(parts) > 2 else ""
+
+
 def read_screen(ctx: Optional[ExecContext] = None) -> str:
-    """截主螢幕 → sips 縮到 1280 → 送 VL 模型辨識；辨識結果寫入 ctx.replies。暫存檔一律刪除"""
+    """截圖 → sips 縮到 1280 → 送 VL 模型辨識；辨識結果寫入 ctx.replies。暫存檔一律刪除。
+    語句提到頁面／網頁時只截前景瀏覽器視窗（找不到或截失敗就退回整個主螢幕）；結果會註明截的是什麼"""
     ctx = ctx or ExecContext()
     step = ctx.step if ctx.step is not None else {}
     t = time.perf_counter()
     _wait_for_page(ctx)
     step["wait_ms"] = (time.perf_counter() - t) * 1000
+    window = None
+    if _PAGE_WORDS_RE.search(ctx.utterance):
+        t = time.perf_counter()
+        window = _front_browser_window(ctx.last_browser)
+        step["window_ms"] = (time.perf_counter() - t) * 1000
 
     tmp = Path(tempfile.mkdtemp(prefix="macvoice_"))
     try:
         raw, small = tmp / "screen.png", tmp / "screen_small.png"
         t = time.perf_counter()
-        ok, err = _run(["screencapture", "-x", "-m", str(raw)], EXTERNAL_TIMEOUT_S)
+        target = "整個螢幕"
+        ok = False
+        if window:
+            ok, err = _run(["screencapture", "-x", "-o", "-l", window[0], str(raw)], EXTERNAL_TIMEOUT_S)
+            ok = ok and raw.exists() and raw.stat().st_size > 0
+            if ok:
+                target = f"{window[1]}視窗" + (f"「{window[2]}」" if window[2] else "")
+        if not ok:
+            ok, err = _run(["screencapture", "-x", "-m", str(raw)], EXTERNAL_TIMEOUT_S)
         step["capture_ms"] = (time.perf_counter() - t) * 1000
+        step["capture_target"] = target
         if not ok or not raw.exists() or raw.stat().st_size == 0:
             return f"❌ 截圖失敗（{err or '沒有輸出檔'}；請確認已授權螢幕錄製）"
         t = time.perf_counter()
@@ -217,7 +324,7 @@ def read_screen(ctx: Optional[ExecContext] = None) -> str:
         if not text:
             return "❌ 畫面辨識沒有輸出內容"
         ctx.replies.append(text)
-        return f"✅ 畫面內容：{text}"
+        return f"✅ 畫面內容（{target}）：{text}"
     except OSError as e:
         return f"❌ 讀取截圖失敗（{e}）"
     finally:
@@ -257,6 +364,7 @@ AVAILABLE_FUNCTIONS = {
     "set_system_volume": set_system_volume,
     "adjust_screen_brightness": adjust_screen_brightness,
     "web_search_or_open_url": web_search_or_open_url,
+    "browser_tab": browser_tab,
     "system_power_action": system_power_action,
     "open_project": open_project,
     "read_screen": read_screen,
@@ -294,6 +402,10 @@ def _dispatch(name: str, args: dict, ctx: ExecContext) -> str:
             ctx.failed.discard("page")
             ctx.page_pending = {"t": time.monotonic()}
         return res
+    if name == "browser_tab":
+        if "browser" in ctx.failed:
+            return _skipped(name)
+        return browser_tab(args["action"], ctx.last_browser)
     if name == "open_project":
         if "editor" in ctx.failed:
             return _skipped(name)

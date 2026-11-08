@@ -199,7 +199,7 @@ def test_chat_request_body(monkeypatch):
     assert llm_client._chat([{"role": "user", "content": "hi"}]) == {"content": "ok"}
     assert captured["url"].endswith("/chat/completions")
     assert captured["enable_thinking"] is False
-    assert len(captured["tools"]) == 8
+    assert len(captured["tools"]) == 9
     assert (captured["temperature"], captured["top_k"], captured["repetition_penalty"]) == (0.1, 50, 1.1)
 
 

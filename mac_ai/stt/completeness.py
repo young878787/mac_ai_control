@@ -11,7 +11,7 @@ from typing import Optional
 from mac_ai import config
 from mac_ai.router.fast_path import FastPathMatcher
 from mac_ai.router.normalize import normalize_utterance
-from mac_ai.wake import lexicon_wake_words, split_wake
+from mac_ai.wake import lexicon_wake_greetings, lexicon_wake_words, split_wake
 
 COMPLETE, INCOMPLETE, UNKNOWN = "complete", "incomplete", "unknown"
 
@@ -39,7 +39,7 @@ def classify(text: Optional[str], wake_enabled: bool = config.WAKE_WORD_ENABLED)
     t = unicodedata.normalize("NFKC", text or "").strip()
     if not t:
         return UNKNOWN
-    rest = split_wake(t, lexicon_wake_words())  # 與 WakeGate 一致：停用時句首的喚醒詞同樣會被去掉
+    rest = split_wake(t, lexicon_wake_words(), lexicon_wake_greetings())  # 與 WakeGate 一致：停用時句首的喚醒詞同樣會被去掉
     if rest is not None:
         if not _strip_tail(rest):
             return INCOMPLETE if wake_enabled else UNKNOWN  # 啟用時只說了喚醒詞，指令還在後面

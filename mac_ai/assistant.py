@@ -60,7 +60,7 @@ class CommandRouter:
                 self._show_partial(event["text"])
             if event.get("text") and not self.paused:
                 self._publish({"type": "partial", "text": event["text"],
-                               "wake": split_wake(event["text"], self.gate.words) is not None})
+                               "wake": split_wake(event["text"], self.gate.words, self.gate.greetings) is not None})
         elif kind in ("utterance", "final"):
             text = (event.get("text") or "").strip()
             if text:

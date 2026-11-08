@@ -1,6 +1,6 @@
 """語音指令路由器：正規化 → Fast Path／Slow Path（LLM）→ 執行 macOS 動作。"""
 from mac_ai.router.actions import (
-    ExecContext, adjust_screen_brightness, control_mac_app, open_project, read_screen,
+    ExecContext, adjust_screen_brightness, browser_tab, control_mac_app, open_project, read_screen,
     set_system_volume, system_power_action, web_search_or_open_url,
 )
 from mac_ai.router.fast_path import FastPathMatcher, canonicalize_clause

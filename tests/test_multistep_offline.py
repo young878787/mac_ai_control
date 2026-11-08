@@ -249,10 +249,11 @@ def test_open_project_missing_path(sh, monkeypatch, tmp_path):
 class Screen:
     """假的螢幕環境：截圖與縮圖會真的寫出檔案；Chrome 的 loading 依序回傳 loading_seq"""
 
-    def __init__(self, monkeypatch, tmp_path, loading_seq=("false",), vl_reply="天氣：晴，氣溫 25 度"):
+    def __init__(self, monkeypatch, tmp_path, loading_seq=("false",), vl_reply="天氣：晴，氣溫 25 度", window_out=""):
         self.calls, self.sleeps, self.vl_messages = [], [], []
         self.loading_seq = list(loading_seq)
         self.vl_reply = vl_reply
+        self.window_out = window_out  # 查前景瀏覽器視窗（JXA）的輸出；空字串＝沒有瀏覽器視窗
         monkeypatch.setattr(subprocess, "run", self.run)
         monkeypatch.setattr(time, "sleep", self.sleeps.append)
         monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
@@ -265,6 +266,8 @@ class Screen:
             Path(cmd[-1]).write_bytes(b"BIG")
         elif cmd[0] == "sips":
             Path(cmd[cmd.index("--out") + 1]).write_bytes(b"SMALL")
+        elif cmd[:3] == ["osascript", "-l", "JavaScript"]:
+            out = self.window_out
         elif cmd[0] == "osascript" and "loading of active tab" in cmd[2]:
             out = self.loading_seq.pop(0) if len(self.loading_seq) > 1 else self.loading_seq[0]
         return subprocess.CompletedProcess(cmd, 0, out, "")
@@ -288,9 +291,11 @@ def test_browse_search_then_read_screen(monkeypatch, tmp_path, text):
     s = Screen(monkeypatch, tmp_path, loading_seq=("true", "true", "false"))
     out = r.process_voice_command(text)
     assert s.calls[:2] == [APP(CHROME), SEARCH("台北天氣", CHROME)]
-    assert s.names == ["open", "open", "osascript", "osascript", "osascript", "screencapture", "sips"]  # 輪詢 3 次後才截圖
-    assert s.calls[5][:3] == ["screencapture", "-x", "-m"]
-    assert s.calls[6][:3] == ["sips", "-Z", "1280"]
+    # 輪詢 3 次後才截圖；說「這頁」會先查前景瀏覽器視窗（這裡沒有視窗，退回整個螢幕）
+    assert s.names == ["open", "open", "osascript", "osascript", "osascript", "osascript", "screencapture", "sips"]
+    assert s.calls[5][:3] == ["osascript", "-l", "JavaScript"]
+    assert s.calls[6][:3] == ["screencapture", "-x", "-m"]
+    assert s.calls[7][:3] == ["sips", "-Z", "1280"]
     # VL 請求：不帶 tools、max_tokens 256、含縮圖的 data URI
     (messages, kw), = s.vl_messages
     assert kw["tools"] is False and kw["max_tokens"] == 256 and kw["timeout"] == config.VISION_TIMEOUT_S
@@ -306,14 +311,14 @@ def test_browse_search_then_read_screen(monkeypatch, tmp_path, text):
 def test_read_screen_waits_fixed_time_for_non_chrome(monkeypatch, tmp_path):
     s = Screen(monkeypatch, tmp_path)
     r.process_voice_command("開 Safari，搜尋台北天氣，辨識這頁")
-    assert "osascript" not in s.names  # Safari 無法查載入狀態
+    assert not any("loading of active tab" in " ".join(c) for c in s.calls)  # Safari 無法查載入狀態
     assert sum(s.sleeps) >= actions.PAGE_FIXED_WAIT_S - 0.5
 
 
 def test_read_screen_without_page_does_not_wait(monkeypatch, tmp_path):
     s = Screen(monkeypatch, tmp_path)
     out = r.process_voice_command("辨識這頁")
-    assert s.names == ["screencapture", "sips"] and s.sleeps == []
+    assert s.names == ["osascript", "screencapture", "sips"] and s.sleeps == []  # osascript＝查瀏覽器視窗
     assert out["replies"] == ["天氣：晴，氣溫 25 度"]
 
 
@@ -509,7 +514,7 @@ def test_tools_and_chat_run_in_listed_order(monkeypatch, sh):
 
 def test_new_tools_in_schema():
     names = [t["function"]["name"] for t in r.TOOLS_SCHEMA]
-    assert names[-3:] == ["open_project", "read_screen", "chat_reply"] and len(names) == 8
+    assert names[-3:] == ["open_project", "read_screen", "chat_reply"] and len(names) == 9
     enum = tools._SCHEMA_BY_NAME["system_power_action"]["properties"]["action"]["enum"]
     assert {"dark_mode_on", "dark_mode_off", "toggle_dark_mode"} <= set(enum)
     assert r.validate_tool_call("read_screen", {}) == ({}, None)
