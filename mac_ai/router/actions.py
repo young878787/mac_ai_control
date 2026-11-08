@@ -331,6 +331,11 @@ def read_screen(ctx: Optional[ExecContext] = None) -> str:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _strip_think(text: str) -> str:
+    """去掉模型洩漏的思考內容：只留最後一個 </think> 之後的文字（實測沒有開頭標籤也會洩漏）；沒結束的 <think> 整段丟掉"""
+    return re.sub(r"<think>.*", "", text.rsplit("</think>", 1)[-1], flags=re.DOTALL).strip()
+
+
 def chat_reply(ctx: Optional[ExecContext] = None) -> str:
     """chat call：把這一步的原句直接當成使用者訊息送入模型（不帶 tools），回覆寫入 ctx.replies。
     同一步只回覆一次；失敗只記錄，不拋例外"""
@@ -354,7 +359,7 @@ def chat_reply(ctx: Optional[ExecContext] = None) -> str:
     finally:
         step["chat_ms"] = (time.perf_counter() - t) * 1000
         step["chat"] = meta
-    reply = to_traditional((message.get("content") or "").strip()) or "無法理解指令"
+    reply = to_traditional(_strip_think(message.get("content") or "")) or "無法理解指令"
     ctx.replies.append(reply)
     return f"🤖 AI 回覆：{reply}"
 

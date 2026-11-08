@@ -199,7 +199,7 @@ def test_chat_request_body(monkeypatch):
     assert llm_client._chat([{"role": "user", "content": "hi"}]) == {"content": "ok"}
     assert captured["url"].endswith("/chat/completions")
     assert captured["enable_thinking"] is False
-    assert len(captured["tools"]) == 9
+    assert len(captured["tools"]) == 8
     assert (captured["temperature"], captured["top_k"], captured["repetition_penalty"]) == (0.1, 50, 1.1)
 
 
@@ -302,3 +302,88 @@ def test_applescripts_compile(tmp_path, sh):
         p = real_run(["osacompile", "-e", script, "-o", str(tmp_path / f"{i}.scpt")],
                            capture_output=True, text=True, timeout=15)
         assert p.returncode == 0, f"{script!r}: {p.stderr}"
+
+
+# ---------- 搜尋意圖守門：沒有搜尋的意思，LLM 就不能開搜尋頁 ----------
+def _llm_returns(monkeypatch, name, args):
+    monkeypatch.setattr(llm_client, "_chat", lambda messages, **kw: {"tool_calls": [
+        {"type": "function", "function": {"name": name, "arguments": args}}]})
+
+
+@pytest.mark.parametrize("utterance,query", [
+    ("幫我找一下台北天氣", "台北天氣"),
+    ("台北天氣怎麼樣", "台北天氣"),
+    ("今天會下雨嗎", "今天台北天氣"),
+    ("最新新聞", "最新新聞"),
+    ("台積電股價", "台積電 股價"),
+    ("匯率是多少", "美元匯率"),
+    ("上網看一下", "latest news"),
+    ("Google 一下 Python", "Python"),
+    ("打開 github.com", "github.com"),
+    ("打開 github.com", "https://github.com"),  # 網址只要字面出現在原句（不計 https://）
+])
+def test_search_with_intent_is_allowed(monkeypatch, utterance, query):
+    _llm_returns(monkeypatch, "web_search_or_open_url", '{"query": "%s"}' % query)
+    calls, _, rejected = r.plan_slow_path(utterance)
+    assert rejected == [] and calls == [("web_search_or_open_url", {"query": query})]
+
+
+@pytest.mark.parametrize("utterance,query", [
+    ("沒有我說的是這網頁", "台北天氣 2025-09-27"),  # 實測：新版 tools 的幻覺 query
+    ("沒有我說的是這網頁", "https://www.example.com"),  # 實測：舊版 tools 的幻覺網址（原句沒有這個網址）
+    ("網頁", "台北天氣"),
+    ("我是說這網頁啦", "台北天氣"),
+    ("不是這個網頁", "這網頁"),
+    ("我想看貓咪影片", "貓咪影片"),  # 已知取捨：開放式資訊需求要明說『搜尋／查』
+])
+def test_search_without_intent_is_rejected(monkeypatch, utterance, query):
+    _llm_returns(monkeypatch, "web_search_or_open_url", '{"query": "%s"}' % query)
+    calls, _, rejected = r.plan_slow_path(utterance)
+    assert calls == [] and len(rejected) == 1 and "沒有搜尋的意思" in rejected[0]
+
+
+def test_rejected_search_opens_nothing(monkeypatch, sh):
+    _llm_returns(monkeypatch, "web_search_or_open_url", '{"query": "台北天氣 2025-09-27"}')
+    out = r.process_voice_command("沒有我說的是這網頁")
+    assert sh == []  # 沒有 open、osascript 等任何系統呼叫
+    (step,) = out["steps"]
+    assert step["kind"] == "slow" and step["status"] == "rejected"
+    assert step["logs"] and step["logs"][0].startswith("⚠️") and "沒有搜尋的意思" in step["logs"][0]
+
+
+@pytest.mark.parametrize("utterance,name,args,expected", [
+    ("找一下終端機", "control_mac_app", '{"app_name": "Terminal", "action": "open"}', ("control_mac_app", {"app_name": "Terminal", "action": "open"})),
+    ("沒有我說的是這個畫面", "read_screen", "{}", ("read_screen", {})),
+    ("不是啦把音量調到30", "set_system_volume", '{"level": 30}', ("set_system_volume", {"level": 30})),
+])
+def test_intent_guard_only_applies_to_web_search(monkeypatch, utterance, name, args, expected):
+    _llm_returns(monkeypatch, name, args)
+    calls, _, rejected = r.plan_slow_path(utterance)
+    assert rejected == [] and calls == [expected]
+
+
+# ---------- 去掉模型洩漏的思考內容 ----------
+@pytest.mark.parametrize("raw,expected", [
+    ("思考過程</think>答案", "答案"),  # 實測：沒有開頭標籤也會洩漏
+    ("<think>想一想</think>答案", "答案"),
+    ("a</think>b</think>答案", "答案"),
+    ("答案", "答案"),
+    ("<think>沒有結束就被截斷", ""),
+    ("只有思考</think>", ""),
+])
+def test_strip_think(raw, expected):
+    from mac_ai.router.actions import _strip_think
+    assert _strip_think(raw) == expected
+
+
+@pytest.mark.parametrize("content,expected", [
+    ("畫面上寫「A」。有其他問題嗎？</think>畫面上寫「A」。", "畫面上寫「A」。"),
+    ("只有思考</think>", "無法理解指令"),
+])
+def test_chat_reply_strips_leaked_think(monkeypatch, content, expected):
+    from mac_ai.router.actions import chat_reply
+    monkeypatch.setattr(llm_client, "_chat", lambda messages, **kw: {"content": content})
+    ctx = r.ExecContext()
+    ctx.utterance = "Python 是什麼"
+    chat_reply(ctx)
+    assert ctx.replies == [expected]

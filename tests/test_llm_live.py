@@ -148,6 +148,7 @@ NEW_TOOL_CASES = [
     ("Python 是什麼", lambda c: _names(c) in ([], ["chat_reply"])),   # 兩種都會觸發 chat call（D6）
     ("今天心情不錯", lambda c: _names(c) in ([], ["chat_reply"])),
     ("關掉深色模式", lambda c: c == [("system_power_action", {"action": "dark_mode_off"})]),
+    ("幫我找一下台北天氣", lambda c: _names(c) == ["web_search_or_open_url"] and "台北天氣" in c[0][1]["query"] and "幫我" not in c[0][1]["query"]),  # query 只放關鍵字
 ]
 
 
@@ -167,6 +168,51 @@ def test_folder_request_never_opens_a_project(utterance):
     for _ in range(REPEAT):
         calls, reply, rejected = r.plan_slow_path(text)
         assert "open_project" not in _names(calls), f"{utterance!r} -> {calls}"
+
+
+# ---------- 實測退步的修正：糾正句不亂開搜尋、看畫面請求不走 chat、穩健度 ----------
+@pytest.mark.parametrize("utterance", [
+    "沒有我說的是這網頁", "沒有，我說的是這網頁", "網頁", "我是說這網頁啦", "不是這個網頁", "你搞錯了",
+])
+def test_correction_sentence_never_opens_search_page(sh, utterance):
+    """實測：糾正句會被小模型編出『台北天氣 2025-09-27』之類的 query 而亂開 Google。守門之後不得出現任何搜尋頁"""
+    r.process_voice_command(utterance)
+    assert not any("google.com/search" in str(c) for c in sh), f"{utterance!r} -> {sh}"
+
+
+@pytest.mark.parametrize("utterance", [
+    "幫我看看畫面上寫什麼", "幫我看看這個網頁在寫什麼", "看一下現在畫面的內容是什麼", "麻煩念一下螢幕上的字",
+])
+def test_look_at_screen_requests_read_the_screen_never_chat(monkeypatch, sh, utterance):
+    """實測：LLM 回『請提供截圖』、chat call 還編出畫面內容。這類請求一律要真的讀畫面，且不得走 chat call"""
+    from mac_ai.router import actions
+    seen = []
+    monkeypatch.setattr(actions, "read_screen", lambda ctx=None: (seen.append(1), "✅ 畫面內容（整個螢幕）：假")[1])
+    out = r.process_voice_command(utterance)
+    assert seen == [1], f"{utterance!r} 沒有讀畫面：{out['steps']}"
+    assert all("chat_ms" not in st for st in out["steps"]) and out["replies"] == []
+
+
+_ON = [("system_power_action", {"action": "dark_mode_on"})]
+_OFF = [("system_power_action", {"action": "dark_mode_off"})]
+_READ = [("read_screen", {})]
+ROBUSTNESS_VARIANTS = [
+    ("把深色模式打開", _ON), ("深色模式開起來", _ON), ("啟用暗色主題", _ON),
+    ("把深色模式關掉", _OFF), ("把深色模式關起來", _OFF), ("切換成淺色模式", _OFF),
+    ("看看畫面上寫什麼", _READ), ("幫我看一下畫面上有什麼", _READ), ("螢幕上寫什麼", _READ), ("看一下畫面", _READ),
+]
+
+
+def test_robustness_variants_at_least_8_of_10():
+    """原本失敗的三案（開／關深色模式、看畫面）的說法變體：LLM 規劃要有 8/10 以上對。
+    LLM 工具清單一動就可能讓某幾句翻掉（4bit 模型對 schema 文字很敏感），所以改 tools／prompt 後務必重跑"""
+    bad = []
+    for utterance, expected in ROBUSTNESS_VARIANTS:
+        calls, reply, rejected = r.plan_slow_path(r.normalize_utterance(utterance))
+        if rejected or calls != expected:
+            bad.append(f"{utterance} -> {calls or reply!r}")
+    print(f"\n變體 {len(ROBUSTNESS_VARIANTS) - len(bad)}/{len(ROBUSTNESS_VARIANTS)}；未過：{bad}")
+    assert len(bad) <= 2, bad
 
 
 def test_mixed_action_and_question_real_llm(sh):

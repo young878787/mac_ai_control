@@ -47,16 +47,11 @@ TOOLS_SCHEMA = [
     ),
     _fn(
         "web_search_or_open_url",
-        "使用瀏覽器進行 Google 搜尋或打開特定網站。需要即時資訊（天氣、新聞、股價）時用這個工具，不要用 chat_reply。",
-        {"query": {"type": "string", "description": "只放搜尋關鍵字（去掉『幫我』『搜尋一下』等指令用語，如『今天台北天氣』）或網址"}},
+        "使用瀏覽器進行 Google 搜尋（如查天氣、查新聞）或打開特定網站。",
+        {"query": {"type": "string", "description": "搜尋關鍵字或網址"}},
         ("query",),
     ),
-    _fn(
-        "browser_tab",
-        "操作瀏覽器（Safari 或 Google Chrome）目前的分頁：new 開新分頁、close 關閉目前這一個分頁、reload 重新整理、next 下一個分頁、previous 上一個分頁。不能搜尋或開網址。",
-        {"action": {"type": "string", "enum": ["new", "close", "reload", "next", "previous"]}},
-        ("action",),
-    ),
+    # browser_tab（分頁操作）刻意不放進 LLM 的工具清單，只走 Fast Path：實測加進去，『開深色模式』會被 4bit 模型誤判成 toggle_dark_mode
     _fn(
         "system_power_action",
         "macOS 系統控制：睡眠、鎖定螢幕、深色模式。打開深色模式用 dark_mode_on，關閉用 dark_mode_off。",
@@ -78,7 +73,7 @@ TOOLS_SCHEMA = [
     ),
     _fn(
         "read_screen",
-        "截取使用者目前的螢幕畫面並說明內容（你自己看不到圖片，要看畫面一定要呼叫這個工具）。使用者說『截圖』『看這張圖片』或問『畫面／螢幕／這頁／網頁上有什麼、寫什麼、在講什麼』時呼叫。不需要參數。",
+        "看使用者的螢幕畫面並說明內容。使用者問『畫面／螢幕／這頁／網頁上有什麼、寫什麼、在講什麼』時呼叫。不需要參數。",
         {},
     ),
     _fn(

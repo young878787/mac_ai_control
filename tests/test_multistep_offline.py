@@ -514,7 +514,7 @@ def test_tools_and_chat_run_in_listed_order(monkeypatch, sh):
 
 def test_new_tools_in_schema():
     names = [t["function"]["name"] for t in r.TOOLS_SCHEMA]
-    assert names[-3:] == ["open_project", "read_screen", "chat_reply"] and len(names) == 9
+    assert names[-3:] == ["open_project", "read_screen", "chat_reply"] and len(names) == 8
     enum = tools._SCHEMA_BY_NAME["system_power_action"]["properties"]["action"]["enum"]
     assert {"dark_mode_on", "dark_mode_off", "toggle_dark_mode"} <= set(enum)
     assert r.validate_tool_call("read_screen", {}) == ({}, None)

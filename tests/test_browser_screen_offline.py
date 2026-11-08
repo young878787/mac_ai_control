@@ -8,7 +8,7 @@ import tempfile
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import actions, llm_client, tools
+from mac_ai.router import actions, llm_client
 from mac_ai.stt.completeness import COMPLETE, INCOMPLETE, classify
 from mac_ai.wake import WakeGate, lexicon_wake_greetings, lexicon_wake_words, split_wake
 from test_fast_offline import APP, CHROME, SEARCH, fast_matches
@@ -99,17 +99,6 @@ def test_search_without_keyword_or_asking_about_search_is_not_fast(text):
     assert all(m is None for m in fast_matches(text)), text
 
 
-def test_search_tool_description_asks_for_keywords():
-    spec = tools._SCHEMA_BY_NAME["web_search_or_open_url"]["properties"]["query"]["description"]
-    assert "關鍵字" in spec
-    assert "搜尋" in slow_prompt() and "關鍵字" in slow_prompt()
-
-
-def slow_prompt():
-    from mac_ai.router.slow_path import SYSTEM_PROMPT
-    return SYSTEM_PROMPT
-
-
 # ---------- 3. 截圖：立刻截、走 Fast Path ----------
 SCREEN_PHRASES = [
     "幫我截圖看這張圖片在說什麼",  # 實測：原本交給 LLM，被當成聊天
@@ -143,9 +132,85 @@ def test_screenshot_negative_or_incomplete_phrases_do_not_capture(monkeypatch, t
     assert s.names == []
 
 
-def test_read_screen_tool_description_mentions_screenshot():
-    desc = next(t["function"]["description"] for t in r.TOOLS_SCHEMA if t["function"]["name"] == "read_screen")
-    assert "截圖" in desc and "這張圖片" in desc
+# 實測：『幫我看看畫面上寫什麼』Fast 與 LLM 都漏接，LLM 回「請提供截圖」、chat call 還編出畫面內容
+LOOK_WHAT_SCREEN = ["幫我看看畫面上寫什麼", "看看畫面上寫什麼", "幫我看一下螢幕上有什麼", "螢幕上寫什麼", "看一下螢幕上說什麼"]
+LOOK_WHAT_PAGE = ["幫我看看這個網頁在寫什麼", "幫我看看網頁上有什麼", "看看這個頁面在說什麼", "看一下目前的網頁上寫什麼", "讀一下網頁上有什麼"]
+
+
+@pytest.mark.parametrize("text", LOOK_WHAT_SCREEN)
+def test_look_at_screen_question_goes_straight_to_read_screen(monkeypatch, tmp_path, text):
+    s = Screen(monkeypatch, tmp_path)
+    monkeypatch.setattr(llm_client, "_chat", s.chat)  # 只允許 VL 請求：不得有 LLM 規劃
+    out = r.process_voice_command(text)
+    assert [st["kind"] for st in out["steps"]] == ["fast"]
+    assert s.names == ["screencapture", "sips"]
+    assert out["replies"] == ["天氣：晴，氣溫 25 度"]
+
+
+@pytest.mark.parametrize("text", LOOK_WHAT_PAGE)
+def test_look_at_page_question_matches_read_screen(text):
+    (m,) = fast_matches(text)
+    assert m is not None and m.actions == [("read_screen", {})], text
+
+
+@pytest.mark.parametrize("text", [
+    "看看台北天氣", "看看天氣怎麼樣", "幫我看看有什麼好吃的拉麵", "畫面上的字太小怎麼辦", "螢幕是什麼",
+    "不要看畫面上寫什麼", "昨天畫面上寫什麼", "沒有我說的是這網頁", "看看網頁是什麼",
+])
+def test_look_question_guards_still_block_fast_read_screen(text):
+    ms = fast_matches(text)
+    assert not any(m is not None and ("read_screen", {}) in m.actions for m in ms), text
+
+
+# ---------- LLM 沒呼叫 read_screen 的『看畫面』請求：直接讀畫面，不讓 chat call 編內容 ----------
+def _screen_llm(monkeypatch, tmp_path, plan_content="好的，請提供截圖"):
+    """規劃請求（帶 tools）一律不呼叫工具；畫面辨識（含圖片）回固定內容；其餘請求記在 other"""
+    s = Screen(monkeypatch, tmp_path)
+    s.other = []
+
+    def chat(messages, **kw):
+        if isinstance(messages[-1]["content"], list):
+            return s.chat(messages, **kw)
+        s.other.append((messages, kw))
+        return {"content": plan_content}
+
+    monkeypatch.setattr(llm_client, "_chat", chat)
+    return s
+
+
+@pytest.mark.parametrize("text", ["看一下現在畫面的內容是什麼", "麻煩念一下螢幕上的字"])
+def test_look_request_missed_by_llm_runs_read_screen_directly(monkeypatch, tmp_path, text):
+    assert all(m is None for m in fast_matches(text)), "這句不該被 Fast Path 接走，否則測不到 LLM 補救"
+    s = _screen_llm(monkeypatch, tmp_path)
+    out = r.process_voice_command(text)
+    (step,) = out["steps"]
+    assert step["kind"] == "slow" and step["status"] == "ok"
+    assert s.names == ["screencapture", "sips"] and len(s.vl_messages) == 1
+    assert len(s.other) == 1  # 只有規劃請求，沒有 chat call
+    assert out["replies"] == ["天氣：晴，氣溫 25 度"]
+    assert step["logs"][0].startswith("[Slow Path - 補救] read_screen")
+
+
+@pytest.mark.parametrize("text", [
+    "網頁是什麼", "螢幕解析度是什麼", "怎麼看螢幕亮度", "不要看畫面上寫什麼", "昨天看過畫面", "能看到畫面嗎",
+])
+def test_non_look_requests_still_go_to_chat(monkeypatch, tmp_path, text):
+    s = _screen_llm(monkeypatch, tmp_path, plan_content="一般回覆")
+    out = r.process_voice_command(text)
+    assert s.names == [] and s.vl_messages == []  # 沒有截圖
+    assert len(s.other) == 2  # 規劃＋chat call
+    assert out["replies"] == ["一般回覆"]
+
+
+def test_look_request_after_failed_browser_is_skipped(monkeypatch, tmp_path):
+    """前置步驟（開瀏覽器）失敗時，補救的 read_screen 也要略過，與一般的 read_screen 行為一致"""
+    s = _screen_llm(monkeypatch, tmp_path)
+    ctx = r.ExecContext()
+    ctx.failed.add("browser")
+    ctx.step = {}
+    from mac_ai.router.slow_path import execute_slow_path_llm
+    logs = execute_slow_path_llm("看一下現在畫面的內容是什麼", ctx.step, ctx)
+    assert logs[0].endswith("⏭️ 略過 read_screen：前一步失敗") and s.names == []
 
 
 # ---------- 4. 瀏覽器分頁 ----------
@@ -263,26 +328,19 @@ def test_tab_unknown_action_is_rejected(monkeypatch):
 
 
 # ---------- 工具 schema 與 LLM 路徑 ----------
-def test_browser_tab_in_schema():
+def test_browser_tab_is_not_exposed_to_llm():
+    """分頁操作只走 Fast Path：實測 browser_tab 放進 LLM 工具清單，『開深色模式』會被 4bit 模型誤判成 toggle_dark_mode"""
     names = [t["function"]["name"] for t in r.TOOLS_SCHEMA]
-    assert "browser_tab" in names and len(names) == 9
-    assert tools._SCHEMA_BY_NAME["browser_tab"]["properties"]["action"]["enum"] == ["new", "close", "reload", "next", "previous"]
-    assert r.validate_tool_call("browser_tab", {"action": "new"}) == ({"action": "new"}, None)
-    for bad in ({}, {"action": "explode"}, {"action": "new", "browser": "Safari"}, {"action": ""}):
-        assert r.validate_tool_call("browser_tab", bad)[1], bad
+    assert "browser_tab" not in names and len(names) == 8
+    assert r.validate_tool_call("browser_tab", {"action": "new"})[1]  # LLM 若硬呼叫，當未知工具拒絕
 
 
-def test_llm_plan_browser_tab_executes(monkeypatch):
+def test_llm_planned_browser_tab_is_rejected(monkeypatch):
     env = Browsers(monkeypatch, front="Safari", running=["Safari"])
     monkeypatch.setattr(llm_client, "_chat", lambda messages, **kw: {"tool_calls": [_tc("browser_tab", '{"action":"new"}')]})
     out = r.process_voice_command("幫我弄一個空白的頁籤出來")  # Fast 規則外的說法，交給 LLM
-    assert env.calls == [QUERY, TAB(SAFARI, "new")]
-    assert out["steps"][0]["kind"] == "slow" and out["steps"][0]["status"] == "ok"
-
-
-def test_system_prompt_mentions_browser_tab_and_read_screen():
-    p = slow_prompt()
-    assert "browser_tab" in p and "read_screen" in p
+    assert env.calls == []
+    assert out["steps"][0]["status"] == "rejected" and "未知工具：browser_tab" in out["steps"][0]["logs"][0]
 
 
 # ---------- AppleScript 語法（只在有該 App 的 Mac 上驗；沒裝就略過）----------
