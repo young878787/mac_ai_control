@@ -74,3 +74,42 @@ export function createHistory(panel, list, closeButton, { onClose }) {
   closeButton.addEventListener('click', () => h.close());
   return h;
 }
+
+/** 搜尋結果清單：每列一筆（序號、檔名、所在資料夾）。點整列＝預設動作，右邊按鈕＝另一個動作。文字一律 textContent */
+export function createChoices(panel, title, list, closeButton, { onChoose, onClose }) {
+  let shownKey = '';
+  const verb = (action) => (action === 'open' ? '打開' : '顯示');
+  closeButton.addEventListener('click', () => onClose());
+  return {
+    isOpen: () => !panel.hidden,
+    render(choices) {
+      if (!choices) {
+        if (!panel.hidden) { panel.hidden = true; shownKey = ''; list.replaceChildren(); }
+        return;
+      }
+      const key = `${choices.listId}|${choices.items.length}`;
+      if (key === shownKey) return;
+      shownKey = key;
+      panel.hidden = false;
+      const more = choices.total > choices.items.length ? `，共 ${choices.total} 筆` : '';
+      title.textContent = `「${choices.query}」${more}・點選${verb(choices.defaultAction)}，或說「第二個」`;
+      const other = choices.defaultAction === 'open' ? 'reveal' : 'open';
+      list.replaceChildren();
+      for (const item of choices.items) {
+        const li = document.createElement('li');
+        li.className = 'choice';
+        li.title = `${item.dir}/${item.name}`;
+        const n = document.createElement('span'); n.className = 'n'; n.textContent = String(item.n);
+        const text = document.createElement('span'); text.className = 'text';
+        const name = document.createElement('span'); name.className = 'name'; name.textContent = item.name;
+        const dir = document.createElement('span'); dir.className = 'dir'; dir.textContent = item.dir;
+        text.append(name, dir);
+        const alt = document.createElement('button'); alt.type = 'button'; alt.textContent = verb(other);
+        alt.addEventListener('click', (e) => { e.stopPropagation(); onChoose(item.n, other); });
+        li.addEventListener('click', () => onChoose(item.n, null));
+        li.append(n, text, alt);
+        list.appendChild(li);
+      }
+    },
+  };
+}

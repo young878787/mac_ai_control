@@ -6,6 +6,7 @@
     python scripts/ui_demo.py --no-launch      只開事件匯流排，Electron 自己用 npm start 啟動（會印出需要的環境變數）
     python scripts/ui_demo.py --focus-test N   輸入框開關 N 次，確認每次前景 App 都沒被搶走（取代人工的 E5 前半段）
     python scripts/ui_demo.py --interact-test  注入點擊與打字，確認 UI 會把 wake／command 送回後端（走完整條 Electron → 後端的路）
+    python scripts/ui_demo.py --choices-test   推送搜尋結果清單，確認畫面顯示、點選會送出 choose、後端通知關閉時清單消失
 """
 import argparse
 import json
@@ -135,6 +136,53 @@ def interact_test(bus: UiBus, received: list, capture_dir: Path) -> bool:
     return all(results)
 
 
+CHOICES_RESULT = {
+    "type": "result", "command": "找驗收報告", "ok": True, "total_ms": 80.0, "replies": ["找到 3 筆「驗收報告」。說「第二個」或點選清單即可顯示"],
+    "steps": [{"kind": "fast", "text": "找驗收報告", "status": "ok", "logs": ["✅ 找到 3 筆"]}],
+    "choices": {"list_id": 4, "query": "驗收報告", "total": 3, "default_action": "reveal", "expires_in_s": 60.0,
+                "items": [{"n": 1, "name": "驗收報告A.pdf", "dir": "~/macai_find_test", "kind": "pdf"},
+                          {"n": 2, "name": "驗收報告B.pdf", "dir": "~/macai_find_test", "kind": "pdf"},
+                          {"n": 3, "name": "驗收報告C.txt", "dir": "~/macai_find_test", "kind": "txt"}]}}
+
+
+def choices_test(bus: UiBus, received: list, capture_dir: Path) -> bool:
+    """推送清單 → 畫面有 3 列；點整列 → choose(預設動作)；點列尾按鈕 → choose(另一個動作)；後端通知關閉 → 清單消失"""
+    results = []
+
+    def state(name: str) -> dict:
+        bus.publish({"type": "debug_capture", "name": name})
+        time.sleep(0.7)
+        return json.loads((capture_dir / f"{name}.json").read_text())["state"]
+
+    def check(label: str, ok: bool) -> None:
+        print(f"{'PASS' if ok else 'FAIL'}  {label}")
+        results.append(ok)
+
+    bus.publish({"type": "executing", "command": "找驗收報告"})
+    bus.publish(CHOICES_RESULT)
+    time.sleep(1.5)
+    s = state("choices-1-open")
+    rows = s["choiceRows"]
+    check("清單顯示、有 3 列", s["choices"] and len(rows) == 3)
+    check("第 1 列有序號、檔名與資料夾", bool(rows) and rows[0]["text"].startswith("1") and "驗收報告A.pdf" in rows[0]["text"] and "~/macai_find_test" in rows[0]["text"])
+    check("標題含查詢字與預設動作", "驗收報告" in s["choicesTitle"] and "顯示" in s["choicesTitle"])
+    check("狀態機的清單與後端一致", s["snap"]["choices"]["listId"] == 4 and len(s["snap"]["choices"]["items"]) == 3)
+    received.clear()
+    bus.publish({"type": "debug_click", "x": rows[1]["x"], "y": rows[1]["y"]})
+    time.sleep(0.8)
+    check("點第 2 列 → 送出 choose(n=2, reveal)", {"type": "choose", "list_id": 4, "n": 2, "action": "reveal"} in received)
+    check("點選後清單先留著（等後端回報成功才關）", state("choices-2-after-click")["choices"] is True)
+    received.clear()
+    bus.publish({"type": "debug_click", "x": rows[0]["bx"], "y": rows[0]["by"]})
+    time.sleep(0.8)
+    check("點第 1 列的按鈕 → 送出 choose(n=1, open)", {"type": "choose", "list_id": 4, "n": 1, "action": "open"} in received)
+    bus.publish({"type": "result", "command": "選擇第 2 筆", "ok": True, "total_ms": 5.0, "replies": [], "steps": [
+        {"kind": "fast", "text": "t", "status": "ok", "logs": ["✅ 已在 Finder 中顯示"]}], "choices": {"list_id": 4, "closed": True}})
+    time.sleep(0.8)
+    check("後端通知選擇成功 → 清單消失", state("choices-3-closed")["choices"] is False)
+    return all(results)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hold", action="store_true", help="播完後保持執行")
@@ -142,6 +190,7 @@ def main() -> int:
     ap.add_argument("--capture", metavar="DIR", help="每個狀態截圖到這個資料夾")
     ap.add_argument("--focus-test", type=int, metavar="N", help="輸入框開關 N 次，檢查前景 App 沒被搶走")
     ap.add_argument("--interact-test", action="store_true", help="注入點擊與打字，檢查 UI 送回後端的訊息")
+    ap.add_argument("--choices-test", action="store_true", help="推送搜尋結果清單，檢查顯示、點選與關閉")
     args = ap.parse_args()
 
     if not args.no_launch:
@@ -169,7 +218,7 @@ def main() -> int:
                 time.sleep(0.2)
         else:
             ui = ui_service(bus.url, bus.health_url)
-            capture_dir = args.capture or (tempfile.mkdtemp(prefix="ui_demo_") if args.focus_test or args.interact_test else None)
+            capture_dir = args.capture or (tempfile.mkdtemp(prefix="ui_demo_") if args.focus_test or args.interact_test or args.choices_test else None)
             if capture_dir:
                 args.capture = capture_dir
                 ui.env = {**ui.env, "MAC_AI_UI_CAPTURE_DIR": capture_dir}
@@ -189,6 +238,9 @@ def main() -> int:
         if args.interact_test:
             time.sleep(2)
             return 0 if interact_test(bus, received, Path(args.capture)) else 1
+        if args.choices_test:
+            time.sleep(2)
+            return 0 if choices_test(bus, received, Path(args.capture)) else 1
         if args.focus_test:
             time.sleep(2)
             return 0 if focus_test(bus, args.focus_test, Path(args.capture)) else 1

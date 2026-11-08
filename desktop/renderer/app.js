@@ -2,7 +2,7 @@
 import { createController, PEEK_RATIO } from '../state.js';
 import { createFixedPhysics } from './physics-clock.js';
 import { installDrawableColors } from './drawable-colors.js';
-import { createBubbles, createHistory, createInputBox } from './ui.js';
+import { createBubbles, createChoices, createHistory, createInputBox } from './ui.js';
 
 const MODEL_H = 420;                              // 出場時模型高度（px）
 const REGION = { x: 380, y: 0, w: 1280, h: 2048 };  // 模型座標中的「全身」範圍（與預覽相同）
@@ -135,6 +135,9 @@ async function main() {
   const bubbles = createBubbles($('bubbles'), { onHover: (id, on) => controller.hoverBubble(id, on, Date.now()) });
   const history = createHistory($('history'), $('history-list'), $('history-close'), {
     onClose: () => { applyEffects(controller.setHistoryOpen(false, Date.now())); if (!input.isOpen()) desktop.focus(false); } });
+  const choices = createChoices($('choices'), $('choices-title'), $('choices-list'), $('choices-close'), {
+    onChoose: (n, action) => applyEffects(controller.choose(n, action, Date.now())),
+    onClose: () => applyEffects(controller.closeChoices(Date.now())) });
   const input = createInputBox($('input-box'), $('input'), {
     onSubmit: (text) => { desktop.send({ type: 'command', text }); applyEffects(controller.userCommand(text, Date.now())); },
     onClose: () => { applyEffects(controller.setInputOpen(false, Date.now())); if (!history.isOpen()) desktop.focus(false); } });
@@ -256,6 +259,7 @@ async function main() {
     const key = snap.bubbles.map(b => `${b.id}|${b.kind}|${b.text}`).join('\n');
     if (key !== lastBubbleKey) { lastBubbleKey = key; bubbles.render(snap.bubbles); }
     history.render(snap.history);
+    choices.render(snap.choices);
     if (snap.session.active) {
       halo.style.display = 'block';
       halo.style.left = `${W / 2 - 70}px`; halo.style.top = `${Math.round(topY() - 22)}px`;

@@ -13,7 +13,7 @@ const LOG_PATH = process.env.MAC_AI_UI_LOG || '';
 const CAPTURE_DIR = process.env.MAC_AI_UI_CAPTURE_DIR || '';   // 開發用：後端送 debug_capture 時把視窗存成 PNG
 const WIN_W = 360, WIN_H = 560, MARGIN_RIGHT = 24, X_SLACK = 60;
 const DEFAULT_SHORTCUT = 'Alt+Space';
-const ALLOWED_SEND = new Set(['command', 'wake', 'pause', 'quit']);
+const ALLOWED_SEND = new Set(['command', 'wake', 'pause', 'quit', 'choose']);
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json',
   '.png': 'image/png', '.css': 'text/css', '.moc3': 'application/octet-stream' };
 
@@ -112,6 +112,9 @@ function sendBus(msg) {
 // 開發用除錯鉤子：只有設了 MAC_AI_UI_CAPTURE_DIR 才生效（scripts/ui_demo.py --capture），正式執行時後端送來也不理
 const PAGE_STATE = `window.__ui ? ({ snap: window.__ui.snapshot(), poseT: window.__ui.poseT(), motion: window.__ui.activeMotion(),
   frames: window.__ui.frames, input: !document.getElementById('input-box').hidden, history: !document.getElementById('history').hidden,
+  choices: !document.getElementById('choices').hidden, choicesTitle: document.getElementById('choices-title').textContent,
+  choiceRows: [...document.querySelectorAll('#choices-list li')].map(li => { const r = li.getBoundingClientRect(), b = li.querySelector('button').getBoundingClientRect();
+    return { text: li.textContent, x: r.x + 40, y: r.y + r.height / 2, bx: b.x + b.width / 2, by: b.y + b.height / 2 }; }),
   inputFocused: document.activeElement === document.getElementById('input'), alphaHead: window.__ui.alphaAt(180, window.__ui.topY() + 80),
   alphaCorner: window.__ui.alphaAt(2, 2), perf: window.__ui.perf(), drawables: window.__ui.drawables }) : null`;
 async function debugHook(msg) {

@@ -18,7 +18,7 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 .bubble.error { border-left: 3px solid var(--coral); }
 @keyframes bubble-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 #input-box { position: absolute; left: 24px; right: 24px; bottom: 18px; margin: 0; }
-#input-box[hidden], #history[hidden] { display: none; }
+#input-box[hidden], #history[hidden], #choices[hidden] { display: none; }
 #input { width: 100%; padding: 10px 16px; border: 1px solid rgba(255, 255, 255, .25); border-radius: 22px; outline: none; background: rgba(22, 30, 34, .94);
   color: var(--ink); font: inherit; user-select: text; -webkit-user-select: text; box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
 #input:focus { border-color: var(--mint); }
@@ -33,3 +33,18 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 #history-list li.empty { color: var(--muted); }
 #history-list li.error { color: var(--coral); }
 #status { position: absolute; left: 14px; right: 14px; top: 10px; margin: 0; padding: 8px 12px; border-radius: 10px; background: rgba(120, 30, 30, .9); font-size: 12px; white-space: pre-wrap; }
+
+#choices { position: absolute; top: 8px; left: 12px; right: 12px; display: flex; flex-direction: column; border-radius: 14px;
+  background: rgba(22, 30, 34, .9); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: 0 8px 24px rgba(0, 0, 0, .35); overflow: hidden; }
+#choices header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 12px; color: var(--muted); font-size: 12px; border-bottom: 1px solid rgba(255, 255, 255, .1); }
+#choices header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#choices button { border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; padding: 2px 8px; border-radius: 6px; flex: none; }
+#choices button:hover { background: rgba(255, 255, 255, .12); color: var(--ink); }
+#choices-list { list-style: none; margin: 0; padding: 4px 6px; }
+.choice { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; cursor: pointer; }
+.choice:hover { background: rgba(143, 227, 192, .16); }
+.choice .n { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--mint); color: #12201b; font-size: 12px; line-height: 18px; text-align: center; font-weight: 600; }
+.choice .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.choice .name, .choice .dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.choice .dir { color: var(--muted); font-size: 11px; }
+.choice button { border: 1px solid rgba(255, 255, 255, .2); font-size: 12px; }

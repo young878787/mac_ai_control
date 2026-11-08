@@ -18,9 +18,20 @@ export const BUBBLE_PER_CHAR_MS = 150;
 export const PARTIAL_BUBBLE_MS = 4000;   // partial 泡泡的保險期限：沒有後續事件也會消失
 export const PENDING_BUBBLE_MS = 30000;
 export const HISTORY_MAX = 50;
+export const CHOICES_MAX = 5;            // 搜尋結果清單最多顯示幾列（與後端 FIND_RESULTS_MAX 一致）
 
 export function bubbleLifetime(text) {
   return Math.min(BUBBLE_MAX_MS, Math.max(BUBBLE_MIN_MS, BUBBLE_MIN_MS + BUBBLE_PER_CHAR_MS * [...text].length));
+}
+
+/** 整理 result 事件的 choices：只留顯示需要的欄位，格式不對回傳 null（UI 不信任後端內容） */
+function cleanChoices(c) {
+  if (!c || !Array.isArray(c.items) || !Number.isInteger(c.list_id)) return null;
+  const items = c.items.slice(0, CHOICES_MAX).filter(i => i && Number.isInteger(i.n) && i.n >= 1 && i.n <= CHOICES_MAX)
+    .map(i => ({ n: i.n, name: String(i.name ?? ''), dir: String(i.dir ?? ''), kind: String(i.kind ?? '') }));
+  if (!items.length) return null;
+  return { listId: c.list_id, query: String(c.query ?? ''), total: Number.isInteger(c.total) ? c.total : items.length,
+    defaultAction: c.default_action === 'open' ? 'open' : 'reveal', items };
 }
 
 /** 把 result 事件整理成一段短文字：有回覆用回覆；否則取各步驟的記錄（失敗的優先），最多兩行 */
@@ -47,6 +58,7 @@ export function createController() {
     retreatAt: null,
     inputOpen: false,
     historyOpen: false,
+    choices: null,           // 搜尋結果清單：{ listId, query, total, defaultAction, items, endsAt }；沒有就是 null
     bubbles: [],
     history: [],
     nextBubbleId: 1,
@@ -156,6 +168,13 @@ export function createController() {
         effects.push({ type: 'motion', group: MOTIONS.shake });
         setExpression(effects, 'pout', now, EXPRESSION_MS);
       }
+      const list = ev.choices && !ev.choices.closed ? cleanChoices(ev.choices) : null;
+      if (list) {                                            // 有清單：清單本身就是輸出，不另外跳泡泡（會被清單蓋住），只記紀錄
+        s.choices = { ...list, endsAt: now + Math.max(0, Number(ev.choices.expires_in_s) || 0) * 1000 };
+        log('result', `${text}（列出 ${list.items.length} 筆）`, now);
+        return;
+      }
+      if (ev.choices && ev.choices.closed && s.choices && s.choices.listId === ev.choices.list_id) s.choices = null;  // 後端通知：清單已用掉或被新搜尋取代
       bubble(effects, now, { kind: ev.ok ? 'result' : 'error', text, ms: bubbleLifetime(text) });
       log(ev.ok ? 'result' : 'error', text, now);
     },
@@ -189,12 +208,13 @@ export function createController() {
       if (s.session.active && now >= s.session.endsAt) endSession(effects, now);
       if (s.retreatAt !== null && now >= s.retreatAt) {
         s.retreatAt = null;
-        if (!s.inputOpen && !s.historyOpen) retreat(effects);
+        if (!s.inputOpen && !s.historyOpen && !s.choices) retreat(effects);
         else s.lastActivityAt = now;                       // 輸入框／紀錄面板開著：關掉之後再從頭算 15 秒
-      } else if (s.pose === 'out' && !s.session.active && s.retreatAt === null && !s.inputOpen && !s.historyOpen &&
+      } else if (s.pose === 'out' && !s.session.active && s.retreatAt === null && !s.inputOpen && !s.historyOpen && !s.choices &&
                  now - s.lastActivityAt >= IDLE_RETREAT_MS) {
         retreat(effects);
       }
+      if (s.choices && now >= s.choices.endsAt) { s.choices = null; s.lastActivityAt = now; }
       s.bubbles = s.bubbles.filter(b => b.hoverLeft !== null || now < b.expiresAt);
       return effects;
     },
@@ -230,6 +250,19 @@ export function createController() {
       if (open) appear(effects, now, { greet: false });
       return effects;
     },
+    /** 點選清單的第 n 筆；action 沒給就用清單的預設動作。清單要等後端回報成功才會關（失敗時留著可以重選） */
+    choose(n, action, now) {
+      const effects = [];
+      if (!s.choices || now >= s.choices.endsAt || !s.choices.items.some(i => i.n === n)) return effects;
+      s.lastActivityAt = now;
+      effects.push({ type: 'send', message: { type: 'choose', list_id: s.choices.listId, n, action: action || s.choices.defaultAction } });
+      return effects;
+    },
+    closeChoices(now) {
+      s.choices = null;
+      s.lastActivityAt = now;
+      return [];
+    },
     hoverBubble(id, hovering, now) {
       const b = s.bubbles.find(x => x.id === id);
       if (!b) return;
@@ -245,6 +278,8 @@ export function createController() {
           ratio: s.session.active ? Math.max(0, Math.min(1, (s.session.endsAt - now) / s.session.lengthMs)) : 0,
         },
         bubbles: s.bubbles.map(b => ({ id: b.id, kind: b.kind, text: b.text })),
+        choices: s.choices && { listId: s.choices.listId, query: s.choices.query, total: s.choices.total,
+          defaultAction: s.choices.defaultAction, items: s.choices.items.map(i => ({ ...i })), remainingMs: Math.max(0, s.choices.endsAt - now) },
         history: s.history.slice(),
         fps: s.pose === 'out' ? 30 : 15,
       };

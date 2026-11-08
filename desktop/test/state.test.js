@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createController, summarize, bubbleLifetime, MOTIONS, EXPRESSION_MS, SLEEPY_MS, IDLE_RETREAT_MS,
-  BUBBLE_MAX, BUBBLE_MIN_MS, BUBBLE_MAX_MS, HISTORY_MAX, APPEAR_MS, RETREAT_MS,
+  BUBBLE_MAX, BUBBLE_MIN_MS, BUBBLE_MAX_MS, HISTORY_MAX, APPEAR_MS, RETREAT_MS, CHOICES_MAX,
 } from '../state.js';
 
 const T0 = 1_000_000;
@@ -314,4 +314,124 @@ test('隨機事件序列：不會選到 Talk、動作與表情都在白名單、
 
 test('Talk 不在 MOTIONS 白名單', () => {
   assert.ok(!Object.values(MOTIONS).includes('Talk'));
+});
+
+// ---------- 搜尋結果清單 ----------
+
+const ITEMS = [
+  { n: 1, name: '報告A.pdf', dir: '~/docs', kind: 'pdf' },
+  { n: 2, name: '報告B.pdf', dir: '~/docs', kind: 'pdf' },
+  { n: 3, name: '報告C.txt', dir: '~/docs', kind: 'txt' },
+];
+const withChoices = (over = {}) => ok({
+  replies: ['找到 3 筆「報告」'],
+  choices: { list_id: 4, query: '報告', total: 3, default_action: 'reveal', expires_in_s: 60, items: ITEMS, ...over },
+});
+const sends = fx => fx.filter(e => e.type === 'send').map(e => e.message);
+
+test('result 帶 choices → 清單開啟，記一筆紀錄，倒數照後端給的秒數', () => {
+  const c = createController();
+  c.handle(withChoices(), T0);
+  const s = c.snapshot(T0 + 1000);
+  assert.equal(s.choices.listId, 4); assert.equal(s.choices.query, '報告'); assert.equal(s.choices.total, 3);
+  assert.equal(s.choices.defaultAction, 'reveal'); assert.deepEqual(s.choices.items, ITEMS);
+  assert.equal(s.choices.remainingMs, 59_000);
+  assert.ok(s.history.some(h => h.text === '找到 3 筆「報告」（列出 3 筆）'));
+  assert.deepEqual(s.bubbles, []);  // 清單本身就是輸出：不另外跳泡泡（會被清單蓋住）
+  assert.equal(createController().snapshot(T0).choices, null);
+});
+
+test('清單到期就關閉', () => {
+  const c = createController();
+  c.handle(withChoices({ expires_in_s: 30 }), T0);
+  c.tick(T0 + 29_999);
+  assert.ok(c.snapshot(T0).choices);
+  c.tick(T0 + 30_000);
+  assert.equal(c.snapshot(T0).choices, null);
+});
+
+test('choose：送出 list_id、序號與動作；沒指定動作就用清單的預設', () => {
+  const c = createController();
+  c.handle(withChoices(), T0);
+  assert.deepEqual(sends(c.choose(2, null, T0 + 100)), [{ type: 'choose', list_id: 4, n: 2, action: 'reveal' }]);
+  assert.deepEqual(sends(c.choose(3, 'open', T0 + 100)), [{ type: 'choose', list_id: 4, n: 3, action: 'open' }]);
+  c.handle(withChoices({ default_action: 'open' }), T0 + 200);
+  assert.deepEqual(sends(c.choose(1, undefined, T0 + 300)), [{ type: 'choose', list_id: 4, n: 1, action: 'open' }]);
+});
+
+test('choose：沒有清單、序號不在清單裡、清單已到期 → 什麼都不送', () => {
+  const c = createController();
+  assert.deepEqual(c.choose(1, null, T0), []);
+  c.handle(withChoices(), T0);
+  assert.deepEqual(c.choose(4, null, T0 + 1), []);
+  assert.deepEqual(c.choose(0, null, T0 + 1), []);
+  assert.deepEqual(c.choose(1, null, T0 + 60_000), []);
+});
+
+test('點選後清單要等後端回報成功才關（失敗時留著可以重選）', () => {
+  const c = createController();
+  c.handle(withChoices(), T0);
+  c.choose(2, null, T0 + 100);
+  assert.ok(c.snapshot(T0 + 100).choices);
+  c.handle(ok({ ok: false, steps: [{ kind: 'fast', text: 'x', status: 'exec_failed', logs: ['⚠️ 清單已更新，請重選'] }] }), T0 + 200);
+  assert.ok(c.snapshot(T0 + 200).choices);
+  c.handle(ok({ choices: { list_id: 4, closed: true } }), T0 + 300);
+  assert.equal(c.snapshot(T0 + 300).choices, null);
+  assert.equal(c.snapshot(T0 + 300).bubbles.at(-1).text, '✅ 已開啟 小算盤');  // 清單之外的結果照常顯示泡泡
+});
+
+test('closed 通知只關同一份清單；新清單取代舊清單', () => {
+  const c = createController();
+  c.handle(withChoices(), T0);
+  c.handle(ok({ choices: { list_id: 3, closed: true } }), T0 + 10);
+  assert.equal(c.snapshot(T0 + 10).choices.listId, 4);
+  c.handle(withChoices({ list_id: 5, query: '新', items: ITEMS.slice(0, 2), total: 2 }), T0 + 20);
+  const s = c.snapshot(T0 + 20).choices;
+  assert.equal(s.listId, 5); assert.equal(s.items.length, 2);
+  assert.deepEqual(sends(c.choose(1, null, T0 + 30)), [{ type: 'choose', list_id: 5, n: 1, action: 'reveal' }]);
+});
+
+test('不相關的 result（例如切換分頁）不會動到清單', () => {
+  const c = createController();
+  c.handle(withChoices(), T0);
+  c.handle(ok(), T0 + 500);
+  assert.equal(c.snapshot(T0 + 500).choices.listId, 4);
+});
+
+test('closeChoices 關掉清單', () => {
+  const c = createController();
+  c.handle(withChoices(), T0);
+  c.closeChoices(T0 + 1);
+  assert.equal(c.snapshot(T0 + 1).choices, null);
+});
+
+test('清單開著不會退場；關掉之後再閒置才退場', () => {
+  const c = createController();
+  c.handle(withChoices({ expires_in_s: 600 }), T0);
+  assert.deepEqual(poses(c.tick(T0 + IDLE_RETREAT_MS + 1000)), []);
+  c.closeChoices(T0 + IDLE_RETREAT_MS + 1000);
+  assert.deepEqual(poses(c.tick(T0 + 2 * IDLE_RETREAT_MS + 2000)), ['peek']);
+});
+
+test('清單內容不可信：只留顯示欄位、最多 5 筆、壞資料整份丟掉', () => {
+  const c = createController();
+  const many = Array.from({ length: 8 }, (_, i) => ({ n: i + 1, name: `f${i + 1}`, dir: '~', kind: 'txt' }));
+  c.handle(withChoices({ items: many, total: 8 }), T0);
+  const s = c.snapshot(T0).choices;
+  assert.equal(CHOICES_MAX, 5); assert.deepEqual(s.items.map(i => i.n), [1, 2, 3, 4, 5]); assert.equal(s.total, 8);
+
+  const bad = [
+    { list_id: '4', items: ITEMS }, { list_id: 4 }, { list_id: 4, items: [] }, { list_id: 4, items: 'x' },
+    { list_id: 4, items: [{ n: 9, name: 'x', dir: '', kind: '' }] }, { list_id: 4, items: [null, { n: 'a' }] },
+  ];
+  for (const choices of bad) {
+    const d = createController();
+    d.handle(ok({ choices: { query: 'q', total: 1, expires_in_s: 60, ...choices } }), T0);
+    assert.equal(d.snapshot(T0).choices, null, JSON.stringify(choices));
+  }
+
+  const e = createController();  // 欄位型別不對：轉成字串、預設動作回到 reveal
+  e.handle(withChoices({ default_action: 'rm -rf', items: [{ n: 1, name: 5, dir: null, kind: undefined, path: '/etc/passwd' }] }), T0);
+  const item = e.snapshot(T0).choices;
+  assert.equal(item.defaultAction, 'reveal'); assert.deepEqual(item.items, [{ n: 1, name: '5', dir: '', kind: '' }]);
 });
