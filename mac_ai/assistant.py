@@ -30,8 +30,13 @@ def result_event(command: str, outcome) -> dict:
                   "logs": [str(x) for x in st.get("logs", [])]} for st in outcome.get("steps", [])]
         replies = [str(r) for r in outcome.get("replies", [])]
         total_ms = outcome.get("total_ms", 0.0)
-    return {"type": "result", "command": command, "ok": all(st["status"] not in _FAILED_STEP_STATUS for st in steps),
-            "steps": steps, "replies": replies, "total_ms": total_ms}
+    event = {"type": "result", "command": command, "ok": all(st["status"] not in _FAILED_STEP_STATUS for st in steps),
+             "steps": steps, "replies": replies, "total_ms": total_ms}
+    # 多筆搜尋結果的選擇清單（或「清單已關閉」的通知）；完整路徑不會出現在這裡
+    choices = next((st["choices"] for st in reversed(outcome.get("steps", [])) if st.get("choices")), None) if isinstance(outcome, dict) else None
+    if choices:
+        event["choices"] = choices
+    return event
 
 
 class CommandRouter:
@@ -101,6 +106,8 @@ class CommandRouter:
         kind = msg["type"]
         if kind == "command":  # 直接執行，不經喚醒詞閘門、不影響會話計時（同 --text）
             self.commands.put(msg["text"])
+        elif kind == "choose":  # 點選清單：和語音指令排同一個佇列，依序執行
+            self.commands.put(msg)
         elif kind == "wake":
             if self.gate.enabled and not self.paused:
                 with self._lock:
@@ -119,18 +126,26 @@ class CommandRouter:
             self._on_quit()
 
 
-def command_worker(commands: "queue.Queue[str]", execute: Callable[[str], object], stop: threading.Event,
-                   publish: Optional[Callable[[dict], None]] = None) -> None:
-    """依序執行佇列裡的指令；單一指令出錯只印出錯誤，不讓整個助手停下"""
+def command_worker(commands: "queue.Queue[object]", execute: Callable[[str], object], stop: threading.Event,
+                   publish: Optional[Callable[[dict], None]] = None,
+                   choose: Optional[Callable[[dict], object]] = None) -> None:
+    """依序執行佇列裡的指令（字串＝語音／打字指令；dict＝UI 點選清單）；單一指令出錯只印出錯誤，不讓整個助手停下"""
     publish = publish or _ignore
     while not stop.is_set():
         try:
-            command = commands.get(timeout=0.2)
+            item = commands.get(timeout=0.2)
         except queue.Empty:
             continue
+        is_choice = isinstance(item, dict)
+        command = f"選擇第 {item['n']} 筆" if is_choice else item
         publish({"type": "executing", "command": command})
         try:
-            outcome = execute(command)
+            if is_choice:
+                if choose is None:
+                    raise RuntimeError("沒有設定清單選擇的處理函式")
+                outcome = choose(item)
+            else:
+                outcome = execute(item)
         except Exception:
             traceback.print_exc()
             publish({"type": "result", "command": command, "ok": False, "steps": [],
@@ -143,17 +158,18 @@ def run_voice_loop(audio, execute: Callable[[str], object], stop: threading.Even
                    url: str = config.STT_WS_URL, hints: Sequence[str] = (), gate: Optional[WakeGate] = None,
                    say: Callable[[str], None] = print, show_partial: Optional[Callable[[str], None]] = None,
                    reconnect_min_s: float = config.STT_RECONNECT_MIN_S,
-                   endpoint_mode: str = config.ENDPOINT_MODE, bus: Optional[UiBus] = None) -> None:
+                   endpoint_mode: str = config.ENDPOINT_MODE, bus: Optional[UiBus] = None,
+                   choose: Optional[Callable[[dict], object]] = None) -> None:
     """收音 → STT → 喚醒詞 → 執行，直到 stop 被設定。指令在另一條執行緒依序執行，不擋住收音。
     endpoint_mode="client"：本端神經網路 VAD＋語意判斷說完了就要求 server 收尾，並把每句的計時寫進 logs/latency.jsonl。
     bus：桌面角色介面的事件匯流排（已啟動）；有的話把狀態事件廣播出去，並處理 UI 送回來的指令"""
-    commands: "queue.Queue[str]" = queue.Queue()
+    commands: "queue.Queue[object]" = queue.Queue()
     gate = gate or WakeGate()
     publish = bus.publish if bus is not None else None
     router = CommandRouter(gate, commands, say, show_partial, publish=publish, on_quit=stop.set)
     if bus is not None:
         bus.bind(router.on_ui_message, router.hello_state)
-    worker = threading.Thread(target=command_worker, args=(commands, execute, stop, publish), daemon=True)
+    worker = threading.Thread(target=command_worker, args=(commands, execute, stop, publish, choose), daemon=True)
     worker.start()
     try:
         endpoint_args = {}

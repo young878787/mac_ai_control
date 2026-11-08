@@ -387,3 +387,93 @@ def test_endpoint_classifier_follows_the_gate(monkeypatch, enabled, expected):
     monkeypatch.setattr(assistant, "EndpointDetector", lambda **kw: captured.update(kw))
     run_voice_loop(None, lambda c: None, threading.Event(), gate=WakeGate(enabled=enabled), endpoint_mode="client")
     assert captured["classifier"]("露西婭") == expected
+
+
+# ---------- 搜尋結果清單：choose 訊息、result.choices、佇列 ----------
+def _choose(**over):
+    return json.dumps({"type": "choose", "list_id": 3, "n": 2, "action": "reveal", **over})
+
+
+@pytest.mark.parametrize("over, ok", [
+    ({}, True),
+    ({"n": 1}, True), ({"n": 5}, True), ({"n": 0}, False), ({"n": 6}, False), ({"n": -1}, False),
+    ({"n": "2"}, False), ({"n": 2.0}, False), ({"n": True}, False), ({"n": None}, False),
+    ({"action": "open"}, True), ({"action": "delete"}, False), ({"action": ""}, False), ({"action": None}, False),
+    ({"list_id": 0}, True), ({"list_id": -1}, False), ({"list_id": "3"}, False), ({"list_id": None}, False),
+    ({"list_id": True}, False),
+])
+def test_parse_choose_message(over, ok):
+    msg, error = parse_ui_message(_choose(**over))
+    assert (msg is not None) == ok and (error is None) == ok
+
+
+def test_parse_choose_keeps_only_known_fields():
+    raw = json.dumps({"type": "choose", "list_id": 7, "n": 3, "action": "open", "path": "/etc/passwd"})
+    assert parse_ui_message(raw)[0] == {"type": "choose", "list_id": 7, "n": 3, "action": "open"}  # 路徑欄位不會被帶進去
+
+
+def test_choose_without_fields_is_rejected():
+    assert parse_ui_message('{"type":"choose"}')[0] is None
+
+
+CHOICES = {"list_id": 4, "query": "報告", "total": 2, "default_action": "reveal", "expires_in_s": 60.0,
+           "items": [{"n": 1, "name": "a.pdf", "dir": "~/d", "kind": "pdf"}, {"n": 2, "name": "b.pdf", "dir": "~/d", "kind": "pdf"}]}
+
+
+def test_result_event_carries_choices_only_when_present():
+    outcome = {"steps": [{"kind": "fast", "text": "x", "status": "ok", "logs": [], "choices": CHOICES}], "replies": [], "total_ms": 1.0}
+    assert result_event("找報告", outcome)["choices"] == CHOICES
+    closed = {"steps": [{"kind": "fast", "text": "x", "status": "ok", "logs": [], "choices": {"list_id": 4, "closed": True}}],
+              "replies": [], "total_ms": 1.0}
+    assert result_event("第二個", closed)["choices"] == {"list_id": 4, "closed": True}
+    plain = {"steps": [{"kind": "fast", "text": "x", "status": "ok", "logs": []}], "replies": [], "total_ms": 1.0}
+    assert "choices" not in result_event("x", plain) and "choices" not in result_event("x", None)
+
+
+def test_ui_choose_is_queued_with_the_commands_and_executed_in_order():
+    commands, stop, events, picked, ran = queue.Queue(), threading.Event(), [], [], []
+    router = CommandRouter(WakeGate(enabled=False), commands, lambda m: None)
+    router.on_ui_message({"type": "command", "text": "找報告"})
+    router.on_ui_message({"type": "choose", "list_id": 4, "n": 2, "action": "open"})
+
+    def execute(text):
+        ran.append(text)
+        return {"steps": [], "replies": [], "total_ms": 0.0}
+
+    def choose(msg):
+        picked.append(msg)
+        return {"steps": [{"kind": "fast", "text": "t", "status": "ok", "logs": ["✅"]}], "replies": [], "total_ms": 1.0}
+
+    t = threading.Thread(target=command_worker, args=(commands, execute, stop, events.append, choose), daemon=True)
+    t.start()
+    assert wait_until(lambda: len(events) == 4)
+    stop.set()
+    t.join(timeout=2)
+    assert ran == ["找報告"] and picked == [{"type": "choose", "list_id": 4, "n": 2, "action": "open"}]
+    assert [(e["type"], e["command"]) for e in events] == [
+        ("executing", "找報告"), ("result", "找報告"), ("executing", "選擇第 2 筆"), ("result", "選擇第 2 筆")]
+
+
+def test_choose_without_handler_publishes_failed_result(capsys):
+    commands, stop, events = queue.Queue(), threading.Event(), []
+    t = threading.Thread(target=command_worker, args=(commands, lambda c: None, stop, events.append), daemon=True)
+    t.start()
+    commands.put({"type": "choose", "list_id": 1, "n": 1, "action": "reveal"})
+    assert wait_until(lambda: len(events) == 2)
+    stop.set()
+    t.join(timeout=2)
+    assert events[1]["type"] == "result" and events[1]["ok"] is False
+
+
+def test_choose_message_round_trips_over_the_bus(bus):
+    commands = queue.Queue()
+    router = CommandRouter(WakeGate(enabled=False), commands, lambda m: None, publish=bus.publish)
+    bus.bind(router.on_ui_message, router.hello_state)
+    with open_client(bus) as ws:
+        recv_json(ws)
+        ws.send(_choose(list_id=9, n=3, action="open"))
+        ws.send(_choose(n=9))  # 不合法：被丟棄、不進佇列
+        assert wait_until(lambda: commands.qsize() == 1)
+        time.sleep(0.1)
+    assert commands.get_nowait() == {"type": "choose", "list_id": 9, "n": 3, "action": "open"}
+    assert commands.empty() and any("choose" in w for w in bus.warnings)

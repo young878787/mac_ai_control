@@ -19,8 +19,13 @@ from websockets.exceptions import ConnectionClosed
 from mac_ai import config
 
 PROTOCOL_VERSION = 1
-UI_MESSAGE_TYPES = ("command", "wake", "pause", "quit")
+UI_MESSAGE_TYPES = ("command", "wake", "pause", "quit", "choose")
+CHOOSE_ACTIONS = ("reveal", "open")
 _MAX_INCOMING_BYTES = 64 * 1024
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def parse_ui_message(raw) -> Tuple[Optional[dict], Optional[str]]:
@@ -44,6 +49,15 @@ def parse_ui_message(raw) -> Tuple[Optional[dict], Optional[str]]:
         if len(text) > config.UI_COMMAND_MAX_CHARS:
             return None, f"command 超過 {config.UI_COMMAND_MAX_CHARS} 字"
         return {"type": "command", "text": text}, None
+    if kind == "choose":  # 點選搜尋結果清單的某一筆
+        list_id, n, action = msg.get("list_id"), msg.get("n"), msg.get("action")
+        if not _is_int(list_id) or list_id < 0:
+            return None, "choose 需要整數 list_id"
+        if not _is_int(n) or not 1 <= n <= config.FIND_RESULTS_MAX:
+            return None, f"choose 的 n 必須是 1～{config.FIND_RESULTS_MAX}"
+        if action not in CHOOSE_ACTIONS:
+            return None, f"choose 的 action 必須是 {CHOOSE_ACTIONS}"
+        return {"type": "choose", "list_id": list_id, "n": n, "action": action}, None
     if kind == "pause":
         if not isinstance(msg.get("value"), bool):
             return None, "pause 需要布林值 value"

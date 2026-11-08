@@ -15,7 +15,7 @@ from typing import List, Optional
 import build_vocab
 from mac_ai import config
 from mac_ai.assistant import run_voice_loop
-from mac_ai.router import LEXICON, process_voice_command, warmup_llm
+from mac_ai.router import LEXICON, catalog, process_choice, process_voice_command, warmup_llm
 from mac_ai.services import ServiceError, check_ui_ready, llm_service, stop_all, stt_service, ui_service
 from mac_ai.stt.mic import MicSource
 from mac_ai.ui_bus import UiBus
@@ -127,6 +127,7 @@ def run(args: argparse.Namespace) -> int:
                 report("⚠️", e, "（沒有桌面角色，語音仍可使用）")
             voice_args = {"gate": WakeGate(enabled=True), "bus": bus}
 
+        catalog.DEFAULT.installed()  # 先掃描已安裝 App（約 50 ms），第一句話的比對才不用等
         mic = MicSource(args.device)
         try:
             mic.start()
@@ -140,7 +141,7 @@ def run(args: argparse.Namespace) -> int:
             print("🎤 開始收音：喚醒詞已關閉，直接說出指令，Ctrl+C 結束")
         hints = config.STT_HINTS_PATH.read_text(encoding="utf-8").splitlines()
         show_partial = (lambda t: print(f"\r\033[K👂 {t}", end="", flush=True)) if sys.stdout.isatty() else None
-        run_voice_loop(mic, process_voice_command, stop, hints=hints, show_partial=show_partial, **voice_args)
+        run_voice_loop(mic, process_voice_command, stop, hints=hints, show_partial=show_partial, choose=process_choice, **voice_args)
         return 0
     finally:
         stop.set()
