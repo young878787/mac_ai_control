@@ -1,6 +1,7 @@
 """辨識事件 → 喚醒詞 → 指令佇列 → 依序執行（含對本機假 WS server 的端到端）。"""
 import queue
 import threading
+import time
 
 import pytest
 from fake_stt import FakeAudio, FakeSttServer, wait_until
@@ -89,6 +90,55 @@ def test_connection_and_error_events_are_reported(router, said):
     router({"type": "session_restarted"})  # 透明重開，不需要顯示
     assert len(said) == 3
     assert "已連上" in said[0] and "refused" in said[1] and "too_many_sessions" in said[2]
+
+
+# ---------- utt_id：讓 latency.jsonl 與 commands.jsonl 對得起來 ----------
+def test_voice_command_in_queue_is_a_plain_str_that_carries_utt_id_and_enqueue_time(router, commands):
+    router({"type": "final", "text": "露醬，打開小算盤", "utt_id": 7})
+    item = commands.get_nowait()
+    assert item == "打開小算盤" and isinstance(item, str) and item.utt_id == 7 and item.enqueued_at > 0
+
+
+def test_event_without_utt_id_and_ui_typed_command_have_no_utt_id(router, commands):
+    router({"type": "utterance", "text": "露醬，打開小算盤"})
+    router.on_ui_message({"type": "command", "text": "打開計算機"})
+    assert [getattr(c, "utt_id", None) for c in list(commands.queue)] == [None, None]
+
+
+def test_worker_command_log_carries_utt_id_and_queue_ms_for_voice_commands_only(commands):
+    from mac_ai.assistant import SpokenCommand
+    logged = []
+    voice = SpokenCommand("打開小算盤")
+    voice.utt_id, voice.enqueued_at = 3, time.monotonic() - 0.05
+    commands.put(voice)
+    commands.put("UI 打的字")
+    stop = threading.Event()
+    t = threading.Thread(target=command_worker, args=(commands, lambda c: None, stop, None, None, logged.append), daemon=True)
+    t.start()
+    assert wait_until(lambda: len(logged) == 2)
+    stop.set()
+    t.join(timeout=2)
+    assert logged[0]["utt_id"] == 3 and logged[0]["queue_ms"] >= 50 and logged[0]["command"] == "打開小算盤"
+    assert "utt_id" not in logged[1] and "queue_ms" not in logged[1]
+
+
+def test_worker_failure_record_also_carries_utt_id(commands, capsys):
+    from mac_ai.assistant import SpokenCommand
+    logged = []
+    voice = SpokenCommand("x")
+    voice.utt_id, voice.enqueued_at = 9, time.monotonic()
+    commands.put(voice)
+
+    def boom(cmd):
+        raise RuntimeError("壞掉了")
+
+    stop = threading.Event()
+    t = threading.Thread(target=command_worker, args=(commands, boom, stop, None, None, logged.append), daemon=True)
+    t.start()
+    assert wait_until(lambda: logged)
+    stop.set()
+    t.join(timeout=2)
+    assert logged[0]["utt_id"] == 9 and logged[0]["ok"] is False and "queue_ms" in logged[0]
 
 
 # ---------- command_worker ----------
@@ -195,6 +245,7 @@ def test_voice_loop_client_endpoint_mode_flushes_when_sentence_is_done_and_logs_
         assert wait_until(lambda: executed == ["打開小算盤"] and logged, timeout=8)
         assert server.flush_at_frame and server.configs[0]["vad_flush_seconds"] == config.EP_SERVER_BACKUP_FLUSH_S
         assert logged[0]["mode"] == "client" and logged[0]["reason"] in ("complete", "default")
+        assert executed[0].utt_id == logged[0]["utt_id"] == 1  # 整條鏈：STT final → latency 紀錄 → 佇列裡的指令用同一個編號
     finally:
         stop.set()
         t.join(timeout=5)

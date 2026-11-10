@@ -1,11 +1,15 @@
 """語音助手主流程：辨識事件 → 喚醒詞閘門 → 指令佇列 → 依序執行。"""
 import functools
+import json
 import queue
 import threading
+import time
 import traceback
+from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from mac_ai import config
+from mac_ai.stt import latency_log
 from mac_ai.stt.client import SttClient
 from mac_ai.stt.completeness import classify
 from mac_ai.stt.endpoint import EndpointDetector
@@ -16,10 +20,19 @@ from mac_ai.wake import WakeGate, split_wake
 
 _CLEAR_LINE = "\r\033[K"
 _FAILED_STEP_STATUS = ("exec_failed", "llm_unavailable", "llm_error")
+_LOGGED_STEP_KEYS = ("kind", "text", "status", "ms", "llm_ms", "intent", "match")  # 寫進 commands.jsonl 的 step 欄位
 
 
 def _ignore(event: dict) -> None:
     pass
+
+
+class SpokenCommand(str):
+    """語音指令的文字（行為與 str 完全相同），多帶兩個紀錄用的欄位：
+    utt_id＝STT 這句 final 的編號（對應 latency.jsonl 同一句）；enqueued_at＝進佇列的 time.monotonic()（算排隊時間）。
+    UI 打字的指令與清單點選沒有這兩個欄位"""
+    utt_id: Optional[int] = None
+    enqueued_at: float = 0.0
 
 
 def result_event(command: str, outcome) -> dict:
@@ -37,6 +50,25 @@ def result_event(command: str, outcome) -> dict:
     if choices:
         event["choices"] = choices
     return event
+
+
+def command_record(event: dict, outcome) -> dict:
+    """一個指令的路由與執行結果（寫進 commands.jsonl）：result 事件的內容，加上追查用的 stages 與各步 ms／intent／match。
+    家目錄換成 ~、不寫 choices（同 UI「完整路徑不出本程序」的原則）"""
+    raw_steps = outcome.get("steps", []) if isinstance(outcome, dict) else []
+    steps = [{**{k: st[k] for k in _LOGGED_STEP_KEYS if st.get(k) is not None}, "logs": [str(x) for x in st.get("logs", [])]}
+             for st in raw_steps]
+    record = {"command": event["command"], "ok": event["ok"], "total_ms": event["total_ms"],
+              "stages": outcome.get("stages", {}) if isinstance(outcome, dict) else {}, "steps": steps, "replies": event["replies"]}
+    text = json.dumps(record, ensure_ascii=False, default=str).replace(str(Path.home()), "~")
+    return json.loads(text)
+
+
+def _write_command_log(record: dict) -> None:
+    try:
+        latency_log.JsonlLog(config.COMMAND_LOG).write(record)
+    except (OSError, TypeError, ValueError):
+        pass  # 紀錄寫入失敗不影響指令流程
 
 
 class CommandRouter:
@@ -69,7 +101,7 @@ class CommandRouter:
         elif kind in ("utterance", "final"):
             text = (event.get("text") or "").strip()
             if text:
-                self._on_text(text)
+                self._on_text(text, event.get("utt_id"))
         elif kind == "connected":
             self.say("🎧 已連上 STT，開始收音")
             self._publish({"type": "stt", "state": "connected", "message": ""})
@@ -80,7 +112,7 @@ class CommandRouter:
             self.say(f"⚠️ STT 錯誤：{event.get('code')} {event.get('message')}")
             self._publish({"type": "stt", "state": "error", "message": f"{event.get('code')} {event.get('message')}"})
 
-    def _on_text(self, text: str) -> None:
+    def _on_text(self, text: str, utt_id: Optional[int] = None) -> None:
         if self.paused:
             return
         with self._lock:
@@ -90,7 +122,9 @@ class CommandRouter:
         if result.status in ("command", "armed"):
             self._publish({"type": "session", "remaining_s": remaining})
         if result.status == "command":
-            self.commands.put(result.command)
+            command = SpokenCommand(result.command)
+            command.utt_id, command.enqueued_at = utt_id, time.monotonic()
+            self.commands.put(command)
         elif result.status == "armed":
             self.say(f"👂 已喚醒，{self.gate.session_s:g} 秒內不用再說喚醒詞（每句重新計時）")
         elif self.gate.enabled:
@@ -128,9 +162,13 @@ class CommandRouter:
 
 def command_worker(commands: "queue.Queue[object]", execute: Callable[[str], object], stop: threading.Event,
                    publish: Optional[Callable[[dict], None]] = None,
-                   choose: Optional[Callable[[dict], object]] = None) -> None:
-    """依序執行佇列裡的指令（字串＝語音／打字指令；dict＝UI 點選清單）；單一指令出錯只印出錯誤，不讓整個助手停下"""
+                   choose: Optional[Callable[[dict], object]] = None,
+                   command_log: Optional[Callable[[dict], None]] = None) -> None:
+    """依序執行佇列裡的指令（字串＝語音／打字指令；dict＝UI 點選清單）；單一指令出錯只印出錯誤，不讓整個助手停下。
+    command_log：每個指令執行完收到一筆 command_record（出錯時是 {command, ok: False, error}）；
+    語音指令另帶 utt_id（對應 latency.jsonl 同一句）與 queue_ms（進佇列到開始執行的等待）"""
     publish = publish or _ignore
+    command_log = command_log or _ignore
     while not stop.is_set():
         try:
             item = commands.get(timeout=0.2)
@@ -138,6 +176,8 @@ def command_worker(commands: "queue.Queue[object]", execute: Callable[[str], obj
             continue
         is_choice = isinstance(item, dict)
         command = f"選擇第 {item['n']} 筆" if is_choice else item
+        utt_id = getattr(item, "utt_id", None)
+        link = {} if utt_id is None else {"utt_id": utt_id, "queue_ms": (time.monotonic() - item.enqueued_at) * 1000}
         publish({"type": "executing", "command": command})
         try:
             if is_choice:
@@ -146,12 +186,15 @@ def command_worker(commands: "queue.Queue[object]", execute: Callable[[str], obj
                 outcome = choose(item)
             else:
                 outcome = execute(item)
-        except Exception:
+        except Exception as e:
             traceback.print_exc()
             publish({"type": "result", "command": command, "ok": False, "steps": [],
                      "replies": ["執行時發生錯誤"], "total_ms": 0.0})
+            command_log({**link, "command": command, "ok": False, "error": f"{type(e).__name__}: {e}"})
         else:
-            publish(result_event(command, outcome))
+            event = result_event(command, outcome)
+            publish(event)
+            command_log({**link, **command_record(event, outcome)})
 
 
 def run_voice_loop(audio, execute: Callable[[str], object], stop: threading.Event, *,
@@ -161,7 +204,7 @@ def run_voice_loop(audio, execute: Callable[[str], object], stop: threading.Even
                    endpoint_mode: str = config.ENDPOINT_MODE, bus: Optional[UiBus] = None,
                    choose: Optional[Callable[[dict], object]] = None) -> None:
     """收音 → STT → 喚醒詞 → 執行，直到 stop 被設定。指令在另一條執行緒依序執行，不擋住收音。
-    endpoint_mode="client"：本端神經網路 VAD＋語意判斷說完了就要求 server 收尾，並把每句的計時寫進 logs/latency.jsonl。
+    endpoint_mode="client"：本端神經網路 VAD＋語意判斷說完了就要求 server 收尾，並把每句的計時寫進 logs/runtime/latency.jsonl；每個指令的執行結果寫進 logs/runtime/commands.jsonl。
     bus：桌面角色介面的事件匯流排（已啟動）；有的話把狀態事件廣播出去，並處理 UI 送回來的指令"""
     commands: "queue.Queue[object]" = queue.Queue()
     gate = gate or WakeGate()
@@ -169,7 +212,7 @@ def run_voice_loop(audio, execute: Callable[[str], object], stop: threading.Even
     router = CommandRouter(gate, commands, say, show_partial, publish=publish, on_quit=stop.set)
     if bus is not None:
         bus.bind(router.on_ui_message, router.hello_state)
-    worker = threading.Thread(target=command_worker, args=(commands, execute, stop, publish, choose), daemon=True)
+    worker = threading.Thread(target=command_worker, args=(commands, execute, stop, publish, choose, _write_command_log), daemon=True)
     worker.start()
     try:
         endpoint_args = {}

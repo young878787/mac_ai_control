@@ -180,6 +180,25 @@ def test_client_mode_sends_one_flush_after_the_speech_frames_and_records_latency
     assert r["finalize_ms"] is not None
 
 
+def test_client_mode_numbers_each_final_and_gives_the_same_utt_id_to_event_and_latency_record(server_factory, running):
+    server = server_factory(after_frames=PARTIAL_AT_5, reply_on_flush=FINAL)
+    client, records, _ = _endpoint_client(server, SPEECH_THEN_SILENCE, flush=True, pre_delay_s=0.1, vad_flush_s=3.0)
+    events = []
+    client.on_event = events.append
+    running(client)
+
+    assert wait_until(lambda: len(records) == 1 and any(e.get("type") == "final" for e in events))
+    final = next(e for e in events if e.get("type") == "final")
+    assert final["utt_id"] == records[0]["utt_id"] == 1  # 路由器拿到的事件與 latency.jsonl 同一個編號
+
+
+def test_without_endpoint_detection_events_are_passed_through_untouched(server_factory, running):
+    server = server_factory(events=[{"type": "final", "text": "x"}])
+    got = []
+    running(SttClient(FakeAudio([FRAME]), got.append, url=server.url))
+    assert wait_until(lambda: {"type": "final", "text": "x"} in got)  # 沒有端點偵測就不加 utt_id
+
+
 def test_server_mode_never_sends_flush_but_still_records_server_vad_final(server_factory, running):
     server = server_factory(after_frames={**PARTIAL_AT_5, 40: [FINAL]})
     client, records, _ = _endpoint_client(server, SPEECH_THEN_SILENCE, flush=False)
@@ -189,6 +208,7 @@ def test_server_mode_never_sends_flush_but_still_records_server_vad_final(server
     assert server.flush_at_frame == []
     assert records[0]["mode"] == "server" and records[0]["reason"] == "server_vad"
     assert records[0]["speech_end"] is not None and records[0]["e2e_ms"] > 0
+    assert records[0]["endpoint_ms"] is None and records[0]["finalize_ms"] is None  # 沒有決定／flush 也保留欄位（None）
 
 
 def test_reconnect_resets_vad_and_detector(server_factory, running):

@@ -47,6 +47,7 @@ class SttClient:
         self._clock = clock
         self._connected = False
         self._flush_sent_at: Optional[float] = None
+        self._utt_n = 0  # final 的流水號（本程序內遞增）；對應 latency.jsonl 與 commands.jsonl 的 utt_id
 
     def run(self, stop: threading.Event) -> None:
         """連線、串流、斷線就重連，直到 stop 被設定"""
@@ -138,6 +139,8 @@ class SttClient:
         if kind == "partial":
             self.endpoint.on_partial(event.get("text") or "", self._clock())
         elif kind == "final":
+            self._utt_n += 1
+            event["utt_id"] = self._utt_n  # 同一個 dict 之後交給 on_event：指令佇列會帶著它，紀錄才對得起來
             now = self._clock()
             utt = self.endpoint.on_final(now)
             if self.latency_sink is not None:
@@ -148,6 +151,7 @@ class SttClient:
         d = utt.decision
         times = np.array(self.vad.infer_ms) if self.vad is not None and self.vad.infer_ms else None
         record = {
+            "utt_id": event.get("utt_id"),
             "mode": "client" if self.flush else "server",
             "speech_start": utt.speech_start, "speech_end": utt.speech_end,
             "endpoint_at": d.at if d else None,
@@ -160,6 +164,9 @@ class SttClient:
             "vad_ms_mean": float(times.mean()) if times is not None else None,
             "vad_ms_p99": float(np.percentile(times, 99)) if times is not None else None,
             "ts": time.time(),
+            # 沒有就是 None（不缺欄位）：e2e_ms＝說完→定稿；endpoint_ms＝說完→決定收尾；finalize_ms＝送 flush→定稿。
+            # e2e_ms 為 None＝本端 VAD 沒偵測到說話，量不到
+            "e2e_ms": None, "endpoint_ms": None, "finalize_ms": None,
         }
         if utt.speech_end is not None:
             record["e2e_ms"] = (final_recv - utt.speech_end) * 1000
