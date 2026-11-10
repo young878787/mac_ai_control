@@ -1,4 +1,4 @@
-"""執行期紀錄與 bench：JsonlLog、commands.jsonl、stt_bench 檔名／生效參數／list；不污染專案 logs/。"""
+"""執行期紀錄（logs/runtime/*.jsonl）、bench 檔名／list、log_view 檢視：欄位、路徑與對應規則；不污染專案 logs/。"""
 import json
 import queue
 import sys
@@ -35,6 +35,7 @@ def test_log_locations_are_split_by_kind():
     assert config.RUNTIME_LOG_DIR == config.LOG_DIR / "runtime" and config.SERVICE_LOG_DIR == config.LOG_DIR / "services"
     assert config.BENCH_LOG_DIR == config.LOG_DIR / "bench"
     assert config.UI_LOG.parent == config.RUNTIME_LOG_DIR and config.UI_LOG.name == "ui.jsonl"
+
 
 # ---------- commands.jsonl ----------
 def _run_worker(execute, item, choose=None):
@@ -93,6 +94,7 @@ def test_worker_without_command_log_still_runs():
     t.join(timeout=2)
     assert done == ["a"]
 
+
 # ---------- stt_bench 檔名／list ----------
 BASE = {"corpus": "bench/synth", "mode": "client", "label": None, "only": None, "ep": [], "pre_delay": None, "send_s": None, "block_s": None}
 
@@ -142,9 +144,86 @@ def test_list_shows_one_row_per_run_with_key_numbers(tmp_path, capsys):
     assert out[1].startswith("2026-11-04_synth_client.jsonl") and "500ms" in out[1] and "2/2" in out[1]
     assert "沒有 meta" in out[2] and "1/2" in out[2]
 
+
 # ---------- 寫入時四捨五入 ----------
 def test_jsonl_log_rounds_floats_so_records_are_readable(tmp_path):
     log = JsonlLog(tmp_path / "r.jsonl")
     log.write({"e2e_ms": 710.8269160380587, "speech_start": 719137.961680083, "server": {"finish_ms": 68.23456}, "stages": [1.23456]})
     row = lines(tmp_path / "r.jsonl")[0]
     assert row["e2e_ms"] == 710.8 and row["speech_start"] == 719137.962 and row["server"] == {"finish_ms": 68.2}
+
+
+# ---------- scripts/log_view.py ----------
+sys.path.insert(0, str(config.ROOT / "scripts"))
+import log_view  # noqa: E402
+
+
+def _w(path, rows):
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+
+
+def _runtime(tmp_path):
+    d = tmp_path / "runtime"
+    d.mkdir()
+    run = "20261109-221129"
+    _w(d / "commands.jsonl", [
+        {"ts_iso": "2026-11-09T10:00:01+08:00", "run_id": "20261109-100000", "command": "舊指令", "ok": True, "total_ms": 5.0,
+         "steps": [{"kind": "fast", "ms": 5.0, "logs": ["✅ 舊"]}]},
+        {"ts_iso": "2026-11-09T22:11:36+08:00", "run_id": run, "utt_id": 1, "queue_ms": 2.0, "command": "打開小算盤", "ok": True,
+         "total_ms": 90.0, "steps": [{"kind": "fast", "ms": 90.2, "logs": ["✅ 已開啟應用程式：Calculator"]}]},
+        {"ts_iso": "2026-11-09T22:11:50+08:00", "run_id": run, "utt_id": 2, "queue_ms": 5.0, "command": "你覺得 AI 會取代工程師嗎", "ok": True,
+         "total_ms": 3991.0, "steps": [{"kind": "slow", "ms": 3990.0, "llm_ms": 2382.0, "logs": ["🤖 AI 回覆：不會"]}]},
+        {"ts_iso": "2026-11-09T22:11:55+08:00", "run_id": run, "command": "UI 打的字", "ok": False, "error": "RuntimeError: 壞掉了"}])
+    _w(d / "latency.jsonl", [
+        {"ts_iso": "2026-11-09T22:11:33+08:00", "run_id": run, "utt_id": 1, "final_text": "打開小算盤", "reason": "complete",
+         "e2e_ms": 700.0, "endpoint_ms": 640.0, "finalize_ms": 70.2},
+        {"ts_iso": "2026-11-09T22:11:47+08:00", "run_id": run, "utt_id": 2, "final_text": "你覺得AI會取代工程師嗎", "reason": "default",
+         "e2e_ms": 1400.0, "endpoint_ms": 1330.0, "finalize_ms": 70.0},
+        {"ts_iso": "2026-11-09T22:12:00+08:00", "run_id": run, "utt_id": 3, "final_text": "雜訊", "reason": "server_vad",
+         "e2e_ms": None, "endpoint_ms": None, "finalize_ms": None}])
+    _w(d / "ui.jsonl", [{"ts_iso": "2026-11-09T22:11:34+08:00", "run_id": run, "conn": 1, "id": i, "type": "partial",
+                         "bus_ms": 1.0, "apply_ms": 10.0 + i} for i in range(5)])
+    return d
+
+
+def test_log_view_defaults_to_latest_run_and_joins_latency_with_command_by_utt_id(tmp_path, capsys):
+    assert log_view.main(["--dir", str(_runtime(tmp_path))]) == 0
+    out = capsys.readouterr().out
+    assert "啟動 20261109-221129" in out and "舊指令" not in out
+    one = next(l for l in out.splitlines() if "打開小算盤" in l and "complete" in l)  # 同一行有收音計時與指令執行
+    assert "22:11:33" in one and "700ms" in one and "2ms" in one and "90ms" in one and "✅" in one
+    assert "792ms" in one and "已開啟應用程式：Calculator" in one  # 說完→執行完 ＝ 700 + 2 + 90
+    two = next(l for l in out.splitlines() if "你覺得AI" in l)
+    assert "slow 3990ms（LLM 2382ms）" in two and "5396ms" in two  # 1400 + 5 + 3991
+    noise = next(l for l in out.splitlines() if "雜訊" in l)
+    assert "沒有指令" in noise and "—" in noise
+    assert "其他指令" in out and "UI 打的字" in out and "❌" in out and "RuntimeError: 壞掉了" in out and "（執行出錯）" in out
+    assert "收尾判斷：complete＝" in out and "同一句用 utt_id 對起來" in out
+    assert "partial  5" in out and "依訊息種類彙總）] （5 筆）" in out  # ui 依訊息種類彙總，筆數是原始行數
+
+
+def test_log_view_does_not_join_across_runs_even_if_utt_id_repeats(tmp_path, capsys):
+    d = tmp_path / "runtime"
+    d.mkdir()
+    _w(d / "latency.jsonl", [{"ts_iso": "2026-11-09T22:00:00+08:00", "run_id": "B", "utt_id": 1, "final_text": "新", "reason": "complete", "e2e_ms": 1.0}])
+    _w(d / "commands.jsonl", [{"ts_iso": "2026-11-09T21:00:00+08:00", "run_id": "A", "utt_id": 1, "command": "舊", "ok": True, "total_ms": 1.0,
+                               "steps": []}])
+    log_view.main(["--dir", str(d), "--all"])
+    out = capsys.readouterr().out
+    assert any("沒有指令" in l and "新" in l for l in out.splitlines()) and "其他指令" in out and "舊" in out
+
+
+def test_log_view_all_and_specific_run_and_unknown_run(tmp_path, capsys):
+    d = str(_runtime(tmp_path))
+    assert log_view.main(["--dir", d, "--all"]) == 0 and "舊指令" in capsys.readouterr().out
+    assert log_view.main(["--dir", d, "--run", "20261109-100000"]) == 0
+    out = capsys.readouterr().out
+    assert "舊指令" in out and "打開小算盤" not in out and "complete" not in out
+    assert log_view.main(["--dir", d, "--run", "nope"]) == 1 and "找不到 run_id" in capsys.readouterr().out
+
+
+def test_log_view_limits_rows_and_handles_empty_dir(tmp_path, capsys):
+    d = _runtime(tmp_path)
+    log_view.main(["--dir", str(d), "-n", "1"])
+    assert "共 3 筆，只列最後 1 列" in capsys.readouterr().out  # 3 句語音
+    assert log_view.main(["--dir", str(tmp_path / "empty")]) == 1
