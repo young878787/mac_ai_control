@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from mac_ai import config
+from mac_ai.stt.latency_log import RUN_ID
 
 
 class ServiceError(Exception):
@@ -117,7 +118,7 @@ def llm_service() -> Service:
              "--max-tokens", str(config.MLX_VLM_MAX_TOKENS)],
         health_url=f"{config.MLX_VLM_URL}/health",
         cwd=config.ROOT,
-        log_path=config.LOG_DIR / "mlx_vlm.log",
+        log_path=config.SERVICE_LOG_DIR / "mlx_vlm.log",
         env={**os.environ, "APC_ENABLED": "1"},
     )
 
@@ -162,7 +163,7 @@ def stt_service() -> Service:
              "--port", str(config.STT_PORT), "--lang", config.STT_LANG, "--vocab", str(config.STT_HINTS_PATH)],
         health_url=f"{config.STT_URL}/health",
         cwd=config.STT_DIR,
-        log_path=config.LOG_DIR / "stt.log",
+        log_path=config.SERVICE_LOG_DIR / "stt.log",
         ready=_stt_ready,
         after_stop=kill_stt_backend,
     )
@@ -198,10 +199,10 @@ def ui_service(bus_url: str, bus_health_url: str) -> Service:
         cmd=[str(find_electron()), str(config.UI_DIR)],
         health_url=bus_health_url,
         cwd=config.UI_DIR,
-        log_path=config.LOG_DIR / "ui.log",
+        log_path=config.SERVICE_LOG_DIR / "ui.log",
         ready=lambda health: health.get("clients", 0) >= 1,
         # 從 VS Code 等 Electron 程式的終端機啟動時，環境裡會有 ELECTRON_RUN_AS_NODE，不移除的話 Electron 只會當 Node 執行
         env={**{k: v for k, v in os.environ.items() if k != "ELECTRON_RUN_AS_NODE"},
              "MAC_AI_UI_URL": bus_url, "MAC_AI_UI_MODEL": str(config.UI_MODEL_PATH),
-             "MAC_AI_UI_LOG": str(config.LOG_DIR / "ui.jsonl")},
+             "MAC_AI_UI_LOG": str(config.UI_LOG), "MAC_AI_RUN_ID": RUN_ID},
     )

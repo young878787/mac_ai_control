@@ -10,6 +10,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BUS_URL = process.env.MAC_AI_UI_URL || '';
 const MODEL_PATH = process.env.MAC_AI_UI_MODEL || '';
 const LOG_PATH = process.env.MAC_AI_UI_LOG || '';
+const RUN_ID = process.env.MAC_AI_RUN_ID || '';   // 後端這次啟動的編號，ui.jsonl 每行帶著，才能和 latency／commands 對起來
 const CAPTURE_DIR = process.env.MAC_AI_UI_CAPTURE_DIR || '';   // 開發用：後端送 debug_capture 時把視窗存成 PNG
 const WIN_W = 360, WIN_H = 560, MARGIN_RIGHT = 24, X_SLACK = 60;
 const DEFAULT_SHORTCUT = 'Alt+Space';
@@ -37,9 +38,23 @@ function saveSettings(patch) {
   const next = { ...loadSettings(), ...patch };
   try { fs.mkdirSync(path.dirname(settingsPath()), { recursive: true }); fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2)); } catch (e) { console.error('settings save failed', e); }
 }
+if (LOG_PATH) { try { fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true }); } catch (e) { console.error('log dir create failed', e); } }
 function logRow(row) {
   if (!LOG_PATH) return;
   fs.appendFile(LOG_PATH, JSON.stringify(row) + '\n', () => {});
+}
+// ui.jsonl 一則訊息一行：bus_ms＝後端送出→本程序收到；apply_ms＝收到→畫面套用（null＝沒等到套用）。
+// 後端的 id 每次連線重編，所以帶 conn（第幾次連上匯流排）才唯一
+let conn = 0;
+const pendingRows = new Map();
+function isoLocal(ms) {
+  const d = new Date(ms), p = (n) => String(n).padStart(2, '0'), off = -d.getTimezoneOffset(), a = Math.abs(off);
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+    + `${off >= 0 ? '+' : '-'}${p(Math.floor(a / 60))}:${p(a % 60)}`;
+}
+function flushPendingRows() {
+  for (const { recv, ...rest } of pendingRows.values()) logRow({ ...rest, apply_ms: null });
+  pendingRows.clear();
 }
 
 // ---------- 視窗 ----------
@@ -85,7 +100,7 @@ function connectBus() {
   let ws;
   try { ws = new WebSocket(BUS_URL); } catch (e) { console.error('bus connect failed', e); scheduleReconnect(); return; }
   bus = ws;
-  ws.addEventListener('open', () => { retryMs = 1000; console.log('bus connected'); });
+  ws.addEventListener('open', () => { retryMs = 1000; conn += 1; console.log('bus connected'); });
   ws.addEventListener('message', (ev) => {
     const recv = Date.now();
     let msg;
@@ -93,10 +108,14 @@ function connectBus() {
     if (!msg || typeof msg.type !== 'string') return;
     if (msg.type.startsWith('debug_')) { debugHook(msg); return; }
     if (msg.type === 'hello' || msg.type === 'paused') paused = msg.type === 'hello' ? !!msg.paused : !!msg.value;
-    logRow({ ev: 'recv', id: msg.id, type: msg.type, ts: msg.ts, recv: recv / 1000 });
+    if (LOG_PATH) {
+      const row = { ts_iso: isoLocal(recv), run_id: RUN_ID, conn, id: msg.id, type: msg.type, bus_ms: Math.round((recv - msg.ts * 1000) * 10) / 10, recv };
+      if (msg.type === 'hello') logRow({ ...row, recv: undefined, apply_ms: null });   // 畫面還沒載入，不會有套用時間
+      else pendingRows.set(msg.id, row);
+    }
     if (win && !win.isDestroyed()) win.webContents.send('bus', msg);
   });
-  ws.addEventListener('close', () => { if (bus === ws) bus = null; scheduleReconnect(); });
+  ws.addEventListener('close', () => { if (bus === ws) bus = null; flushPendingRows(); scheduleReconnect(); });
   ws.addEventListener('error', () => {});
 }
 function scheduleReconnect() {
@@ -152,7 +171,13 @@ function setupIpc() {
     win.setIgnoreMouseEvents(ignore, { forward: true });
   });
   ipcMain.on('gaze', (_e, on) => { gazeOn = !!on; });
-  ipcMain.on('applied', (_e, id, at) => logRow({ ev: 'applied', id, applied: at / 1000 }));
+  ipcMain.on('applied', (_e, id, at) => {
+    const row = pendingRows.get(id);
+    if (!row) return;
+    pendingRows.delete(id);
+    const { recv, ...rest } = row;
+    logRow({ ...rest, apply_ms: Math.round((at - recv) * 10) / 10 });
+  });
   ipcMain.on('focus', (_e, on) => {
     if (!win) return;
     if (on) win.focus(); else win.blur();

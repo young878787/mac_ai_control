@@ -3,6 +3,7 @@ import json
 import re
 import time
 import unicodedata
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from mac_ai.config import NORMALIZE_LOG
@@ -121,6 +122,7 @@ def log_normalization(original: str, normalized: str) -> None:
     try:
         NORMALIZE_LOG.parent.mkdir(parents=True, exist_ok=True)
         with NORMALIZE_LOG.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"ts": time.time(), "raw": original, "normalized": normalized}, ensure_ascii=False) + "\n")
+            f.write(json.dumps({"ts": time.time(), "ts_iso": datetime.now().astimezone().isoformat(timespec="seconds"),
+                                "raw": original, "normalized": normalized}, ensure_ascii=False) + "\n")
     except OSError:
         pass

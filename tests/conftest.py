@@ -5,6 +5,7 @@ import urllib.request
 import pytest
 
 import mac_ai.router as r
+from mac_ai import config
 from mac_ai.router import lexicon, normalize
 
 REAL_URLOPEN = urllib.request.urlopen  # 需要真的連線的測試（本機 socket）用這個
@@ -12,11 +13,13 @@ REAL_URLOPEN = urllib.request.urlopen  # 需要真的連線的測試（本機 so
 
 @pytest.fixture(autouse=True)
 def _isolate_router(request, monkeypatch, tmp_path):
-    """每個測試前重設 LLM 熔斷，並把正規化紀錄導到暫存目錄（不污染專案的 logs/）。
+    """每個測試前重設 LLM 熔斷，並把正規化／延遲／指令紀錄導到暫存目錄（不污染專案的 logs/）。
     離線測試預設 LLM 不可用（不會誤打到本機正在跑的 server）；需要 LLM 的測試自己 monkeypatch llm_client._chat 或 urlopen。
     live 測試要真的連 server，所以不套用這個預設。"""
     r.reset_llm_breaker()
     monkeypatch.setattr(normalize, "NORMALIZE_LOG", tmp_path / "logs" / "normalize.jsonl")
+    monkeypatch.setattr(config, "LATENCY_LOG", tmp_path / "logs" / "latency.jsonl")
+    monkeypatch.setattr(config, "COMMAND_LOG", tmp_path / "logs" / "commands.jsonl")
     if request.node.get_closest_marker("live") is None:
         def offline(*a, **kw):
             raise urllib.error.URLError("offline test: LLM not mocked")
