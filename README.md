@@ -170,16 +170,41 @@ ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/inst
 
 ## 端點偵測（說完就收）
 
-預設 `mac_ai/config.py` 的 `ENDPOINT_MODE = "client"`：本端用 Silero VAD 判斷何時開始／結束說話，並看辨識中的文字是不是一句完整的指令（完整就早點收、句尾是「然後」之類就多等），決定後主動要求 macos-stt 收尾。改成 `"server"` 即回到舊行為（macos-stt 的能量 VAD，靜音 1.5 秒才斷句）。每句的計時寫在 `logs/latency.jsonl`。設計、參數與實測結果見 [docs/語音端點偵測與延遲改善：實作計畫.md](docs/語音端點偵測與延遲改善：實作計畫.md)。
+預設 `mac_ai/config.py` 的 `ENDPOINT_MODE = "client"`：本端用 Silero VAD 判斷何時開始／結束說話，並看辨識中的文字是不是一句完整的指令（完整就早點收、句尾是「然後」之類就多等），決定後主動要求 macos-stt 收尾。改成 `"server"` 即回到舊行為（macos-stt 的能量 VAD，靜音 1.5 秒才斷句）。每句的計時寫在 `logs/runtime/latency.jsonl`（各 log 的用途見下方「Logs」）。設計、參數與實測結果見 [docs/語音端點偵測與延遲改善：實作計畫.md](docs/語音端點偵測與延遲改善：實作計畫.md)。
 
 量測與比較（需要 macos-stt 已啟動）：
 
 ```bash
 python scripts/make_bench_corpus.py synth      # 產生合成測試語料到 bench/synth/
-python scripts/stt_bench.py run --corpus bench/synth --mode server --out logs/bench_base.jsonl
-python scripts/stt_bench.py run --corpus bench/synth --mode client --out logs/bench_new.jsonl
-python scripts/stt_bench.py report logs/bench_base.jsonl logs/bench_new.jsonl   # A/B 比較與驗收判定
+python scripts/stt_bench.py run --corpus bench/synth --mode server --label base   # 輸出自動命名並存到 logs/bench/
+python scripts/stt_bench.py run --corpus bench/synth --mode client --label new
+python scripts/stt_bench.py list                                                  # 列出所有 bench 的重點數字
+python scripts/stt_bench.py report logs/bench/<base 檔> logs/bench/<new 檔>       # A/B 比較與驗收判定
 python scripts/record_human.py                 # 錄真人測試語料（清單在 bench/human/manifest.csv）
+```
+
+## Logs
+
+`logs/` 不入版控，依來源分資料夾：
+
+| 位置 | 內容 | 寫入者 |
+|---|---|---|
+| `logs/runtime/latency.jsonl` | 每句話的收音→定稿計時，`utt_id`＝這句 final 的編號（`e2e_ms`＝說完→定稿、`endpoint_ms`＝說完→決定收尾、`finalize_ms`＝送 flush→定稿；`e2e_ms` 為 null＝本端 VAD 沒偵測到說話） | `stt/client.py` |
+| `logs/runtime/commands.jsonl` | 每個指令的路由與執行結果：語音指令帶 `utt_id`（對應 latency 同一句）與 `queue_ms`（進佇列到開始執行的等待；UI 打字、清單點選沒有這兩欄）；各步 `kind`／`status`／`ms`／`intent`／`logs`、`stages`；家目錄以 `~` 表示，不含搜尋清單。`--text` 不寫 | `assistant.py` |
+| `logs/runtime/normalize.jsonl` | STT 原文→正規化結果（只記詞庫造成的改動，用來回收誤聽詞） | `router/normalize.py` |
+| `logs/runtime/ui.jsonl` | 桌面角色每則訊息一行：`bus_ms`（後端→Electron）、`apply_ms`（→畫面套用） | `desktop/main.js` |
+| `logs/services/*.log` | 子服務（`mlx_vlm`／`stt`／`ui`）的 stdout，每次啟動覆寫 | `services.py` |
+| `logs/bench/*.jsonl` | `stt_bench.py run` 的輸出，檔名＝`日期_語料_模式[_標籤][_only-類別][_參數]`；最後一行 `meta` 記錄實際生效參數與 git commit | `scripts/stt_bench.py` |
+| `logs/_legacy/` | 整理前的舊格式紀錄（唯讀備查，程式不會寫） | — |
+
+`runtime/` 的每一行都有 `ts_iso`（本地時間）與 `run_id`（哪一次啟動，格式 `YYYYMMDD-HHMMSS`），三種紀錄可用 `run_id` 對起來，同一次啟動內 latency 與 commands 再用 `utt_id` 一句對一句；浮點數寫入時已四捨五入（`*_ms` 取 1 位）。`ui.jsonl` 另有 `conn`（第幾次連上匯流排）。
+
+原始 JSONL 一行很長，要快速看請用檢視指令（唯讀）：
+
+```bash
+python scripts/log_view.py                   # 最近一次啟動：語音每句一行（收音計時＋指令執行＋說完→執行完）、其他指令、桌面角色延遲
+python scripts/log_view.py --all             # 全部啟動；--run <run_id> 指定哪一次；-n 50 多列幾筆
+python scripts/stt_bench.py list             # bench 一覽
 ```
 
 ## 測試

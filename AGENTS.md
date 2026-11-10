@@ -74,7 +74,7 @@ mic.py → stt/client.py（WS :8765，Silero VAD + endpoint.py 決定何時 flus
 7. **改 Fast Path 規則會連動端點偵測**：`classify` 用 `FastPathMatcher` 判斷句子是否完整，命中越多、收句越早（靜音 0.35 秒）。新增規則後要跑 `tests/test_completeness_offline.py`、`tests/test_endpoint_offline.py`；擔心截斷句子時調 `config.py` 的 `EP_*`，並附實測依據。
 8. 外部指令都有逾時（`_run(..., timeout)`）：`mdfind` 3 秒、`osascript` 取決於場景。新增子程序呼叫必須設逾時。
 9. 指令是**單執行緒依序**執行（`command_worker`）；同步操作會擋住下一句，所以不要加長時間阻塞，必要時設短逾時。
-10. 量測用既有工具：`step["ms"]`、`stages`、`logs/latency.jsonl`、`scripts/stt_bench.py`、`scripts/ui_perf.py`。**效能主張要有實測數字**，不要憑感覺。
+10. 量測用既有工具：`step["ms"]`、`stages`、`logs/runtime/latency.jsonl`（收音計時）、`logs/runtime/commands.jsonl`（指令路由與各步 ms）、`scripts/stt_bench.py`（`list` 一覽、`report` 比較）、`scripts/ui_perf.py`；log 結構見 README「Logs」，`python scripts/log_view.py` 一行一筆檢視 runtime 紀錄；語音指令的 latency 與 commands 以 `utt_id` 對應（`SttClient` 編號 → `SpokenCommand` 帶進佇列 → `command_worker` 寫入），改這條鏈時要保持。**效能主張要有實測數字**，不要憑感覺。
 
 ## 5. 「準」的守則
 
@@ -108,7 +108,7 @@ mic.py → stt/client.py（WS :8765，Silero VAD + endpoint.py 決定何時 flus
 
 ## 7. 測試規範
 
-- 離線測試是預設且必須通過；`tests/conftest.py` 已經：重設 LLM 熔斷、**讓 `urllib.request.urlopen` 預設拋錯**（不會誤打本機 server）、把已安裝 App 清單固定為空、把 `normalize.jsonl` 導到暫存目錄。
+- 離線測試是預設且必須通過；`tests/conftest.py` 已經：重設 LLM 熔斷、**讓 `urllib.request.urlopen` 預設拋錯**（不會誤打本機 server）、把已安裝 App 清單固定為空、把 `normalize`／`latency`／`commands` 三種 log 導到暫存目錄（測試不得寫進專案的 `logs/`）。
 - 需要的假環境用現成 fixture：`sh`（記錄 `subprocess.run`）、`find_env`（假家目錄＋假 `mdfind`）、`installed_apps`、`projects`。**測試不得依賴這台電腦裝了哪些 App，也不得真的執行 `open`／`osascript`／`mdfind`。**
 - 時間相關邏輯（喚醒會話、選擇清單 TTL、端點偵測）用注入的時鐘測，不要 `sleep`。
 - 修 bug 先寫能重現的測試；重構要確認前後行為一致。
