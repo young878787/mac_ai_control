@@ -8,9 +8,9 @@
 
 每段流程：顯示要說的句子與情境 → 按 Enter → 倒數 → 開始錄（前 1 秒保持安靜、再開口；說完就安靜等到結束）。
 錄完可選擇：Enter＝接受、r＝重錄、s＝跳過、q＝離開。D 類（只有噪音）不要說話。
-錄完後跑：python scripts/stt_bench.py run --corpus bench/human --mode server --out logs/human_base.jsonl
-         python scripts/stt_bench.py run --corpus bench/human --mode client --out logs/human_new.jsonl
-         python scripts/stt_bench.py report logs/human_base.jsonl logs/human_new.jsonl
+錄完後跑：python scripts/stt_bench.py run --corpus bench/human --mode server --label base
+         python scripts/stt_bench.py run --corpus bench/human --mode client --label new
+         python scripts/stt_bench.py list        # 再用 report 比較 logs/bench/ 裡的兩個檔
 """
 import argparse
 import csv

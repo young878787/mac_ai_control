@@ -1,12 +1,16 @@
-"""執行期紀錄：JsonlLog 格式、commands.jsonl 內容與寫入；不污染專案 logs/。"""
+"""執行期紀錄與 bench：JsonlLog、commands.jsonl、stt_bench 檔名／生效參數／list；不污染專案 logs/。"""
 import json
 import queue
+import sys
 import threading
 from pathlib import Path
 
 from mac_ai import config
 from mac_ai.assistant import command_record, command_worker
 from mac_ai.stt.latency_log import RUN_ID, JsonlLog
+
+sys.path.insert(0, str(config.ROOT / "scripts"))
+import stt_bench  # noqa: E402
 
 
 def lines(path):
@@ -88,6 +92,55 @@ def test_worker_without_command_log_still_runs():
     stop.set()
     t.join(timeout=2)
     assert done == ["a"]
+
+# ---------- stt_bench 檔名／list ----------
+BASE = {"corpus": "bench/synth", "mode": "client", "label": None, "only": None, "ep": [], "pre_delay": None, "send_s": None, "block_s": None}
+
+
+def test_bench_name_encodes_what_was_run():
+    assert stt_bench.bench_name("2026-11-09", BASE) == "2026-11-09_synth_client.jsonl"
+    a = {**BASE, "label": "sweep-a", "only": "A,B,F", "ep": ["partial_stable_s=0.25"], "pre_delay": 0.1}
+    assert stt_bench.bench_name("2026-11-04", a) == "2026-11-04_synth_client_sweep-a_only-A.B.F_partial_stable_s-0.25_pre_delay-0.1.jsonl"
+    assert stt_bench.bench_name("d", {**BASE, "pre_delay": 0.0}).endswith("_pre_delay-0.jsonl")  # 0 也要寫出來
+
+
+def test_unique_adds_suffix_instead_of_overwriting(tmp_path):
+    p = tmp_path / "a.jsonl"
+    assert stt_bench._unique(p) == p
+    p.write_text("x")
+    assert stt_bench._unique(p) == tmp_path / "a-2.jsonl"
+    (tmp_path / "a-2.jsonl").write_text("x")
+    assert stt_bench._unique(p) == tmp_path / "a-3.jsonl"
+
+
+def test_effective_params_include_defaults_and_overrides():
+    import argparse
+    args = argparse.Namespace(mode="client", pre_delay=None, send_s=None, ep=["partial_stable_s=0.25"])
+    eff = stt_bench.effective_params(args)
+    assert eff["partial_stable_s"] == 0.25 and eff["silence_complete_s"] == config.EP_SILENCE_COMPLETE_S
+    assert eff["pre_delay_s"] == config.EP_FLUSH_PRE_DELAY_S and eff["send_s"] == config.EP_SEND_S and "decide" not in eff
+    srv = stt_bench.effective_params(argparse.Namespace(mode="server", pre_delay=None, send_s=None, ep=[]))
+    assert srv["pre_delay_s"] == config.STT_FLUSH_PRE_DELAY_S and srv["send_s"] == 0.0
+
+
+def _write_run(path, clips_ok, with_meta=True):
+    rows = [{"type": "clip", "clip": f"A0{i}", "category": "A", "mode": "client", "ref_text": "打開小算盤",
+             "expected_actions": [["control_mac_app", {"app_name": "Calculator", "action": "open"}]], "truth_speech_end_s": 2.0,
+             "duration_s": 5.0, "finals": [{"t": 2.5, "text": "打開小算盤" if ok else "你好", "timing": None}], "partials": [],
+             "errors": [], "records": []} for i, ok in enumerate(clips_ok)]
+    if with_meta:
+        rows.append({"type": "meta", "mode": "client", "corpus": "bench/synth", "args": dict(BASE)})
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+
+
+def test_list_shows_one_row_per_run_with_key_numbers(tmp_path, capsys):
+    _write_run(tmp_path / "2026-11-04_synth_client.jsonl", [True, True])
+    _write_run(tmp_path / "2026-11-05_synth_client_broken.jsonl", [True, False], with_meta=False)
+    stt_bench.cmd_list(__import__("argparse").Namespace(files=[str(p) for p in sorted(tmp_path.glob("*.jsonl"))]))
+    out = capsys.readouterr().out.splitlines()
+    assert "檔名" in out[0] and "A類E2E中位" in out[0]
+    assert out[1].startswith("2026-11-04_synth_client.jsonl") and "500ms" in out[1] and "2/2" in out[1]
+    assert "沒有 meta" in out[2] and "1/2" in out[2]
 
 # ---------- 寫入時四捨五入 ----------
 def test_jsonl_log_rounds_floats_so_records_are_readable(tmp_path):

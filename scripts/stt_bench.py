@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """端點偵測 bench：把音檔照真實時間節奏推給真的 macos-stt（ws://127.0.0.1:8765），量延遲與正確率。只比對指令、不執行任何動作。
 
-  python scripts/stt_bench.py run --corpus bench/synth --mode server --out logs/bench_base.jsonl
-  python scripts/stt_bench.py run --corpus bench/synth --mode client --out logs/bench_new.jsonl
-  python scripts/stt_bench.py report logs/bench_base.jsonl logs/bench_new.jsonl     # 兩個檔：A/B 比較＋驗收判定
-  python scripts/stt_bench.py report logs/bench_new.jsonl                           # 一個檔：只看數據
+  python scripts/stt_bench.py run --corpus bench/synth --mode server --label base
+  python scripts/stt_bench.py run --corpus bench/synth --mode client --label new --ep partial_stable_s=0.25
+      # 不給 --out 就存到 logs/bench/<日期>_<語料>_<模式>[_標籤][_only-類別][_參數…].jsonl，檔名就看得出這次跑了什麼
+  python scripts/stt_bench.py list                                                  # 列出 logs/bench/ 所有 run 的重點數字
+  python scripts/stt_bench.py report logs/bench/A.jsonl logs/bench/B.jsonl          # 兩個檔：A/B 比較＋驗收判定
+  python scripts/stt_bench.py report logs/bench/A.jsonl                             # 一個檔：只看數據
 
 mode=server：舊行為（server 的能量 VAD 靜音斷句；本端 VAD 只觀察、量 speech_end）。
 mode=client：本端神經網路 VAD＋語意判斷，主動 flush。
@@ -12,6 +14,7 @@ mode=client：本端神經網路 VAD＋語意判斷，主動 flush。
 """
 import argparse
 import csv
+import inspect
 import json
 import os
 import re
@@ -21,6 +24,7 @@ import sys
 import threading
 import time
 from collections import Counter
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -133,17 +137,69 @@ def parse_overrides(items: List[str]) -> dict:
     return {k: float(v) for k, v in (it.split("=", 1) for it in items)}
 
 
+def _pre_delay(args) -> float:
+    if args.pre_delay is not None:
+        return args.pre_delay
+    return config.EP_FLUSH_PRE_DELAY_S if args.mode == "client" else config.STT_FLUSH_PRE_DELAY_S
+
+
+def _send_s(args) -> float:
+    if args.send_s is not None:
+        return args.send_s
+    return config.EP_SEND_S if args.mode == "client" else 0.0
+
+
+def effective_params(args) -> dict:
+    """這次 run 實際生效的參數（含沒指定、用預設的），寫進 meta：事後不用回頭翻 config 就知道當時是多少"""
+    skip = {"decide", "sample_rate"}
+    ep = {k: v.default for k, v in inspect.signature(EndpointDetector.__init__).parameters.items()
+          if k not in skip and isinstance(v.default, (int, float)) and not isinstance(v.default, bool)}
+    ep.update(parse_overrides(args.ep))
+    return {**ep, "pre_delay_s": _pre_delay(args), "send_s": _send_s(args)}
+
+
+def _git_rev() -> str:
+    try:
+        rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=5).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return rev + ("+dirty" if rev and dirty else "")
+
+
+def bench_name(day: str, a: dict) -> str:
+    """logs/bench/ 的檔名：日期_語料_模式[_標籤][_only-類別][_參數…].jsonl。a 是 run 的參數（meta["args"]）"""
+    parts = [day, Path(a["corpus"]).name, a["mode"]]
+    if a.get("label"):
+        parts.append(a["label"])
+    if a.get("only"):
+        parts.append("only-" + a["only"].replace(",", "."))
+    parts += [it.replace("=", "-") for it in a.get("ep") or []]
+    for key in ("pre_delay", "send_s", "block_s"):
+        if a.get(key) is not None:
+            parts.append(f"{key}-{a[key]:g}")
+    return "_".join(parts) + ".jsonl"
+
+
+def _unique(path: Path) -> Path:
+    n, cand = 2, path
+    while cand.exists():
+        cand = path.with_name(f"{path.stem}-{n}{path.suffix}")
+        n += 1
+    return cand
+
+
 def run_clip(row: dict, wav: Path, args, vad: SileroVad, hints: List[str]) -> dict:
     client_mode = args.mode == "client"
     block_s = args.block_s if args.block_s else (0.032 if client_mode else config.STT_BLOCK_S)
-    pre_delay = args.pre_delay if args.pre_delay is not None else (config.EP_FLUSH_PRE_DELAY_S if client_mode else config.STT_FLUSH_PRE_DELAY_S)
+    pre_delay = _pre_delay(args)
     vad_flush = config.EP_SERVER_BACKUP_FLUSH_S if client_mode else config.STT_VAD_FLUSH_S
     src = WavSource(wav, block_s)
     events, records = [], []
     detector = EndpointDetector(decide=client_mode, **parse_overrides(args.ep))
     client = SttClient(src, lambda e: events.append((time.monotonic(), e)), hints=hints, vad=vad, endpoint=detector,
                        flush=client_mode, vad_flush_s=vad_flush, pre_delay_s=pre_delay, latency_sink=records.append,
-                       send_s=args.send_s if args.send_s is not None else (config.EP_SEND_S if client_mode else 0.0))
+                       send_s=_send_s(args))
     stop = threading.Event()
     thread = threading.Thread(target=client.run, args=(stop,), daemon=True)
     thread.start()
@@ -181,8 +237,10 @@ def cmd_run(args) -> None:
         sys.exit(f"{corpus} 沒有可跑的音檔")
     hints = config.STT_HINTS_PATH.read_text(encoding="utf-8").splitlines()
     vad = SileroVad()
-    out = Path(args.out)
+    out = Path(args.out) if args.out else _unique(config.BENCH_LOG_DIR / bench_name(date.today().isoformat(), vars(args)))
+    args.out = str(out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.now().astimezone().isoformat(timespec="seconds")
     backend = _backend_pid()
     flush_before = _server_flush_counts()
     cpu0 = (time.monotonic(), time.process_time(), _cpu_seconds(backend) if backend else None)
@@ -199,6 +257,7 @@ def cmd_run(args) -> None:
         flush_after = _server_flush_counts()
         meta = {
             "type": "meta", "mode": args.mode, "corpus": str(corpus), "args": vars(args), "wall_s": wall,
+            "label": args.label, "started_at": started_at, "git": _git_rev(), "effective": effective_params(args),
             "server_flush": dict(flush_after - flush_before),
             "cpu_pct": {"mac_ai": (time.process_time() - cpu0[1]) / wall * 100,
                         "macos_stt": ((cpu1 - cpu0[2]) / wall * 100) if cpu1 is not None and cpu0[2] is not None else None},
@@ -398,13 +457,32 @@ def cmd_report(args) -> None:
         sys.exit(check(*loaded))
 
 
+def cmd_list(args) -> None:
+    """一行一個 run：看這個資料夾裡有哪些 bench、各自的重點數字。意圖＝全部題目中意圖正確的數量；拆句＝被拆成兩句以上的題數"""
+    files = [Path(p) for p in args.files] or sorted(config.BENCH_LOG_DIR.glob("*.jsonl"))
+    if not files:
+        sys.exit(f"{config.BENCH_LOG_DIR} 裡沒有 bench 紀錄")
+    rows = []
+    for f in files:
+        clips, meta = load(str(f))
+        an = [analyze(c) for c in clips]
+        a_cls = [a for a in an if a["category"] == "A"]
+        rows.append((f.name + ("" if meta else "（沒有 meta，可能沒跑完）"), len(an), _fmt(_med([a["e2e_ms"] for a in a_cls])),
+                     f"{sum(a['intent_ok'] for a in an)}/{len(an)}", sum(a["split"] for a in an)))
+    w = max(len(r[0]) for r in rows)
+    print(f"{'檔名':<{w}}  {'題數':>4}  {'A類E2E中位':>10}  {'意圖':>7}  {'拆句':>4}")
+    for name, n, e2e, intent, split in rows:
+        print(f"{name:<{w}}  {n:>4}  {e2e:>10}  {intent:>7}  {split:>4}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--corpus", required=True)
     r.add_argument("--mode", choices=["server", "client"], required=True)
-    r.add_argument("--out", required=True)
+    r.add_argument("--out", help=f"輸出檔（預設 {config.BENCH_LOG_DIR.relative_to(ROOT)}/<日期>_<語料>_<模式>…jsonl，檔名依參數自動產生）")
+    r.add_argument("--label", help="標籤，會放進檔名與 meta，例如 base、new、B-trial")
     r.add_argument("--only", help="類別或 clip 名稱，逗號分隔，例如 A,B 或 A01")
     r.add_argument("--block-s", type=float, help="收音幀長（預設 server 0.2／client 0.032）")
     r.add_argument("--send-s", type=float, help="client 模式幾秒的音訊合成一則 WS 訊息（預設 config.EP_SEND_S）")
@@ -414,8 +492,10 @@ def main() -> None:
     p.add_argument("files", nargs="+")
     p.add_argument("--detail", action="store_true", help="逐段列出（意圖錯誤或被拆句的會附上 partial／flush／final 時間軸）")
     p.add_argument("--trace", action="store_true", help="--detail 時每一段都附時間軸（時間相對於說完的時間點）")
+    ls = sub.add_parser("list")
+    ls.add_argument("files", nargs="*", help="省略＝列出 logs/bench/ 全部")
     args = ap.parse_args()
-    cmd_run(args) if args.cmd == "run" else cmd_report(args)
+    {"run": cmd_run, "report": cmd_report, "list": cmd_list}[args.cmd](args)
 
 
 if __name__ == "__main__":
