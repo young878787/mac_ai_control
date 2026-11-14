@@ -65,7 +65,7 @@ CASES = [
     ("幫我開 VS Code 然後關掉 Spotify", lambda c: sorted((a["app_name"], a["action"]) for _, a in c) == [("Spotify", "quit"), ("Visual Studio Code", "open")]),
     ("打開終端機，順便把螢幕調暗一點，還有開瀏覽器查一下台北天氣",
      lambda c: _names(c).count("control_mac_app") == 1 and _names(c).count("adjust_screen_brightness") == 1 and _names(c).count("web_search_or_open_url") == 1 and len(c) == 3),
-    ("今天心情不錯", lambda c: c == []),
+    ("今天心情不錯", lambda c: _names(c) in ([], ["chat_reply"])),   # 兩種都會觸發 chat call（D6）
 ]
 
 

@@ -33,8 +33,8 @@ def _chat(messages: List[dict], timeout: float = PLAN_TIMEOUT_S, tools: bool = T
     body = {
         "model": MODEL_ID,
         "messages": messages,
-        # 官方建議取樣參數；enable_thinking=False 關閉 <think>，否則延遲倍增
-        "temperature": 0.1,
+        # 取樣參數（temperature 0.4 為使用者指定，其餘為官方建議）；enable_thinking=False 關閉 <think>，否則延遲倍增
+        "temperature": 0.4,
         "top_p": 1.0,
         "top_k": 50,
         "repetition_penalty": 1.1,

@@ -12,9 +12,12 @@ from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
 from mac_ai.router.tools import validate_tool_call
 
 
+# 快取前綴：必須逐字穩定，動態資訊（詞庫提示、本機搜尋結果）一律放使用者訊息（見 build_user_message）
+# 措辭刻意維持散文、第二人稱：實測（20 句×4 次）改成 Markdown 標題／條列或第三人稱，正確率由 68/80 降到 60/80；
+# 加『不要直接寫（長篇）回覆』可縮短提問句的 content，但正確率由 90/96 降到 84～87/96
 SYSTEM_PROMPT = (
     "你是運行在 macOS 上的本地語音控制助手。依使用者的繁體中文指令呼叫工具，可一次呼叫多個。"
-    "若指令與任何工具無關，不要呼叫工具，直接簡短回覆。"
+    "需要回覆使用者時（提問、閒聊、與其他工具無關的話），呼叫 chat_reply。"
     "『打開瀏覽器查某事』只需呼叫 web_search_or_open_url，不要另外開啟瀏覽器。"
     "app_name 必須使用標準英文名稱。"
 )
@@ -72,19 +75,30 @@ def local_miss_reply(miss: dict, reason: str) -> str:
     return f"⚠️ 找不到「{miss['label']}」：本機沒有符合的檔案（範圍：{miss['scope']}）；{reason}。要上網查請說「搜尋 {miss['label']}」"
 
 
+def build_user_message(utterance: str, local_miss: Optional[dict] = None) -> str:
+    """規劃呼叫的使用者訊息：原句在最前面（不改字），有詞庫提示、本機搜尋結果時才附上 Markdown 段落。
+    動態資訊放這裡而不是 system：實測放 system 時工具定義的前綴快取失效，prefill 約 2 秒（沒放約 0.2 秒）。
+    標題用『名稱對照』：實測用『已知詞庫』時，『幫我開檔案總管』會被規劃成 open_project"""
+    parts = [utterance]
+    hints = build_hint_lines(utterance)
+    if hints:
+        parts.append("## 名稱對照\n" + "\n".join(f"- {h}" for h in hints))
+    if local_miss is not None:
+        parts.append("## 本機搜尋結果\n" + local_miss_hint(local_miss))
+    return "\n\n".join(parts)
+
+
 def plan_slow_path(utterance: str, meta: Optional[dict] = None,
                    local_miss: Optional[dict] = None) -> Tuple[List[Tuple[str, dict]], Optional[str], List[str]]:
     """送 LLM 規劃工具呼叫。回傳 (通過驗證的 [(工具, 參數)], LLM 純文字回覆, 被拒絕的原因)。
     meta 若有傳入，回填 llm（server timings）與 validate_ms；LLM 不可用時拋出 LLMError。
     local_miss：本機搜尋 0 筆而轉交過來（{"label", "scope"}）→ 提示模型本機結果，且不再導回本機（避免繞圈）"""
-    hints = build_hint_lines(utterance)
-    system = SYSTEM_PROMPT + (f"\n已知詞庫：{'；'.join(hints)}" if hints else "")
-    # 本機結果放在使用者訊息：system＋工具定義的前綴才會命中快取（放在 system 尾巴實測每次多 2 秒）
-    user = utterance + (f"\n（{local_miss_hint(local_miss)}）" if local_miss is not None else "")
     llm_meta: dict = {}
     message = _llm(
-        [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        timeout=PLAN_TIMEOUT_S, meta=llm_meta,
+        [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": build_user_message(utterance, local_miss)}],
+        # 192：工具呼叫每個約 23 tokens（4 個工具實測 94）；模型對提問偶爾直接寫長篇 content（不採用），
+        # 實測 261 tokens／6.5 秒、甚至寫到逾時，上限讓它最多約 5 秒就收手
+        timeout=PLAN_TIMEOUT_S, max_tokens=192, meta=llm_meta,
     )
 
     t = time.perf_counter()
@@ -141,7 +155,7 @@ def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Op
     ctx = ctx or ExecContext()
     ctx.utterance = utterance
     if local_miss is not None:
-        ctx.chat_hint = local_miss_hint(local_miss) + "不要說已經找到。"
+        ctx.chat_hint = local_miss_hint(local_miss) + "回覆不得聲稱已經找到。"
     t0 = time.perf_counter()
     try:
         calls, reply, rejected = plan_slow_path(utterance, step, local_miss)

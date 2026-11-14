@@ -451,7 +451,7 @@ def test_chat_reply_tool_triggers_chat_call_without_tools(monkeypatch, sh):
     out = r.process_voice_command("Python 是什麼")
     assert len(seen) == 2
     plan_kw, chat_kw = seen[0][1], seen[1][1]
-    assert plan_kw.get("tools", True) is True
+    assert plan_kw.get("tools", True) is True and plan_kw["max_tokens"] == 192
     assert chat_kw["tools"] is False and chat_kw["max_tokens"] == 128 and chat_kw["timeout"] == config.CHAT_TIMEOUT_S
     assert seen[1][0][-1] == {"role": "user", "content": "Python 是什麼"}  # 原句直接送入模型
     assert seen[1][0][0]["content"] == actions.CHAT_SYSTEM_PROMPT

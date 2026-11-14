@@ -98,7 +98,8 @@ def test_checked_in_vocab_files_are_up_to_date(tmp_path):
 
 
 def test_project_hint_lists_known_projects(projects):
-    hints = r.build_hint_lines("打開語音助手專案")
-    assert "語音助手→mac_ai_control" in hints
+    hints = r.build_hint_lines("打開那個專案")
     assert any(h.startswith("專案：") and "mac_ai_control" in h and "other_proj" in h for h in hints)
     assert not any(h.startswith("專案：") for h in r.build_hint_lines("查天氣"))
+    # 別名已命中就不附清單（實測附了清單，模型會選清單第一個）
+    assert r.build_hint_lines("打開語音助手專案") == ["語音助手→mac_ai_control"]

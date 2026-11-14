@@ -160,16 +160,19 @@ def _alias_in(alias: str, text: str) -> bool:
 
 def build_hint_lines(utterance: str) -> List[str]:
     """只挑出語句中實際出現的別名，產生『別名→標準名稱』提示，避免撐大 prompt；
-    語句提到『專案』時再附上專案清單，讓 LLM 能填 project_name"""
+    語句提到『專案』、但沒有命中專案別名時，才附上專案清單，讓 LLM 能填 project_name
+    （實測：別名已命中還附清單，提示放在使用者訊息時模型會選清單第一個）"""
     hints = []
     lowered = utterance.lower()
     for alias, name in MAC_APP_ALIASES.items():
         if alias != name.lower() and _alias_in(alias, lowered):
             hints.append(f"{alias}→{name}")
     if re.search(r"專案|project", lowered):
+        n = len(hints)
         for p in LEXICON.get("projects", []):
             for alias in p.get("aliases", []):
                 if alias.lower() in lowered:
                     hints.append(f"{alias}→{p['name']}")
-        hints.append("專案：" + "、".join(sorted({name for name, _ in project_index().values()})[:10]))
+        if len(hints) == n:
+            hints.append("專案：" + "、".join(sorted({name for name, _ in project_index().values()})[:10]))
     return hints

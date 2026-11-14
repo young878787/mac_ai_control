@@ -6,7 +6,7 @@ import pytest
 
 import build_vocab
 import mac_ai.router as r
-from mac_ai.router import llm_client
+from mac_ai.router import llm_client, slow_path
 
 real_run = subprocess.run  # conftest 的 sh fixture 會換掉 subprocess.run，需要真實版本時用這個
 
@@ -177,12 +177,15 @@ def test_execute_slow_path_plain_reply(monkeypatch, sh):
 
 
 def test_hint_injected_only_when_alias_present(monkeypatch):
+    """詞庫提示放在使用者訊息；system 逐字固定（且與暖機相同），工具定義的前綴快取才會命中"""
     seen = []
-    monkeypatch.setattr(llm_client, "_chat", lambda messages, **kw: seen.append(messages[0]["content"]) or {})
+    monkeypatch.setattr(llm_client, "_chat", lambda messages, **kw: seen.append(messages) or {})
     r.plan_slow_path("開小算盤然後查天氣")
     r.plan_slow_path("查天氣")
-    assert "小算盤→Calculator" in seen[0] and "備忘錄" not in seen[0]
-    assert "已知詞庫" not in seen[1]
+    r.warmup_llm()
+    assert seen[0][0]["content"] == seen[1][0]["content"] == seen[2][0]["content"] == slow_path.SYSTEM_PROMPT
+    assert seen[0][1]["content"] == "開小算盤然後查天氣\n\n## 名稱對照\n- 小算盤→Calculator"
+    assert seen[1][1]["content"] == "查天氣"
 
 
 def test_chat_request_body(monkeypatch):
@@ -200,7 +203,7 @@ def test_chat_request_body(monkeypatch):
     assert captured["url"].endswith("/chat/completions")
     assert captured["enable_thinking"] is False
     assert len(captured["tools"]) == 8
-    assert (captured["temperature"], captured["top_k"], captured["repetition_penalty"]) == (0.1, 50, 1.1)
+    assert (captured["temperature"], captured["top_k"], captured["repetition_penalty"]) == (0.4, 50, 1.1)
 
 
 # ---------- 雙軌整合 ----------

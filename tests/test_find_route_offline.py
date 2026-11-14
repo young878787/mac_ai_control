@@ -142,7 +142,7 @@ def test_escalated_query_can_become_a_web_search(monkeypatch, find_env):
     assert step["logs"][0].startswith("🔎 本機沒有符合「python 教學」")
     system, user = llm.calls[0][0]["content"], llm.calls[0][-1]["content"]
     assert "本機沒有名為" not in system  # 放在使用者訊息：system＋工具定義的前綴快取才不會失效（實測差 2 秒）
-    assert user == "找 python 教學\n（本機沒有名為「python 教學」的檔案。）"
+    assert user == "找 python 教學\n\n## 本機搜尋結果\n本機沒有名為「python 教學」的檔案。"
 
 
 def test_escalated_query_without_any_action_confirms_not_found(monkeypatch, find_env):
@@ -169,7 +169,7 @@ def test_escalation_chat_reply_is_told_nothing_was_found(monkeypatch, find_env):
     out = r.process_voice_command("找履歷")
     assert out["replies"] == ["電腦裡沒有這份檔案喔"]
     chat_system = llm.calls[1][0]["content"]
-    assert "本機沒有名為「履歷」的檔案" in chat_system and "不要說已經找到" in chat_system
+    assert "本機沒有名為「履歷」的檔案" in chat_system and "不得聲稱已經找到" in chat_system
 
 
 def test_escalation_with_rejected_tool_still_confirms_not_found(monkeypatch, find_env):

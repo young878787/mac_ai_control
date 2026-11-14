@@ -231,11 +231,23 @@ _FRONT_BROWSER_WINDOW_SCRIPT = (
     " && w.kCGWindowBounds.Width > 300 && w.kCGWindowBounds.Height > 200);"
     'w ? [w.kCGWindowNumber, w.kCGWindowOwnerName, (w.kCGWindowName || "").replace(/\\s+/g, " ")].join("\\t") : ""'
 )
-SCREEN_QUESTION = "這個畫面在顯示什麼？用繁體中文條列重點。"
-SCREEN_SYSTEM_PROMPT = "你是螢幕內容辨識助手。用繁體中文條列重點，最多 5 點，只描述畫面上看得到的內容，不要編造。"
+# 條列指示放在使用者訊息：實測只放 system 時 VL 模型不再條列、漏掉數字
+SCREEN_QUESTION = "這個畫面在顯示什麼？用繁體中文條列重點，最多 5 點。"
+SCREEN_SYSTEM_PROMPT = (
+    "# 角色\n"
+    "螢幕截圖辨識助手。\n"
+    "\n"
+    "# 規則\n"
+    "- 只描述畫面上看得到的內容，不推測、不編造。"
+)
+# 角色寫成名詞片語、不用『本助手』：實測模型會照抄成『我是本助手』
 CHAT_SYSTEM_PROMPT = (
-    "你是運行在 macOS 上的本地語音助手。用繁體中文簡短回答（兩句以內）。"
-    "句子中的電腦操作（開關程式、音量、亮度、搜尋等）已由其他程式處理，不要描述或重複，只回答提問或閒聊的部分。"
+    "# 角色\n"
+    "在 macOS 本機執行的語音助手，負責回答使用者的提問與閒聊。\n"
+    "\n"
+    "# 規則\n"
+    "- 以繁體中文簡短回答，最多兩句。\n"
+    "- 句中的電腦操作（開關程式、音量、亮度、搜尋等）已由其他程式處理；不描述、不重複，只回答提問或閒聊的部分。"
 )
 
 
@@ -352,7 +364,7 @@ def chat_reply(ctx: Optional[ExecContext] = None) -> str:
     t = time.perf_counter()
     try:
         message = _llm(
-            [{"role": "system", "content": CHAT_SYSTEM_PROMPT + (f"\n{ctx.chat_hint}" if ctx.chat_hint else "")},
+            [{"role": "system", "content": CHAT_SYSTEM_PROMPT + (f"\n\n# 補充資訊\n{ctx.chat_hint}" if ctx.chat_hint else "")},
              {"role": "user", "content": ctx.utterance}],
             timeout=CHAT_TIMEOUT_S, tools=False, max_tokens=128, meta=meta,
         )
