@@ -33,6 +33,23 @@ VSCODE = "Visual Studio Code"
 _PERMISSION_HINTS = ("-1743", "-25211", "not allowed", "不允許", "輔助使用", "assistive")
 
 
+@pytest.fixture(scope="module", autouse=True)
+def keep_display_awake():
+    """測試期間不讓螢幕關閉／自動鎖定：底層操作（輔助使用介面）不算使用者活動，不會重設閒置計時。
+    2026-11-15 實測：使用者閒置 4.7 分鐘後開跑，16 秒後螢幕依『5 分鐘關閉顯示器』設定鎖定，之後全部失敗"""
+    proc = subprocess.Popen(["caffeinate", "-d", "-i", "-u", "-w", str(os.getpid())])
+    if front_app_raw() == "loginwindow":
+        proc.terminate()
+        pytest.skip("螢幕目前是鎖定狀態，請解鎖後再跑")
+    yield
+    proc.terminate()
+
+
+def front_app_raw() -> str:
+    out = subprocess.run(["sh", "-c", 'lsappinfo info -only name "$(lsappinfo front)"'], capture_output=True, text=True).stdout
+    return out.split('"')[1] if '"' in out else ""
+
+
 # ---------- 共用工具 ----------
 def osa(script: str, timeout: float = 8.0, lang: str = "") -> str:
     """執行 AppleScript（lang="JavaScript" 為 JXA）。逾時或缺授權 → skip；其他錯誤 → 測試失敗"""
@@ -204,6 +221,34 @@ def test_safari_new_window_then_close_window(safari, say):
     time.sleep(0.8)
     ok_step(say("關閉視窗"))
     wait_for(lambda: len(safari_ids()) == n, what="Safari 視窗數回到原本")
+
+
+YOUTUBE_VIDEO = "https://www.youtube.com/watch?v=jNQXAC9IVRw"  # 19 秒的公開影片（YouTube 第一支影片），長期存在
+# 播放中是「暫停 (k)」、暫停後是「播放鍵盤快速鍵k」（2026-11-15 實測兩種格式不同）；和詞庫 play_pause 的規則相同
+_PLAYER_BUTTON = context.SHORTCUTS["play_pause"]["bindings"][0]["button"]
+
+
+def _player_label(pid: int) -> str:
+    from mac_ai.router import native
+    return native.button_label(pid, _PLAYER_BUTTON) or ""
+
+
+def _player_state(pid: int) -> str:
+    """按鈕寫『暫停』＝正在播放；寫『播放』＝已暫停（同一狀態的文字格式會變，所以只看開頭）"""
+    label = _player_label(pid)
+    return "playing" if label.startswith(("暫停", "Pause")) else ("paused" if label.startswith(("播放", "Play")) else "")
+
+
+def test_youtube_play_pause_presses_player_button(safari, say):
+    """改為按播放器按鈕（輔助使用介面）：以前送 k，中文輸入法下會被吃掉。以按鈕文字（暫停 (k)／播放 (k)）判定切換"""
+    safari(YOUTUBE_VIDEO, "https://www.youtube.com/watch")
+    pid = context.read_front(actions._run).pid
+    before = wait_for(lambda: _player_state(pid), timeout=15, what="YouTube 播放器按鈕出現")
+    step = ok_step(say("播放暫停"))
+    assert step["context"]["method"] == "按鈕" and step["context"]["site"] == "YouTube"
+    after = wait_for(lambda: (x := _player_state(pid)) and x != before and x, timeout=5, what=f"播放狀態由 {before} 切換")
+    ok_step(say("播放暫停"))
+    wait_for(lambda: _player_state(pid) == before, timeout=5, what=f"播放狀態由 {after} 切回 {before}")
 
 
 def _safari_fullscreen() -> bool:
@@ -440,14 +485,24 @@ def test_vscode_sidebar_toggle(vscode, say, tmp_path):
 
 
 def test_vscode_terminal_panel_toggle(vscode, say, tmp_path):
-    after, back = _toggle_twice(vscode, say, tmp_path, "開終端積", "關終端機", "terminal")  # 前者是錯字
-    if after <= CHANGED_MIN and _chinese_input_method():
-        pytest.xfail("已知 bug（2026-11-15）：中文輸入法啟用時 ⌃` 被輸入法當成打字（實測在聊天輸入框打出「、」），面板沒有切換；見計劃書 §14.6")
-    assert after > CHANGED_MIN and back < RESTORED_MAX, f"終端機面板：切換後變化 {after:.3f}、切回殘留 {back:.3f}"
+    """改為按選單「檢視 > 終端」後，中文輸入法啟用時也要打得開面板（以前送 ⌃` 會被注音吃掉，在聊天框打出「、」）。
+    只驗『打開』：測試資料夾是未受信任的暫存資料夾，VS Code 要建立終端機時會跳『是否信任』對話框並拒絕啟動終端程序，
+    再按一次會再跳一次，所以『關掉』要在受信任的資料夾才能驗（不改使用者的信任設定，見計劃書 §16.5）"""
+    from mac_ai.router import native
+    ime = _chinese_input_method()
+    num = window_number("Code", vscode.folder.name)
+    base = shot(num, tmp_path / "terminal-base.png")
+    step = ok_step(say("開終端積"))  # 錯字：開終端機
+    assert step["context"]["method"] == "選單"
+    time.sleep(1.5)
+    opened = changed(base, shot(num, tmp_path / "terminal-on.png"))
+    assert opened > CHANGED_MIN, f"終端機面板沒有出現（中文輸入法={ime}）：變化 {opened:.3f}"
+    native.post_key(53)  # Esc：關掉信任對話框（不按『信任』）
+    time.sleep(0.8)
 
 
 def test_vscode_save_sends_keys_only(vscode, say):
-    """存檔：測試不打字，檔案永遠沒有未存變更，效果驗不了（D8）：只驗送鍵成功且前景沒變"""
+    """存檔：測試不打字，檔案永遠沒有未存變更，效果驗不了（D8）：只驗選單「檔案 > 儲存」按下成功且前景沒變"""
     step = ok_step(say("存擋"))  # 錯字：存檔
     assert step["logs"][-1] == f"✅ {VSCODE}：存檔" and front_app() == VSCODE
 

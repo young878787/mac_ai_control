@@ -19,9 +19,9 @@ def APP(name):
     return f"open -a {name}"
 
 
-def KEY(code, *mods):
-    using = ", ".join(f"{m} down" for m in mods)
-    return f"key code {code}" + (f" using {{{using}}}" if using else "")
+def N(call):
+    """常用功能的底層呼叫（conftest 的 native_calls 記錄格式）"""
+    return "native:" + call
 
 
 VOL = "set volume output volume {}".format
@@ -35,21 +35,21 @@ CASES = [
     ("s2t", "打开计算器", None, [APP("Calculator")]),
     ("s2t", "把屏幕调暗一点", None, [DARKER]),
     ("s2t", "关掉声音", None, [MUTE]),
-    ("s2t", "上一页", "Safari", [KEY(33, "command")]),
-    ("s2t", "关闭窗口", "Finder", [KEY(13, "command")]),
-    ("s2t", "全屏", "Safari", [KEY(3, "command", "control")]),
-    ("s2t", "保存", VSCODE, [KEY(1, "command")]),
-    ("s2t", "打开终端机", VSCODE, [KEY(50, "control")]),
-    ("s2t", "新建标签页", "Terminal", [KEY(17, "command")]),
+    ("s2t", "上一页", "Safari", [N("menu [ command")]),
+    ("s2t", "关闭窗口", "Finder", [N("window close")]),
+    ("s2t", "全屏", "Safari", [N("window fullscreen")]),
+    ("s2t", "保存", VSCODE, [N("menu S command")]),
+    ("s2t", "打开终端机", VSCODE, [N("menu 檢視/終端")]),
+    ("s2t", "新建标签页", "Terminal", [N("menu T command")]),
     ("width", "音量調到５０", None, [VOL(50)]),
     ("width", "打開ＳＡＦＡＲＩ", None, [APP("Safari")]),
     ("num", "音量調到五十", None, [VOL(50)]),
     ("num", "螢幕調亮三格", None, [BRIGHTER]),
     ("filler", "嗯幫我那個打開小算盤好不好", None, [APP("Calculator")]),
-    ("filler", "欸上一頁啦", "Safari", [KEY(33, "command")]),
-    ("filler", "麻煩你存檔一下", VSCODE, [KEY(1, "command")]),
-    ("space", "上 一 頁", "Safari", [KEY(33, "command")]),
-    ("space", "關 閉 視 窗", "Finder", [KEY(13, "command")]),
+    ("filler", "欸上一頁啦", "Safari", [N("menu [ command")]),
+    ("filler", "麻煩你存檔一下", VSCODE, [N("menu S command")]),
+    ("space", "上 一 頁", "Safari", [N("menu [ command")]),
+    ("space", "關 閉 視 窗", "Finder", [N("window close")]),
     ("repeat", "打開打開小算盤", None, [APP("Calculator")]),
     ("lexicon", "打開科索", None, [APP("Cursor")]),
     ("lexicon", "開谷哥瀏覽器", None, [APP("Google Chrome")]),
@@ -57,7 +57,7 @@ CASES = [
     ("lexicon", "因量調到40", None, [VOL(40)]),
     ("lexicon", "淨音", None, [MUTE]),
     ("lexicon", "把營幕調暗", None, [DARKER]),
-    ("lexicon", "開中端機", VSCODE, [KEY(50, "control")]),
+    ("lexicon", "開中端機", VSCODE, [N("menu 檢視/終端")]),
     ("latin", "打開 Saffari", None, [APP("Safari")]),
     ("latin", "打開 Spotfy", None, [APP("Spotify")]),
     ("latin", "打開 Discrod", None, [APP("Discord")]),
@@ -68,21 +68,21 @@ CASES = [
     ("homophone", "打開深色膜式", None, [DARK_ON]),
     ("homophone", "打開小蒜盤", None, [APP("Calculator")]),
     ("homophone", "打開被忘錄", None, [APP("Notes")]),
-    ("homophone", "開終端積", VSCODE, [KEY(50, "control")]),
-    ("homophone", "上一業", "Safari", [KEY(33, "command")]),
-    ("homophone", "下一業", "Safari", [KEY(30, "command")]),
-    ("homophone", "存擋", VSCODE, [KEY(1, "command")]),
-    ("homophone", "關閉試窗", "Finder", [KEY(13, "command")]),
-    ("homophone", "全螢目", "Safari", [KEY(3, "command", "control")]),
-    ("homophone", "開側編欄", VSCODE, [KEY(11, "command")]),
-    ("homophone", "最小話", "Finder", [KEY(46, "command")]),
-    ("homophone", "清除話面", "Terminal", [KEY(40, "command")]),
-    ("homophone", "開新分夜", "Terminal", [KEY(17, "command")]),
+    ("homophone", "開終端積", VSCODE, [N("menu 檢視/終端")]),
+    ("homophone", "上一業", "Safari", [N("menu [ command")]),
+    ("homophone", "下一業", "Safari", [N("menu ] command")]),
+    ("homophone", "存擋", VSCODE, [N("menu S command")]),
+    ("homophone", "關閉試窗", "Finder", [N("window close")]),
+    ("homophone", "全螢目", "Safari", [N("window fullscreen")]),
+    ("homophone", "開側編欄", VSCODE, [N("menu B command")]),
+    ("homophone", "最小話", "Finder", [N("window minimize")]),
+    ("homophone", "清除話面", "Terminal", [N("menu K command")]),
+    ("homophone", "開新分夜", "Terminal", [N("menu T command")]),
     ("translit", "打開撒法利", None, [APP("Safari")]),
     ("translit", "打開史波提fy", None, [APP("Spotify")]),
     ("mixed", "打开计算器然后把因量调到五十", None, [APP("Calculator"), VOL(50)]),
-    ("mixed", "嗯幫我上一業啦", "Safari", [KEY(33, "command")]),
-    ("mixed", "開終端積吧", VSCODE, [KEY(50, "control")]),
+    ("mixed", "嗯幫我上一業啦", "Safari", [N("menu [ command")]),
+    ("mixed", "開終端積吧", VSCODE, [N("menu 檢視/終端")]),
     ("mixed", "金音，然後螢目調暗一點", None, [MUTE, DARKER]),
 ]
 # 不能過度矯正：改對字之後仍是否定／敘述／提問，一個指令都不能送
@@ -103,13 +103,12 @@ def case_ids(cases):
 
 @pytest.fixture
 def real_like_sh(monkeypatch):
-    """記錄 subprocess.run；送鍵腳本回 ok（前景 App 沒變），其餘回空字串、結束碼 0"""
+    """記錄 subprocess.run（一律回空字串、結束碼 0）"""
     calls = []
 
     def fake_run(cmd, **kw):
         calls.append(cmd)
-        out = "ok\n" if cmd[0] == "osascript" and "key code" in cmd[-1] and "frontmost" in cmd[-1] else ""
-        return subprocess.CompletedProcess(cmd, 0, out, "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
     monkeypatch.setattr(subprocess, "run", fake_run)
     return calls
 
@@ -124,25 +123,25 @@ def test_every_category_has_cases():
 
 
 @pytest.mark.parametrize("cat,text,front_app,expected", CASES, ids=case_ids(CASES))
-def test_typo_is_corrected_by_backend(real_like_sh, front, no_llm, cat, text, front_app, expected):
+def test_typo_is_corrected_by_backend(real_like_sh, native_calls, front, no_llm, cat, text, front_app, expected):
     front(front_app)
     out = r.process_voice_command(text)
     assert [s["kind"] for s in out["steps"]] == ["fast"] * len(expected), out["steps"]
     assert all(s["status"] == "ok" for s in out["steps"]), [s["logs"] for s in out["steps"]]
+    assert native_calls == [e[len("native:"):] for e in expected if e.startswith("native:")]
     sent = [" ".join(c) for c in real_like_sh]
-    assert len(sent) == len(expected), sent
-    for cmd, want in zip(sent, expected):
+    want_sh = [e for e in expected if not e.startswith("native:")]
+    assert len(sent) == len(want_sh), sent
+    for cmd, want in zip(sent, want_sh):
         assert want in cmd, (cmd, want)
-    if front_app is not None and "key code" in expected[0]:  # 送鍵前會先確認前景 App 沒變
-        assert f'"/{front_app}.app"' in sent[0]
 
 
 @pytest.mark.parametrize("text,front_app", NEGATIVE, ids=[f"neg-{i:02d}" for i in range(1, len(NEGATIVE) + 1)])
-def test_corrected_negative_sentence_still_runs_nothing(real_like_sh, front, text, front_app):
+def test_corrected_negative_sentence_still_runs_nothing(real_like_sh, native_calls, front, text, front_app):
     """LLM 在離線測試裡不可用（conftest）：被守門擋下的句子走補救路徑，也不能有任何動作"""
     front(front_app)
     out = r.process_voice_command(text)
-    assert real_like_sh == [] and all(s["kind"] == "slow" for s in out["steps"])
+    assert real_like_sh == [] and native_calls == [] and all(s["kind"] == "slow" for s in out["steps"])
 
 
 def test_term_misheard_also_rewrites_search_keywords(real_like_sh, front):

@@ -12,12 +12,14 @@ from mac_ai.router.lexicon import APP_KIND, LEXICON, _compact
 Runner = Callable[[List[str], Optional[float]], Tuple[bool, str]]
 
 _BUNDLE_PATH_RE = re.compile(r'bundle path="(?P<path>[^"]+\.app)"')
+_PID_RE = re.compile(r"\bpid\s*=\s*(\d+)")
 
 
 @dataclass(frozen=True)
 class FrontContext:
     app: str  # .app 的檔名（去掉副檔名），與詞庫的標準名稱同一套
     kind: str  # browser／editor／other
+    pid: int = 0  # 行程編號（native 的 AX 操作直接對這個行程下指令）；0＝不知道
 
 
 def parse_front(info: str) -> Optional[FrontContext]:
@@ -30,7 +32,8 @@ def parse_front(info: str) -> Optional[FrontContext]:
     if os.path.commonpath([os.path.abspath(path), str(ROOT)]) == str(ROOT):
         return None
     app = os.path.basename(path)[:-4]
-    return FrontContext(app, APP_KIND.get(app, "other"))
+    pid = _PID_RE.search(info)
+    return FrontContext(app, APP_KIND.get(app, "other"), int(pid[1]) if pid else 0)
 
 
 def read_front(run: Runner) -> Optional[FrontContext]:
@@ -39,7 +42,7 @@ def read_front(run: Runner) -> Optional[FrontContext]:
     ok, asn = run(["lsappinfo", "front"], CONTEXT_TIMEOUT_S)
     if not ok or not asn.strip():
         return None
-    ok, info = run(["lsappinfo", "info", "-only", "bundlepath", asn.strip()], CONTEXT_TIMEOUT_S)
+    ok, info = run(["lsappinfo", "info", "-only", "bundlepath", "-only", "pid", asn.strip()], CONTEXT_TIMEOUT_S)
     return parse_front(info) if ok else None
 
 
@@ -78,10 +81,9 @@ def read_host(run: Runner, app: str) -> str:
     return parse_host(out) if ok else ""
 
 
-# ---------- 常用功能（快捷鍵）----------
+# ---------- 常用功能（詞庫 app_shortcuts；執行方式見 local_actions.front_action）----------
 SHORTCUTS: Dict[str, dict] = {e["id"]: e for e in LEXICON.get("app_shortcuts", [])}
 SHORTCUT_PHRASES: Dict[str, str] = {_compact(p): e["id"] for e in SHORTCUTS.values() for p in e["phrases"]}
-_MODS = {"command": "command down", "shift": "shift down", "control": "control down", "option": "option down"}
 
 
 def needs_site(entry: dict) -> bool:
@@ -102,20 +104,3 @@ def pick_binding(entry: dict, front: Optional[FrontContext], site: Optional[str]
             continue
         return b
     return None
-
-
-def keystroke_script(app: str, binding: dict) -> str:
-    """送鍵的 AppleScript：同一支腳本內先確認最前面的 App 仍是 app（讀取到送鍵之間使用者可能切走），不是就不送。
-    一律用 key code（不受鍵盤配置影響）；按鍵只來自詞庫 app_shortcuts"""
-    name = app.replace("\\", "\\\\").replace('"', '\\"')
-    using = ", ".join(_MODS[m] for m in binding.get("mods", []))
-    press = f"key code {int(binding['code'])}" + (f" using {{{using}}}" if using else "")
-    return (
-        'tell application "System Events"\n'
-        "set p to first application process whose frontmost is true\n"
-        "set f to POSIX path of (application file of p)\n"
-        f'if f does not end with "/{name}.app" and f does not end with "/{name}.app/" then return "front:" & f\n'
-        f"{press}\n"
-        'return "ok"\n'
-        "end tell"
-    )

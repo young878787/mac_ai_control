@@ -56,11 +56,16 @@ def test_parse_front_without_bundle_path(info):
 
 def test_read_front_calls_lsappinfo_with_timeout():
     run, calls = _runner()
-    assert REAL_READ_FRONT(run) == context.FrontContext("Safari", "browser")
+    assert REAL_READ_FRONT(run) == context.FrontContext("Safari", "browser", 0)
     assert calls == [
         (["lsappinfo", "front"], config.CONTEXT_TIMEOUT_S),
-        (["lsappinfo", "info", "-only", "bundlepath", "ASN:0x0-0x1459458:"], config.CONTEXT_TIMEOUT_S),
+        (["lsappinfo", "info", "-only", "bundlepath", "-only", "pid", "ASN:0x0-0x1459458:"], config.CONTEXT_TIMEOUT_S),
     ]
+
+
+def test_parse_front_reads_pid():
+    info = '"Code" ASN:0x0-0x1: (in front) \n    bundle path="/Applications/Safari.app"\n    pid = 90352 !cgsConnection\n'
+    assert context.parse_front(info) == context.FrontContext("Safari", "browser", 90352)
 
 
 @pytest.mark.parametrize("kw", [{"front_ok": False}, {"asn": "  "}, {"info_ok": False}, {"info": ""}])
@@ -262,90 +267,96 @@ def test_b14_find_miss_with_local_evidence_never_goes_online(monkeypatch, find_e
     assert find_env.opens() == [] and "本機沒有" in step["logs"][0] and "escalated" not in step
 
 
-# ---------- A4：常用功能 ----------
-def _keys(calls):
-    """sh 記錄裡送鍵的腳本 → [(App, 'key code N using {...}')]"""
-    out = []
-    for cmd in calls:
-        if cmd[0] == "osascript" and "key code" in cmd[-1]:
-            lines = cmd[-1].splitlines()
-            app = lines[3].split('"/')[1].split('.app"')[0]
-            out.append((app, lines[4]))
-    return out
-
-
-CMD, SHIFT_CMD = " using {command down}", " using {command down, shift down}"
+# ---------- A4：常用功能（底層執行：native 的呼叫由 conftest 攔下記錄）----------
 ACTION_CASES = [
-    ("關閉視窗", "Finder", "", "key code 13" + CMD),
-    ("關掉這個視窗", "Safari", "", "key code 13" + SHIFT_CMD),   # 瀏覽器 ⌘W 只關分頁
-    ("把視窗關掉", VSCODE, "", "key code 13" + SHIFT_CMD),       # 編輯器 ⌘W 只關檔案
-    ("關閉視窗", "Terminal", "", "key code 13" + CMD),         # Terminal 單一分頁時『關閉視窗』是 ⌘W（實機選單），⇧⌘W 沒有綁定
-    ("關閉視窗", "iTerm", "", "key code 13" + SHIFT_CMD),
-    ("開新視窗", "Safari", "", "key code 45" + CMD),
-    ("新視窗", VSCODE, "", "key code 45" + SHIFT_CMD),            # 編輯器 ⌘N 是新檔案
-    ("最小化", "Finder", "", "key code 46" + CMD),
-    ("全螢幕", "Safari", "", "key code 3 using {command down, control down}"),
-    ("離開全螢幕", "Safari", "", "key code 3 using {command down, control down}"),
-    ("放大", "Safari", "", "key code 24" + CMD),
-    ("幫我縮小一點", VSCODE, "", "key code 27" + CMD),
-    ("上一頁", "Safari", "", "key code 33" + CMD),
-    ("回上一頁", "Safari", "", "key code 33" + CMD),
-    ("下一頁", "Safari", "", "key code 30" + CMD),
-    ("回到頂端", "Safari", "", "key code 126" + CMD),
-    ("往下捲", "Safari", "", "key code 121"),
-    ("往上滑", "Safari", "", "key code 116"),
-    ("暫停", "Safari", YT, "key code 40"),
-    ("播放", "Music", "", "key code 49"),
-    ("開終端機", VSCODE, "", "key code 50 using {control down}"),
-    ("幫我打開終端機", VSCODE, "", "key code 50 using {control down}"),
-    ("關掉終端機", VSCODE, "", "key code 50 using {control down}"),
-    ("開側邊欄", VSCODE, "", "key code 11" + CMD),
-    ("存檔", VSCODE, "", "key code 1" + CMD),
-    ("新分頁", "Terminal", "", "key code 17" + CMD),
-    ("開一個新的分頁", "iTerm", "", "key code 17" + CMD),
-    ("清除畫面", "Terminal", "", "key code 40" + CMD),
+    # (語句, 前景, host, 預期的底層呼叫)
+    ("關閉視窗", "Finder", "", ["window close"]),
+    ("關掉這個視窗", "Safari", "", ["window close"]),         # 一律按視窗的關閉鈕：各 App 行為一致（不再有 ⌘W／⇧⌘W 之分）
+    ("把視窗關掉", VSCODE, "", ["window close"]),
+    ("關閉視窗", "Terminal", "", ["window close"]),
+    ("開新視窗", "Safari", "", ["menu N command"]),
+    ("新視窗", VSCODE, "", ["menu N command+shift"]),          # 編輯器 ⌘N 是新檔案
+    ("最小化", "Finder", "", ["window minimize"]),
+    ("全螢幕", "Safari", "", ["window fullscreen"]),
+    ("離開全螢幕", "Safari", "", ["window fullscreen"]),
+    ("放大", "Safari", "", ["menu += command"]),
+    ("幫我縮小一點", VSCODE, "", ["menu - command"]),
+    ("上一頁", "Safari", "", ["menu [ command"]),
+    ("回上一頁", "Safari", "", ["menu [ command"]),
+    ("下一頁", "Safari", "", ["menu ] command"]),
+    ("回到頂端", "Safari", "", ["key 126 command"]),             # 沒有選單項目：送按鍵（⌘ 組合鍵不受輸入法影響）
+    ("往下捲", "Safari", "", ["key 121"]),
+    ("往上滑", "Safari", "", ["key 116"]),
+    ("暫停", "Safari", YT, [r"button ^(?:播放|暫停|Play|Pause)\s*(?:\(k\)|鍵盤快速鍵\s*k|keyboard shortcut k)$"]),  # 按播放器的按鈕，不送 k（會被注音吃掉）
+    ("開終端機", VSCODE, "", ["menu 檢視/終端"]),                # 按選單，不送 ⌃`（會被注音吃掉）
+    ("幫我打開終端機", VSCODE, "", ["menu 檢視/終端"]),
+    ("關掉終端機", VSCODE, "", ["menu 檢視/終端"]),
+    ("開側邊欄", VSCODE, "", ["menu B command"]),
+    ("存檔", VSCODE, "", ["menu S command"]),
+    ("新分頁", "Terminal", "", ["menu T command"]),
+    ("開一個新的分頁", "iTerm", "", ["menu T command"]),
+    ("清除畫面", "Terminal", "", ["menu K command"]),
 ]
 
 
-@pytest.mark.parametrize("text,front_app,host,press", ACTION_CASES, ids=[f"{c[0]}@{c[1]}" for c in ACTION_CASES])
-def test_front_action_sends_expected_key(monkeypatch, front, text, front_app, host, press):
-    import subprocess
-    calls = []
-
-    def fake_run(cmd, **kw):
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, "ok\n", "")
-    monkeypatch.setattr(subprocess, "run", fake_run)
+@pytest.mark.parametrize("text,front_app,host,expected", ACTION_CASES, ids=[f"{c[0]}@{c[1]}" for c in ACTION_CASES])
+def test_front_action_runs_native_operation(monkeypatch, sh, native_calls, front, text, front_app, host, expected):
     monkeypatch.setattr(llm_client, "_chat", lambda *a, **k: pytest.fail("不應呼叫 LLM"))
     front(front_app, host=host)
     step = r.process_voice_command(text)["steps"][0]
-    assert _keys(calls) == [(front_app, press)] and len(calls) == 1
+    assert native_calls == expected and sh == []  # 沒有任何 osascript／模擬按鍵腳本
     assert step["status"] == "ok" and step["logs"][0].startswith(f"✅ {front_app}：")
-    assert step["context"]["app"] == front_app and step["context"]["used"] is True
+    assert step["context"]["app"] == front_app and step["context"]["used"] is True and step["context"]["method"]
 
 
-def test_keystroke_script_checks_front_app_before_pressing():
-    script = context.keystroke_script("Safari", {"code": 33, "mods": ["command"]})
-    lines = script.splitlines()
-    assert lines[3] == 'if f does not end with "/Safari.app" and f does not end with "/Safari.app/" then return "front:" & f'
-    assert lines.index("key code 33 using {command down}") > 3  # 檢查在送鍵之前
-    assert '\\"' in context.keystroke_script('a"b', {"code": 1, "mods": []})  # 名稱裡的引號要跳脫
+def test_music_play_pause_uses_the_apps_own_command(sh, native_calls, front):
+    front("Music")
+    step = r.process_voice_command("播放")["steps"][0]
+    assert sh == [["osascript", "-e", 'tell application "Music" to playpause']] and native_calls == []
+    assert step["context"]["method"] == "App 指令" and step["status"] == "ok"
 
 
-def test_front_changed_before_keystroke_is_reported(monkeypatch, front):
-    import subprocess
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "front:/Applications/Notes.app\n", ""))
+def test_menu_missing_falls_back_to_key_only_when_front_unchanged(sh, native_calls, front):
+    reads = front("Safari")
+    native_calls.result = "missing"  # 選單裡找不到 ⌘[ 的項目（例如 App 改了快捷鍵）
+    step = r.process_voice_command("上一頁")["steps"][0]
+    assert native_calls == ["menu [ command", "key 33 command"] and reads.count("Safari") == 2  # 送按鍵前再讀一次前景
+    assert step["context"]["method"] == "按鍵"
+
+
+def test_front_changed_before_key_is_reported(monkeypatch, sh, native_calls, front):
+    front("Safari")
+    native_calls.result = "missing"
+    seq = iter([context.FrontContext("Safari", "browser", 4242), context.FrontContext("Notes", "other", 777)])
+    monkeypatch.setattr(context, "read_front", lambda run: next(seq))
+    step = r.process_voice_command("上一頁")["steps"][0]
+    assert native_calls == ["menu [ command"]  # 前景變了：不送按鍵
+    assert step["logs"][0] == "❌ 最前面的 App 已經不是 Safari，沒有執行「上一頁」" and step["status"] == "exec_failed"
+
+
+@pytest.mark.parametrize("result,log", [
+    ("missing", "❌ 關閉視窗失敗：Finder 找不到可操作的視窗"),
+    ("error", "❌ 關閉視窗失敗：Finder（視窗；請確認已授權輔助使用）"),
+])
+def test_native_failure_is_reported(sh, native_calls, front, result, log):
+    front("Finder")
+    native_calls.result = result
+    step = r.process_voice_command("關閉視窗")["steps"][0]
+    assert step["logs"] == [log] and step["status"] == "exec_failed"
+
+
+def test_disabled_menu_item_is_reported(monkeypatch, sh, front):
+    from mac_ai.router import native
+    monkeypatch.setattr(native, "press_menu", lambda pid, chars="", mods=(), path=None: ("disabled", "上一頁"))
     front("Safari")
     step = r.process_voice_command("上一頁")["steps"][0]
-    assert step["logs"][0].startswith("❌ 最前面的 App 已經不是 Safari") and step["status"] == "exec_failed"
+    assert step["logs"] == ["⚠️ Safari 目前不能「上一頁」（選單項目停用）"] and step["status"] == "exec_failed"
 
 
-def test_keystroke_failure_is_reported(monkeypatch, front):
-    import subprocess
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "not allowed"))
-    front("Safari")
+def test_missing_pid_does_nothing(monkeypatch, sh, native_calls):
+    monkeypatch.setattr(context, "read_front", lambda run: context.FrontContext("Safari", "browser", 0))
     step = r.process_voice_command("上一頁")["steps"][0]
-    assert step["logs"][0].startswith("❌ 上一頁失敗：Safari（not allowed") and step["status"] == "exec_failed"
+    assert native_calls == [] and step["status"] == "exec_failed"
 
 
 @pytest.mark.parametrize("text,front_app,host,expected", [
@@ -355,11 +366,11 @@ def test_keystroke_failure_is_reported(monkeypatch, front):
     ("暫停", "Safari", "example.com", "⚠️ 目前最前面的是 Safari，「播放／暫停」只支援YouTube、Music、Spotify"),
     ("關閉視窗", None, "", "⚠️ 不知道要操作哪個視窗（讀不到最前面的 App），沒有執行「關閉視窗」"),
 ])
-def test_front_action_out_of_scope_sends_nothing(monkeypatch, sh, front, text, front_app, host, expected):
+def test_front_action_out_of_scope_does_nothing(monkeypatch, sh, native_calls, front, text, front_app, host, expected):
     monkeypatch.setattr(llm_client, "_chat", lambda *a, **k: pytest.fail("不應呼叫 LLM"))
     front(front_app, host=host)
     step = r.process_voice_command(text)["steps"][0]
-    assert sh == [] and step["logs"] == [expected] and step["status"] == "exec_failed"
+    assert sh == [] and native_calls == [] and step["logs"] == [expected] and step["status"] == "exec_failed"
 
 
 @pytest.mark.parametrize("text", [
@@ -380,18 +391,18 @@ def test_front_action_guards_and_near_misses(text):
     ("打開 terminal", VSCODE, [["open", "-a", "Terminal"]]),
     ("新分頁", "Finder", None),                                   # 照舊走 browser_tab
 ])
-def test_terminal_and_new_tab_fall_back_to_previous_behaviour(monkeypatch, sh, front, text, front_app, expected):
+def test_terminal_and_new_tab_fall_back_to_previous_behaviour(monkeypatch, sh, native_calls, front, text, front_app, expected):
     monkeypatch.setattr(llm_client, "_chat", lambda *a, **k: pytest.fail("不應呼叫 LLM"))
     front(front_app)
     step = r.process_voice_command(text)["steps"][0]
-    assert _keys(sh) == []
+    assert native_calls == []
     if expected is None:
         assert step["logs"][0].startswith("❌ 找不到可操作的瀏覽器")  # sh 的假輸出裡沒有執行中的瀏覽器
     else:
         assert sh == expected and step["status"] == "ok"
 
 
-def test_new_tab_in_browser_unchanged(monkeypatch, front):
+def test_new_tab_in_browser_unchanged(monkeypatch, native_calls, front):
     import subprocess
     calls = []
 
@@ -401,22 +412,33 @@ def test_new_tab_in_browser_unchanged(monkeypatch, front):
     monkeypatch.setattr(subprocess, "run", fake_run)
     front("Safari")
     step = r.process_voice_command("開新分頁")["steps"][0]
-    assert step["logs"] == ["✅ Safari：已開新分頁"] and _keys(calls) == []
+    assert step["logs"] == ["✅ Safari：已開新分頁"] and native_calls == []
 
 
-def test_every_shortcut_phrase_matches_and_match_is_pure(sh, front):
-    """A5：詞庫裡每個說法都命中 front_action，而且比對不讀前景、不跑任何外部指令"""
+_KEY_ONLY_OK = {"page_top", "scroll_down", "scroll_up"}  # 翻頁鍵、⌘↑：沒有選單項目，注音下實測不受影響
+
+
+def test_every_shortcut_phrase_matches_and_match_is_pure(sh, native_calls, front):
+    """A5：詞庫裡每個說法都命中 front_action，而且比對不讀前景、不跑任何外部指令；
+    每個綁定都要有底層做法，送按鍵只允許 ⌘ 組合鍵或沒有字元的鍵（不會被輸入法吃掉）"""
     reads = front("Safari", host=FB)
     m = FastPathMatcher()
     assert len(context.SHORTCUTS) == 17
     for entry in context.SHORTCUTS.values():
-        assert entry["bindings"] and all({"code", "when"} <= set(b) for b in entry["bindings"])
+        assert entry["bindings"]
+        for b in entry["bindings"]:
+            ways = [k for k in ("window", "path", "button", "script", "char", "code") if k in b]
+            assert ways, (entry["id"], b)
+            if "code" in b and "char" not in b:
+                assert entry["id"] in _KEY_ONLY_OK, entry["id"]
+            if "code" in b:
+                assert "command" in b.get("mods", []) or entry["id"] in _KEY_ONLY_OK, entry["id"]
         for phrase in entry["phrases"]:
             hit = m.match(phrase)
             assert hit is not None and hit.actions[0][0] == "front_action" and hit.actions[0][1]["id"] == entry["id"], phrase
     for text in ("查貓咪專頁", "找 python 教學", "新分頁"):
         assert m.match(text) is not None
-    assert reads == [] and sh == []
+    assert reads == [] and sh == [] and native_calls == []
 
 
 # ---------- Phase 4：Slow Path 的使用者訊息附上目前視窗（system 與 tools 不變，保住 prefix cache）----------

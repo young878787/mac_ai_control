@@ -6,7 +6,7 @@ import pytest
 
 import mac_ai.router as r
 from mac_ai import config
-from mac_ai.router import context, lexicon, normalize
+from mac_ai.router import context, lexicon, native, normalize
 
 REAL_URLOPEN = urllib.request.urlopen  # 需要真的連線的測試（本機 socket）用這個
 REAL_READ_FRONT, REAL_READ_HOST = context.read_front, context.read_host  # 測讀取函式本身的測試用這個
@@ -52,6 +52,33 @@ def _isolate_front(request, monkeypatch):
     yield
 
 
+FAKE_PID = 4242
+
+
+@pytest.fixture(autouse=True)
+def native_calls(request, monkeypatch):
+    """離線測試不得真的對 App 下指令：native 的底層操作一律攔下，記成字串（給測試檢查），預設回傳成功。
+    格式：window close／menu [ command／menu 檢視/終端／button <pattern>／key 121。
+    要模擬失敗時改 native_calls.result（例如 "missing"）。真實 App 測試（-m app）不套用"""
+    class Calls(list):
+        result = "ok"
+    calls = Calls()
+    if request.node.get_closest_marker("app") is not None:
+        yield calls
+        return
+
+    def rec(text, ret=None):
+        calls.append(text)
+        return calls.result if ret is None else ret
+
+    monkeypatch.setattr(native, "window_op", lambda pid, op: rec(f"window {op}"))
+    monkeypatch.setattr(native, "press_menu", lambda pid, chars="", mods=(), path=None: (
+        rec(f"menu {'/'.join(p[0] for p in path)}" if path else f"menu {chars} {'+'.join(mods)}"), ""))
+    monkeypatch.setattr(native, "press_button", lambda pid, pattern: rec(f"button {pattern}"))
+    monkeypatch.setattr(native, "post_key", lambda code, mods=(): rec(f"key {code}" + (f" {'+'.join(mods)}" if mods else "")))
+    yield calls
+
+
 @pytest.fixture
 def front(monkeypatch):
     """設定前景 App：front("Safari")、front("Safari", host="www.facebook.com")；front(None)＝讀不到。
@@ -59,7 +86,7 @@ def front(monkeypatch):
     reads = []
 
     def setup(app, host=""):
-        fc = None if app is None else context.FrontContext(app, lexicon.APP_KIND.get(app, "other"))
+        fc = None if app is None else context.FrontContext(app, lexicon.APP_KIND.get(app, "other"), FAKE_PID)
 
         def fake(run):
             reads.append(app)

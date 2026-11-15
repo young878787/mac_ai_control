@@ -10,7 +10,7 @@ import urllib.parse
 from typing import Callable, Dict, List, Optional, Tuple
 
 from mac_ai.config import FILE_SEARCH_TIMEOUT_S, FIND_RESULTS_MAX
-from mac_ai.router import choices, context
+from mac_ai.router import choices, context, native
 from mac_ai.router.actions import (
     LOCAL_TOOLS, POLL_TIMEOUT_S, ExecContext, _dispatch, _skipped, front_context, front_site, mark_page, _run,
 )
@@ -267,9 +267,34 @@ def context_search(query: str, ctx: Optional[ExecContext] = None) -> str:
     return _dispatch("web_search_or_open_url", {"query": query}, ctx)
 
 
+def _run_binding(front: context.FrontContext, b: dict) -> Tuple[str, str]:
+    """依詞庫規格對前景 App 的行程直接下指令（不經過鍵盤與輸入法）→ (狀態, 做法)。
+    狀態：ok／missing（找不到視窗、選單項目或按鈕）／disabled（選單項目停用）／error／front_changed"""
+    if not front.pid:
+        return "error", "沒有行程編號"
+    if "window" in b:
+        return native.window_op(front.pid, b["window"]), "視窗"
+    if "path" in b:
+        return native.press_menu(front.pid, path=b["path"])[0], "選單"
+    if "button" in b:
+        return native.press_button(front.pid, b["button"]), "按鈕"
+    if "script" in b:  # App 自己的指令（Music、Spotify 的 playpause）；指令字只來自詞庫
+        ok, _ = _run(["osascript", "-e", f'tell application "{front.app}" to {b["script"]}'], POLL_TIMEOUT_S)
+        return ("ok" if ok else "error"), "App 指令"
+    if "char" in b:  # 有快捷鍵的功能：按 App 自己的選單項目（依快捷鍵找，和介面語言無關）
+        status, _ = native.press_menu(front.pid, b["char"], b.get("mods", []))
+        if status != "missing":
+            return status, "選單"
+    # 沒有對應選單項目（翻頁鍵、⌘↑）才送按鍵：會經過輸入法，所以詞庫只放 ⌘ 組合鍵與翻頁鍵；送之前確認前景沒變
+    now = context.read_front(_run)
+    if now is None or now.pid != front.pid:
+        return "front_changed", "按鍵"
+    return native.post_key(b["code"], b.get("mods", [])), "按鍵"
+
+
 def front_action(id: str, fallback: Optional[List[list]] = None, ctx: Optional[ExecContext] = None) -> str:
-    """對最前面的 App 送詞庫 app_shortcuts 定義的快捷鍵。這個功能不支援目前的 App 時：有 fallback
-    （加上前景判斷之前的原動作，例如『開終端機』→ 開 Terminal.app）就執行它，否則回報、不送任何按鍵"""
+    """對最前面的 App 執行詞庫 app_shortcuts 定義的常用功能（底層做法見 _run_binding）。這個功能不支援目前的 App 時：
+    有 fallback（加上前景判斷之前的原動作，例如『開終端機』→ 開 Terminal.app）就執行它，否則回報、什麼都不做"""
     ctx = ctx or ExecContext()
     entry = context.SHORTCUTS[id]
     front = front_context(ctx)
@@ -286,12 +311,18 @@ def front_action(id: str, fallback: Optional[List[list]] = None, ctx: Optional[E
         if front is None:
             return f"⚠️ 不知道要操作哪個視窗（讀不到最前面的 App），沒有執行「{entry['label']}」"
         return f"⚠️ 目前最前面的是 {front.app}，「{entry['label']}」只支援{entry['scope']}"
-    ok, out = _run(["osascript", "-e", context.keystroke_script(front.app, binding)], POLL_TIMEOUT_S)
-    if not ok:
-        return f"❌ {entry['label']}失敗：{front.app}（{out}；請確認已授權輔助使用）"
-    if out != "ok":
-        return f"❌ 最前面的 App 已經不是 {front.app}，沒有送出「{entry['label']}」的按鍵"
-    return f"✅ {front.app}：{entry['label']}"
+    status, method = _run_binding(front, binding)
+    if ctx.step is not None:
+        ctx.step["context"]["method"] = method
+    if status == "ok":
+        return f"✅ {front.app}：{entry['label']}"
+    if status == "disabled":
+        return f"⚠️ {front.app} 目前不能「{entry['label']}」（選單項目停用）"
+    if status == "missing":
+        return f"❌ {entry['label']}失敗：{front.app} 找不到可操作的{method}"
+    if status == "front_changed":
+        return f"❌ 最前面的 App 已經不是 {front.app}，沒有執行「{entry['label']}」"
+    return f"❌ {entry['label']}失敗：{front.app}（{method}；請確認已授權輔助使用）"
 
 
 LOCAL_TOOLS.update({
