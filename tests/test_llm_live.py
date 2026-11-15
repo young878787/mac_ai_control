@@ -409,3 +409,46 @@ def test_report_model_keywords_vs_original_words(capsys):
         print("\n".join(rows))
         print(f"單次規劃耗時：中位 {times[len(times) // 2]:.0f}ms，最慢 {times[-1]:.0f}ms")
     assert sum(kinds.values()) == len(REPORT_SENTENCES)
+
+
+# ---------- 計劃書 §14：詞庫沒收的錯字交給 LLM（每案 REPEAT 次全對）----------
+_GAP = "LLM 目前做不到（2026-11-15 實測 0/3），修好時 strict xfail 會提醒"
+TYPO_LLM_CASES = [
+    ("音量條到三十", lambda c: c == [("set_system_volume", {"level": 30})]),
+    ("打開瀏覽氣查台北天氣", lambda c: _names(c) == ["web_search_or_open_url"] and "台北" in c[0][1]["query"] and "天氣" in c[0][1]["query"]),
+    ("開申色模式", lambda c: c == [("system_power_action", {"action": "dark_mode_on"})]),
+    ("幫我鎖定瑩幕", lambda c: c == [("system_power_action", {"action": "lock_screen"})]),
+    ("把螢幕跳暗一點", lambda c: _names(c) == ["adjust_screen_brightness"] and c[0][1]["direction"] == "down"),
+    ("把聲因關掉", lambda c: c == [("set_system_volume", {"mute": True})]),
+    pytest.param("打開被忘路", lambda c: c == [("control_mac_app", {"app_name": "Notes", "action": "open"})],
+                 marks=pytest.mark.xfail(strict=True, reason=_GAP)),
+    pytest.param("把音輛調大一點", lambda c: _names(c) == ["set_system_volume"] and c[0][1].get("level", 0) >= 50,
+                 marks=pytest.mark.xfail(strict=True, reason=_GAP + "：會設成 20")),
+]
+
+
+@pytest.mark.parametrize("utterance,check", TYPO_LLM_CASES, ids=[c.values[0] if hasattr(c, "values") else c[0] for c in TYPO_LLM_CASES])
+def test_typo_not_in_lexicon_is_understood_by_llm(utterance, check):
+    text = r.normalize_utterance(utterance)
+    for _ in range(REPEAT):
+        calls, reply, rejected = r.plan_slow_path(text)
+        assert check(calls), f"{utterance!r} -> {calls} / {rejected}"
+
+
+# ---------- 否定／敘述句（含錯字）：Fast 會擋下、交給 LLM；LLM 不得規劃任何動作（chat_reply 除外）----------
+_MISFIRE = "已知誤執行（2026-11-15 實測 3/3），Slow Path 準確度問題，見計劃書 §14.6"
+MISFIRE_CASES = [
+    "別存擋", "不要打開小蒜盤",
+    pytest.param("不要關閉試窗", marks=pytest.mark.xfail(strict=True, reason=_MISFIRE + "：開 VS Code／Finder")),
+    pytest.param("不要金音", marks=pytest.mark.xfail(strict=True, reason=_MISFIRE + "：音量 70")),
+    pytest.param("剛剛所定螢幕了", marks=pytest.mark.xfail(strict=True, reason=_MISFIRE + "：鎖定螢幕")),
+    pytest.param("我不想鎖定螢幕", marks=pytest.mark.xfail(strict=True, reason=_MISFIRE + "：鎖定螢幕")),
+]
+
+
+@pytest.mark.parametrize("utterance", MISFIRE_CASES)
+def test_negative_or_narrative_sentence_plans_no_action(utterance):
+    text = r.normalize_utterance(utterance)
+    for _ in range(REPEAT):
+        calls, reply, rejected = r.plan_slow_path(text)
+        assert [n for n in _names(calls) if n != "chat_reply"] == [], f"{utterance!r} -> {calls}"
