@@ -103,6 +103,7 @@ shasum -a 256 AI_models/silero_vad.onnx
 
 - **麥克風**：終端機（或你執行的 IDE）需要麥克風權限
 - **語音辨識**：允許 `MacSTT`
+- **輔助使用**、**自動化**（Safari／Google Chrome、System Events）：亮度、鎖定螢幕、分頁、「目前視窗」的常用功能與站內搜尋會用到
 
 若曾拒絕授權，請到上述位置改回允許後重新啟動。
 
@@ -135,6 +136,26 @@ python main.py --ui               # 同時顯示桌面角色（需先完成「�
 | 搜尋台北天氣／網路上找 Xcode／找台北天氣 | Google 搜尋（`搜尋`、`查` 沒帶「電腦裡」「App」「檔案」之類範圍詞時維持網頁搜尋） |
 
 找到多筆時列出前 5 筆（60 秒內有效）：說「第二個」「打開第三個」「在 Finder 顯示第一個」「最後一個」選擇；桌面角色會顯示清單，點整列執行預設動作，點列尾按鈕執行另一個動作。範圍判斷的結果會記在每一步的 `step["intent"]`，判斷錯了可以從這裡追查。
+
+### 以目前視窗為對象
+
+句子沒指定對象時，用**最前面的視窗**決定（順序：句子明說的 → 同一句剛開的 → 最前面的視窗 → 預設）：
+
+| 最前面是 | 說法 | 結果 |
+|---|---|---|
+| Safari／Chrome 停在 Facebook、YouTube、GitHub、Google | 查貓咪專頁 | 在這個瀏覽器用該網站的站內搜尋（開新分頁）；說「上網查」「google 一下」或查天氣、新聞等即時資訊仍用 Google |
+| Safari／Chrome 其他網站 | 查貓咪／找 python 教學（本機 0 筆、沒有本機證據） | 在這個瀏覽器 Google 搜尋；「找」不再先問模型 |
+| VS Code／Cursor | 開 X 專案 | 用最前面的編輯器開 |
+| VS Code／Cursor | 開終端機／關終端機 | 切換內建終端機面板；說「終端機程式」「獨立終端機」「Terminal」才開 Terminal.app |
+| Terminal／iTerm | 新分頁、清除畫面 | ⌘T、⌘K |
+| 任何 App | 關閉視窗、開新視窗、最小化、全螢幕、放大、縮小 | 對最前面的 App 送快捷鍵 |
+| 瀏覽器 | 上一頁、下一頁、回到頂端、往下捲、往上捲 | 同上 |
+| 編輯器 | 開側邊欄、存檔 | 同上 |
+| YouTube、Music、Spotify | 播放、暫停 | YouTube 送 `k`、Music／Spotify 送空白鍵 |
+
+網站與快捷鍵都定義在 `vocab/lexicon.json` 的 `sites`、`app_shortcuts`，只會送表裡的按鍵。功能不支援最前面的 App 時不送任何按鍵，只回報。判斷結果記在每一步的 `step["context"]`（只記 App 與網站 host，不記完整網址與視窗標題）。
+
+已知限制：讀網址只支援 Safari 與 Google Chrome；YouTube 的 `k` 在注音等輸入法啟用、或焦點在搜尋框時會變成打字。
 
 ## 桌面角色
 
@@ -210,10 +231,16 @@ python scripts/stt_bench.py list             # bench 一覽
 ## 測試
 
 ```bash
-pytest              # 離線測試（預設）
+pytest              # 離線測試（預設，含錯字語料 tests/test_typo_offline.py）
 pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
+pytest -m app -v    # 真實 App 驗收：在 Safari、Finder、Terminal、VS Code 上實際執行並讀回狀態（會佔用螢幕約 2 分鐘）
 cd desktop && node --test   # 桌面角色的狀態機與路徑白名單測試
+python scripts/acceptance.py run [--app] [--live]   # 跑測試並把數字存到 logs/bench/acceptance_*.json
+python scripts/acceptance.py report                 # 和上一次比較，變差（新增失敗、矯正率下降、延遲 +20% 且 +20 ms）時結束碼 1
+python scripts/acceptance.py list                   # 歷次結果
 ```
+
+真實 App 驗收只操作測試自己開的視窗，結束時關掉；第一次跑會要求「自動化」「輔助使用」「螢幕錄製」授權，缺授權的項目會 skip 並寫明原因。跑的時候不要動鍵盤滑鼠。
 
 ## 專案結構
 
@@ -224,14 +251,14 @@ cd desktop && node --test   # 桌面角色的狀態機與路徑白名單測試
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
 | `mac_ai/wake.py` | 喚醒詞閘門與會話 |
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
-| `mac_ai/router/` | 正規化、Fast Path、Slow Path（LLM）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單 |
+| `mac_ai/router/` | 正規化、Fast Path、Slow Path（LLM）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站 |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
 | `desktop/` | 桌面角色（Electron）：`main.js` 視窗與連線、`state.js` 狀態機、`renderer/` 畫面與 Live2D |
-| `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`） |
+| `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |
 | `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
 | `vocab/stt_hints.txt` | 由 `build_vocab.py` 產生，餵給語音辨識當提示詞 |
-| `docs/` | 設計與實作計畫（端點偵測、桌面角色與喚醒會話、本機優先的找東西分流） |
+| `docs/` | 設計與實作計畫（端點偵測、桌面角色與喚醒會話、本機優先的找東西分流、前景視窗上下文與常用功能） |
 | `tests/` | 離線測試與 live 測試 |
 
 修改 `vocab/lexicon.json` 後，`main.py` 啟動時會自動重新產生詞表；也可以手動執行 `python build_vocab.py`。
