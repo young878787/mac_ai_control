@@ -6,11 +6,14 @@
 import os
 import re
 import time
+import urllib.parse
 from typing import Callable, Dict, List, Optional, Tuple
 
 from mac_ai.config import FILE_SEARCH_TIMEOUT_S, FIND_RESULTS_MAX
-from mac_ai.router import choices
-from mac_ai.router.actions import LOCAL_TOOLS, ExecContext, _run
+from mac_ai.router import choices, context
+from mac_ai.router.actions import (
+    LOCAL_TOOLS, POLL_TIMEOUT_S, ExecContext, _dispatch, _skipped, front_context, front_site, mark_page, _run,
+)
 from mac_ai.router.domain import Intent
 from mac_ai.router.lexicon import LEXICON
 
@@ -246,4 +249,52 @@ def pick_choice(n: int, action: Optional[str] = None, list_id: Optional[int] = N
     return msg
 
 
-LOCAL_TOOLS.update({"open_folder": open_folder, "find_file": find_file, "pick_choice": pick_choice})
+# ---------- 前景視窗：站內搜尋、常用功能 ----------
+def context_search(query: str, ctx: Optional[ExecContext] = None) -> str:
+    """沒指定瀏覽器的搜尋：前景瀏覽器停在詞庫 sites 的網站就用站內搜尋（開新分頁），其餘照一般的網頁搜尋。
+    同句剛開的瀏覽器優先於前景（『打開 Chrome 搜尋 X』不會被前景的網站帶走）"""
+    ctx = ctx or ExecContext()
+    if "browser" in ctx.failed:
+        return _skipped("context_search")
+    if not ctx.last_browser and not query.startswith(("http://", "https://")):
+        site = front_site(ctx)
+        if site is not None:
+            url = site["search_url"].replace("{q}", urllib.parse.quote(query))
+            ok, err = _run(["open", "-a", ctx.front.app, url])
+            res = f"✅ 已在 {site['name']} 搜尋：{query}" if ok else f"❌ 開啟瀏覽器失敗（{err}）"
+            mark_page(ctx, res)
+            return res
+    return _dispatch("web_search_or_open_url", {"query": query}, ctx)
+
+
+def front_action(id: str, fallback: Optional[List[list]] = None, ctx: Optional[ExecContext] = None) -> str:
+    """對最前面的 App 送詞庫 app_shortcuts 定義的快捷鍵。這個功能不支援目前的 App 時：有 fallback
+    （加上前景判斷之前的原動作，例如『開終端機』→ 開 Terminal.app）就執行它，否則回報、不送任何按鍵"""
+    ctx = ctx or ExecContext()
+    entry = context.SHORTCUTS[id]
+    front = front_context(ctx)
+    site = None
+    if front is not None and front.kind == "browser" and context.needs_site(entry):
+        hit = front_site(ctx)
+        site = hit["name"] if hit else None
+    binding = context.pick_binding(entry, front, site)
+    if binding is None:
+        if ctx.step is not None:
+            ctx.step["context"]["used"] = False
+        if fallback:
+            return "；".join(_dispatch(name, dict(args), ctx) for name, args in fallback)
+        if front is None:
+            return f"⚠️ 不知道要操作哪個視窗（讀不到最前面的 App），沒有執行「{entry['label']}」"
+        return f"⚠️ 目前最前面的是 {front.app}，「{entry['label']}」只支援{entry['scope']}"
+    ok, out = _run(["osascript", "-e", context.keystroke_script(front.app, binding)], POLL_TIMEOUT_S)
+    if not ok:
+        return f"❌ {entry['label']}失敗：{front.app}（{out}；請確認已授權輔助使用）"
+    if out != "ok":
+        return f"❌ 最前面的 App 已經不是 {front.app}，沒有送出「{entry['label']}」的按鍵"
+    return f"✅ {front.app}：{entry['label']}"
+
+
+LOCAL_TOOLS.update({
+    "open_folder": open_folder, "find_file": find_file, "pick_choice": pick_choice,
+    "context_search": context_search, "front_action": front_action,
+})

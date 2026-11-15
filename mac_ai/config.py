@@ -32,6 +32,7 @@ FIND_RESULTS_MAX = 5  # 多筆結果最多列幾筆（也是語音／UI 可選�
 FIND_CHOICE_TTL_S = 60.0  # 結果清單有效時間，與喚醒會話一致
 FILE_SEARCH_TIMEOUT_S = 3.0  # mdfind 逾時
 APP_INDEX_REFRESH_S = 60.0  # 已安裝 App 清單：查不到時，最短隔這麼久才重掃一次
+CONTEXT_TIMEOUT_S = 1.0  # 讀前景 App（lsappinfo，實測約 15 ms）的逾時；逾時視為沒有上下文
 
 # macos-stt 是獨立子專案（自己的 venv），語音辨識授權必須在它的 .app bundle 內取得，所以用 start.py serve 啟動
 STT_DIR = ROOT / "macos-stt"

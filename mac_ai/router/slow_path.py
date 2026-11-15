@@ -5,7 +5,7 @@ import time
 from typing import List, Optional, Tuple
 
 from mac_ai.config import PLAN_TIMEOUT_S, WARMUP_TIMEOUT_S
-from mac_ai.router.actions import ExecContext, chat_reply, run_tool
+from mac_ai.router.actions import ExecContext, chat_reply, front_context, run_tool
 from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match
 from mac_ai.router.lexicon import _compact, build_hint_lines
 from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
@@ -75,8 +75,16 @@ def local_miss_reply(miss: dict, reason: str) -> str:
     return f"⚠️ 找不到「{miss['label']}」：本機沒有符合的檔案（範圍：{miss['scope']}）；{reason}。要上網查請說「搜尋 {miss['label']}」"
 
 
-def build_user_message(utterance: str, local_miss: Optional[dict] = None) -> str:
-    """規劃呼叫的使用者訊息：原句在最前面（不改字），有詞庫提示、本機搜尋結果時才附上 Markdown 段落。
+def front_hint(ctx: ExecContext) -> Optional[str]:
+    """給模型的『目前視窗』：最前面的 App，是瀏覽器而且這一句已經讀過網址時加上 host（不為了提示另外花 200 ms 問網址）"""
+    front = front_context(ctx, used=False)
+    if front is None:
+        return None
+    return front.app + (f"：{ctx.front_host}" if front.kind == "browser" and ctx.front_host else "")
+
+
+def build_user_message(utterance: str, local_miss: Optional[dict] = None, front: Optional[str] = None) -> str:
+    """規劃呼叫的使用者訊息：原句在最前面（不改字），有詞庫提示、本機搜尋結果、目前視窗時才附上 Markdown 段落。
     動態資訊放這裡而不是 system：實測放 system 時工具定義的前綴快取失效，prefill 約 2 秒（沒放約 0.2 秒）。
     標題用『名稱對照』：實測用『已知詞庫』時，『幫我開檔案總管』會被規劃成 open_project"""
     parts = [utterance]
@@ -85,17 +93,19 @@ def build_user_message(utterance: str, local_miss: Optional[dict] = None) -> str
         parts.append("## 名稱對照\n" + "\n".join(f"- {h}" for h in hints))
     if local_miss is not None:
         parts.append("## 本機搜尋結果\n" + local_miss_hint(local_miss))
+    if front:
+        parts.append("## 目前視窗\n" + front)
     return "\n\n".join(parts)
 
 
-def plan_slow_path(utterance: str, meta: Optional[dict] = None,
-                   local_miss: Optional[dict] = None) -> Tuple[List[Tuple[str, dict]], Optional[str], List[str]]:
+def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Optional[dict] = None,
+                   front: Optional[str] = None) -> Tuple[List[Tuple[str, dict]], Optional[str], List[str]]:
     """送 LLM 規劃工具呼叫。回傳 (通過驗證的 [(工具, 參數)], LLM 純文字回覆, 被拒絕的原因)。
     meta 若有傳入，回填 llm（server timings）與 validate_ms；LLM 不可用時拋出 LLMError。
     local_miss：本機搜尋 0 筆而轉交過來（{"label", "scope"}）→ 提示模型本機結果，且不再導回本機（避免繞圈）"""
     llm_meta: dict = {}
     message = _llm(
-        [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": build_user_message(utterance, local_miss)}],
+        [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": build_user_message(utterance, local_miss, front)}],
         # 192：工具呼叫每個約 23 tokens（4 個工具實測 94）；模型對提問偶爾直接寫長篇 content（不採用），
         # 實測 261 tokens／6.5 秒、甚至寫到逾時，上限讓它最多約 5 秒就收手
         timeout=PLAN_TIMEOUT_S, max_tokens=192, meta=llm_meta,
@@ -158,7 +168,7 @@ def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Op
         ctx.chat_hint = local_miss_hint(local_miss) + "回覆不得聲稱已經找到。"
     t0 = time.perf_counter()
     try:
-        calls, reply, rejected = plan_slow_path(utterance, step, local_miss)
+        calls, reply, rejected = plan_slow_path(utterance, step, local_miss, front_hint(ctx))
     finally:
         step["llm_ms"] = (time.perf_counter() - t0) * 1000
     llm = step.get("llm") or {}

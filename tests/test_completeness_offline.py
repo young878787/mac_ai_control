@@ -17,6 +17,9 @@ CASES = [
     # 只有動詞、缺受詞
     ("打開", INCOMPLETE), ("開啟", INCOMPLETE), ("關掉", INCOMPLETE), ("關閉", INCOMPLETE), ("搜尋", INCOMPLETE),
     ("幫我打開", INCOMPLETE), ("音量", INCOMPLETE), ("亮度", INCOMPLETE),
+    # 常用功能（前景視窗的快捷鍵）：整句命中才算完整；後面可能還有『分頁／視窗』的不能早收
+    ("關閉視窗", COMPLETE), ("上一頁", COMPLETE), ("全螢幕", COMPLETE), ("存檔", COMPLETE), ("開終端機", COMPLETE),
+    ("關掉這個", INCOMPLETE), ("關閉這個", INCOMPLETE), ("開新", INCOMPLETE), ("打開新", INCOMPLETE),
     # 半個詞、聽不懂、聊天：交給預設門檻
     ("打開小", UNKNOWN), ("今天天氣怎麼樣", UNKNOWN), ("我想聽音樂", UNKNOWN), ("你好", UNKNOWN),
     ("", UNKNOWN), ("   ", UNKNOWN), ("，。", UNKNOWN),

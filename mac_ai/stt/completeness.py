@@ -16,12 +16,12 @@ from mac_ai.wake import lexicon_wake_greetings, lexicon_wake_words, split_wake
 COMPLETE, INCOMPLETE, UNKNOWN = "complete", "incomplete", "unknown"
 
 # 句尾若是這些，話多半還沒說完（連接詞、介系詞、助動詞）
-_TRAILING_CONNECTOR_RE = re.compile(r"(?:然後|接著|再幫我|順便|還有|並且|以及|而且|和|跟|與|並|再|且|把|將|的|到|成|為|在|用|去|幫我|幫|請|要|想|可以)$")
+_TRAILING_CONNECTOR_RE = re.compile(r"(?:然後|接著|再幫我|順便|還有|並且|以及|而且|這個|那個|和|跟|與|並|再|且|把|將|的|到|成|為|在|用|去|幫我|幫|請|要|想|可以)$")
 # 只有動詞、沒有受詞
 _BARE_VERBS = frozenset({
     "打開", "開啟", "開", "啟動", "執行", "運行", "關掉", "關閉", "關", "退出", "結束", "離開",
     "調", "調整", "設定", "設為", "切換", "切到", "搜尋", "搜索", "查", "查詢", "播放", "放",
-    "音量", "聲音", "亮度", "幫我打開", "幫我關掉",
+    "音量", "聲音", "亮度", "幫我打開", "幫我關掉", "開新", "打開新", "開啟新",
 })
 _PUNCT_TAIL_RE = re.compile(r"[\s\W_]+$")
 

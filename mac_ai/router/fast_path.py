@@ -3,8 +3,9 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from mac_ai.router import catalog as catalog_mod
+from mac_ai.router import context
 from mac_ai.router.actions import ExecContext, run_tool
-from mac_ai.router.domain import Intent, parse_find, resolve_intent, starts_with_find_verb
+from mac_ai.router.domain import _REALTIME_RE, SCOPE_WORDS, Intent, parse_find, resolve_intent, starts_with_find_verb
 from mac_ai.router.lexicon import (
     APP_KIND, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_project,
 )
@@ -72,6 +73,7 @@ _TAB = r"(?:分頁|標籤頁|標籤|頁籤)"
 _THIS_TAB = r"(?:這個|目前的?|現在的?|當前的?)?"
 # 疑問句尾：『搜尋嗎』這種不是搜尋指令
 _QUESTION_END_RE = re.compile(r"[嗎呢?]$")
+_WEB_LEAD_RE = re.compile(rf"^(?:{_alt(SCOPE_WORDS['web'])})", re.IGNORECASE)
 _DARK = "(?:深色|暗黑|夜間|暗色|黑暗)"
 _LIGHT = "(?:淺色|亮色|日間)"
 _VOL_SET = r"(?:調到|調成|調整到|調整為|設為|設定為|設成|設定成|開到|改成|改為|到|成|為)?"
@@ -157,7 +159,7 @@ class FastPathMatcher:
         if _QUESTION_RE.search(s):
             return None
         for rule in (
-            self._r_tab, self._r_project, self._r_volume, self._r_mute,
+            self._r_front, self._r_tab, self._r_project, self._r_volume, self._r_mute,
             self._r_brightness, self._r_dark, self._r_lock, self._r_find, self._r_pick, self._r_app,
         ):
             m = rule(s, candidates)
@@ -222,7 +224,10 @@ class FastPathMatcher:
                         local = self._intent_match(s, candidates, ("search",), ("app", "project", "folder", "file"))
                         if local is not None:
                             return local
-                    return Match([("web_search_or_open_url", {"query": query})])
+                    # 明說上網／google，或查即時資訊（天氣、新聞…）：一律 Google；其餘看前景（停在 FB 就站內搜尋）
+                    if pattern is self._search_res[1] or _WEB_LEAD_RE.match(s) or _REALTIME_RE.search(query):
+                        return Match([("web_search_or_open_url", {"query": query})])
+                    return Match([("context_search", {"query": query})])
         req = parse_find(s)
         if req is not None and req.verb_class == "search" and "local" in req.scope:  # 『在電腦裡搜尋 X』：句首不是搜尋動詞
             return self._intent_match(s, candidates, ("search",), ("app", "project", "folder", "file"))
@@ -234,8 +239,23 @@ class FastPathMatcher:
             (self._tab_next_re, "next"), (self._tab_prev_re, "previous"),
         ):
             if pattern.match(s):
-                return Match([("browser_tab", {"action": action})])
+                tab = ("browser_tab", {"action": action})
+                if action == "new":  # 前景是終端機就開它的新分頁；其餘照舊開瀏覽器分頁
+                    return Match([("front_action", {"id": "terminal_new_tab", "fallback": [list(tab)]})])
+                return Match([tab])
         return None
+
+    def _r_front(self, s: str, candidates: bool) -> Optional[Match]:
+        """常用功能（詞庫 app_shortcuts 的說法，整句完全相同才算）：執行時才看前景 App 決定按鍵。
+        原本就有動作的說法（『開終端機』→ 開 Terminal.app）保留為 fallback，前景不適用時照舊"""
+        sid = context.SHORTCUT_PHRASES.get(_compact(s))
+        if sid is None:
+            return None
+        args: Dict[str, Any] = {"id": sid}
+        prior = self._r_app(s, candidates)
+        if prior is not None:
+            args["fallback"] = [list(a) for a in prior.actions]
+        return Match([("front_action", args)], prior.confidence if prior else "exact", prior.note if prior else "")
 
     def _r_project(self, s: str, candidates: bool) -> Optional[Match]:
         m = self._project_re.match(s)

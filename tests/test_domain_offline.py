@@ -133,7 +133,7 @@ def FIND(**args):
 MATCH_CASES = [
     ("找一下 Xcode", APP("Xcode")),
     ("打開 Xcode", APP("Xcode")),
-    ("搜尋 Xcode", [("web_search_or_open_url", {"query": "Xcode"})]),
+    ("搜尋 Xcode", [("context_search", {"query": "Xcode"})]),  # 沒指定瀏覽器：執行時看前景（站內搜尋或 Google）
     ("搜尋 Xcode 這個 App", APP("Xcode")),
     ("在電腦裡搜尋 Xcode", APP("Xcode")),
     ("查一下 mac_ai_control 專案", [("open_project", {"project_name": "mac_ai_control"})]),
@@ -178,7 +178,7 @@ MATCH_CASES = [
     ("第二", [("pick_choice", {"n": 2})]),
     ("下一個分頁", [("browser_tab", {"action": "next"})]),
     ("打開深色模式", [("system_power_action", {"action": "dark_mode_on"})]),
-    ("打開新分頁", [("browser_tab", {"action": "new"})]),
+    ("打開新分頁", [("front_action", {"id": "terminal_new_tab", "fallback": [["browser_tab", {"action": "new"}]]})]),  # 前景是終端機才開它的分頁
 ]
 
 
@@ -344,5 +344,5 @@ def test_ext_grading(utterance, expected):
 
 def test_ext_grading_fast_path_actions():
     matcher = FastPathMatcher(catalog=FakeCatalog())
-    assert matcher.match("搜尋 node.js").actions == [("web_search_or_open_url", {"query": "node.js"})]
+    assert matcher.match("搜尋 node.js").actions == [("context_search", {"query": "node.js"})]
     assert matcher.match("找 node.js").actions == [("find_file", {"name": "node.js", "filename": "node.js", "action": "reveal"})]

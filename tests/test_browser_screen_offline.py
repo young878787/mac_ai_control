@@ -265,7 +265,7 @@ def test_tab_phrases_run_browser_tab_without_llm(monkeypatch, text, action):
 
 @pytest.mark.parametrize("text", [
     "不要開新分頁", "剛剛開了新分頁", "怎麼開新分頁", "分頁", "新增", "關掉所有分頁", "關掉其他分頁", "開會",
-    "上一頁", "下一頁", "重新整理電腦",
+    "重新整理電腦",  # 『上一頁』『下一頁』自 2026-11-14 起是常用功能（瀏覽器後退／前進），見 test_context_offline
 ])
 def test_tab_negative_phrases_do_not_touch_browser(monkeypatch, text):
     assert all(m is None for m in fast_matches(text)), text

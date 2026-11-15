@@ -6,9 +6,10 @@ import pytest
 
 import mac_ai.router as r
 from mac_ai import config
-from mac_ai.router import lexicon, normalize
+from mac_ai.router import context, lexicon, normalize
 
 REAL_URLOPEN = urllib.request.urlopen  # 需要真的連線的測試（本機 socket）用這個
+REAL_READ_FRONT, REAL_READ_HOST = context.read_front, context.read_host  # 測讀取函式本身的測試用這個
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +38,40 @@ def _isolate_catalog(monkeypatch):
     monkeypatch.setattr(catalog, "DEFAULT", catalog.Catalog())
     monkeypatch.setattr(choices, "STORE", choices.ChoiceStore())
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_front(request, monkeypatch):
+    """離線測試不能依賴這台電腦現在最前面是哪個 App：前景固定為『讀不到』。需要前景的測試用 front fixture 設定。
+    真實 App 測試（-m app）要讀真的前景，不套用。"""
+    if request.node.get_closest_marker("app") is not None:
+        yield
+        return
+    monkeypatch.setattr(context, "read_front", lambda run: None)
+    monkeypatch.setattr(context, "read_host", lambda run, app: "")
+    yield
+
+
+@pytest.fixture
+def front(monkeypatch):
+    """設定前景 App：front("Safari")、front("Safari", host="www.facebook.com")；front(None)＝讀不到。
+    回傳的 reads 記錄讀取（App 名稱；讀網址記 ("host", App)）"""
+    reads = []
+
+    def setup(app, host=""):
+        fc = None if app is None else context.FrontContext(app, lexicon.APP_KIND.get(app, "other"))
+
+        def fake(run):
+            reads.append(app)
+            return fc
+
+        def fake_host(run, name):
+            reads.append(("host", name))
+            return host
+        monkeypatch.setattr(context, "read_front", fake)
+        monkeypatch.setattr(context, "read_host", fake_host)
+        return reads
+    return setup
 
 
 @pytest.fixture

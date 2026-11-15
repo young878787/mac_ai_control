@@ -3,7 +3,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from mac_ai.router import catalog
-from mac_ai.router.actions import ExecContext, run_tool
+from mac_ai.router.actions import ExecContext, front_app, run_tool
 from mac_ai.router.fast_path import FastPathMatcher, Match
 from mac_ai.router.llm_client import LLMError, LLMUnavailable
 from mac_ai.router.normalize import log_normalization, normalize_utterance, restore_misheard
@@ -47,6 +47,10 @@ def _escalate_to_llm(text: str, step: dict, ctx: ExecContext, run: Match) -> Lis
     miss["query"] = restore_misheard(ctx.normalized, query, ctx.misheard, getattr(run, "start", 0))
     step["extract_ms"] = (time.perf_counter() - t) * 1000  # 原話查詢（含誤聽還原）的運算時間
     step["escalated"] = miss
+    if front_app(ctx, "browser"):  # 使用者正在看瀏覽器：本機沒有就是要上網找，不必再問模型
+        miss["to"] = "web"
+        print(f"🌐 [本機沒有「{miss['label']}」，前景是瀏覽器，直接上網找]")
+        return [run_tool("context_search", {"query": miss["query"]}, ctx)]
     print(f"🧠 [本機沒有「{miss['label']}」，轉交 AI 判斷]")
     try:
         return execute_slow_path_llm(text, step, ctx, local_miss=miss)

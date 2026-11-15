@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from mac_ai.config import CHAT_TIMEOUT_S, VISION_TIMEOUT_S
+from mac_ai.router import context
 from mac_ai.router.lexicon import APP_KIND, MAC_APP_ALIASES, project_index, resolve_project
 from mac_ai.router.llm_client import LLMError, LLMUnavailable, _llm
 from mac_ai.router.normalize import to_traditional
@@ -212,6 +213,58 @@ class ExecContext:
     chat_hint: Optional[str] = None  # 轉交時給 chat call 的本機結果，避免模型假裝找到
     misheard: List[Tuple[str, str]] = field(default_factory=list)  # 整句的誤聽詞替換紀錄 (替換後, 原字)，還原原話查詢用
     normalized: str = ""  # 正規化後的整句（還原誤聽詞時要在裡面定位）
+    front: Optional[context.FrontContext] = None  # 前景 App（第一次用到才讀，同句快取；見 front_context）
+    front_loaded: bool = False
+    front_host: Optional[str] = None  # 前景瀏覽器目前分頁的 host（None＝還沒讀；見 front_site）
+
+
+def front_context(ctx: ExecContext, used: bool = True) -> Optional[context.FrontContext]:
+    """最前面的 App（讀不到為 None）。對象的優先順序由呼叫端決定：句子明說的 → 同句剛開的 → 前景 → 預設，
+    所以只在前兩者都沒有時才呼叫。結果記在 step["context"]（只記 App 與 host，不記網址、視窗標題）"""
+    log: dict = {}
+    if not ctx.front_loaded:
+        t = time.perf_counter()
+        ctx.front, ctx.front_loaded, ctx.front_host = context.read_front(_run), True, None
+        log["ms"] = (time.perf_counter() - t) * 1000
+    if ctx.step is not None:  # 同一步多次查詢：保留已記下的讀取時間與網站
+        prev = {k: v for k, v in ctx.step.get("context", {}).items() if k not in ("app", "used")}
+        ctx.step["context"] = {"app": ctx.front.app if ctx.front else None, "used": used, **prev, **log}
+    return ctx.front
+
+
+def front_app(ctx: ExecContext, kind: str) -> Optional[str]:
+    """前景 App 是這一類（browser／editor）就回傳名稱，否則 None"""
+    front = front_context(ctx, used=False)
+    if front is None or front.kind != kind:
+        return None
+    if ctx.step is not None:
+        ctx.step["context"]["used"] = True
+    return front.app
+
+
+def front_site(ctx: ExecContext) -> Optional[dict]:
+    """前景是瀏覽器而且目前分頁是詞庫 sites 裡的網站 → 該條目；其餘 None。host 同句快取"""
+    app = front_app(ctx, "browser")
+    if app is None:
+        return None
+    if ctx.front_host is None:
+        t = time.perf_counter()
+        ctx.front_host = context.read_host(_run, app)
+        if ctx.step is not None:
+            ctx.step["context"]["host_ms"] = (time.perf_counter() - t) * 1000
+    site = context.site_for(ctx.front_host) if ctx.front_host else None
+    if ctx.step is not None:
+        ctx.step["context"].update({"host": ctx.front_host, "site": site["name"] if site else None})
+    return site
+
+
+def mark_page(ctx: ExecContext, res: str) -> None:
+    """開網頁之後：失敗就記下（依賴它的讀畫面要略過），成功就記下要等載入"""
+    if res.startswith(_FAIL_PREFIXES):
+        ctx.failed.add("page")
+    else:
+        ctx.failed.discard("page")
+        ctx.page_pending = {"t": time.monotonic()}
 
 
 PAGE_SETTLE_S = 1.0  # 開網頁後至少等這麼久才開始問「載入完了嗎」（避免讀到舊頁面的 loading=false）
@@ -413,6 +466,7 @@ def _dispatch(name: str, args: dict, ctx: ExecContext) -> str:
                 ctx.failed.add(kind)
             else:
                 ctx.failed.discard(kind)
+                ctx.front_loaded = False  # 前景換了，下次用到重讀
                 if kind == "browser":
                     ctx.last_browser = target
                 else:
@@ -421,12 +475,8 @@ def _dispatch(name: str, args: dict, ctx: ExecContext) -> str:
     if name == "web_search_or_open_url":
         if "browser" in ctx.failed:
             return _skipped(name)
-        res = web_search_or_open_url(**args, browser=ctx.last_browser)
-        if res.startswith(_FAIL_PREFIXES):
-            ctx.failed.add("page")
-        else:
-            ctx.failed.discard("page")
-            ctx.page_pending = {"t": time.monotonic()}
+        res = web_search_or_open_url(**args, browser=ctx.last_browser or front_app(ctx, "browser"))
+        mark_page(ctx, res)
         return res
     if name == "browser_tab":
         if "browser" in ctx.failed:
@@ -435,7 +485,7 @@ def _dispatch(name: str, args: dict, ctx: ExecContext) -> str:
     if name == "open_project":
         if "editor" in ctx.failed:
             return _skipped(name)
-        return open_project(args["project_name"], args.get("editor") or ctx.last_editor)
+        return open_project(args["project_name"], args.get("editor") or ctx.last_editor or front_app(ctx, "editor"))
     if name == "read_screen":
         if ctx.failed & {"browser", "page"}:
             return _skipped(name)
