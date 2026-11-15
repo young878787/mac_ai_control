@@ -148,14 +148,14 @@ python main.py --ui               # 同時顯示桌面角色（需先完成「�
 | VS Code／Cursor | 開 X 專案 | 用最前面的編輯器開 |
 | VS Code／Cursor | 開終端機／關終端機 | 切換內建終端機面板；說「終端機程式」「獨立終端機」「Terminal」才開 Terminal.app |
 | Terminal／iTerm | 新分頁、清除畫面 | ⌘T、⌘K |
-| 任何 App | 關閉視窗、開新視窗、最小化、全螢幕、放大、縮小 | 對最前面的 App 送快捷鍵 |
+| 任何 App | 關閉視窗、開新視窗、最小化、全螢幕、放大、縮小 | 直接對最前面的 App 操作（按視窗的關閉鈕、設定最小化／全螢幕、按 App 自己的選單項目） |
 | 瀏覽器 | 上一頁、下一頁、回到頂端、往下捲、往上捲 | 同上 |
 | 編輯器 | 開側邊欄、存檔 | 同上 |
-| YouTube、Music、Spotify | 播放、暫停 | YouTube 送 `k`、Music／Spotify 送空白鍵 |
+| YouTube、Music、Spotify | 播放、暫停 | YouTube 按播放器的播放／暫停按鈕；Music／Spotify 用 App 自己的播放／暫停指令 |
 
-網站與快捷鍵都定義在 `vocab/lexicon.json` 的 `sites`、`app_shortcuts`，只會送表裡的按鍵。功能不支援最前面的 App 時不送任何按鍵，只回報。判斷結果記在每一步的 `step["context"]`（只記 App 與網站 host，不記完整網址與視窗標題）。
+網站與常用功能都定義在 `vocab/lexicon.json` 的 `sites`、`app_shortcuts`。常用功能以輔助使用介面直接操作，不經過鍵盤，所以不受中文輸入法影響；只有沒有選單項目的翻頁鍵才送按鍵。功能不支援最前面的 App 時什麼都不做，只回報。需要「輔助使用」權限。判斷結果記在每一步的 `step["context"]`（只記 App 與網站 host，不記完整網址與視窗標題）。
 
-已知限制：讀網址只支援 Safari 與 Google Chrome；YouTube 的 `k` 在注音等輸入法啟用、或焦點在搜尋框時會變成打字。
+已知限制：讀網址只支援 Safari 與 Google Chrome；選單依快捷鍵或標題尋找，App 改了快捷鍵或介面語言不在詞庫列出的名稱時，會退回送按鍵或回報找不到。
 
 ## 桌面角色
 
