@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 from mac_ai.config import PLAN_TIMEOUT_S, WARMUP_TIMEOUT_S
 from mac_ai.router.actions import ExecContext, chat_reply, front_context, run_tool
-from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match
+from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match, canonicalize_clause
 from mac_ai.router.lexicon import _compact, build_hint_lines
 from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
 from mac_ai.router.tools import validate_tool_call
@@ -48,6 +48,36 @@ _NOT_A_REQUEST_RE = re.compile(r"嗎|怎麼|為什麼|為何|如何|是不是|�
 
 def _is_look_at_screen(text: str) -> bool:
     return bool(_LOOK_AT_SCREEN_RE.search(text)) and not any(p.search(text) for p in (_NEG_RE, _NARR_RE, _NOT_A_REQUEST_RE))
+
+
+# G1（計劃書 §15）：Fast Path 守門擋下的句子交給 LLM 後，4bit 模型幾乎不理會否定（實測 30 句×3 次：
+# 『不要鎖定螢幕』『別讓電腦睡眠』『剛剛鎖定螢幕了』都照做，63 次不該動作中 27 次是睡眠／鎖定／關 App；改提示詞無效）。
+# 所以否定／敘述句不讓 LLM 規劃工具，只回話；資訊提問只保留不改變狀態的工具。
+# 『可以幫我開小算盤嗎』『今天台北會下雨嗎』這類只有『嗎』的是非問句／客氣請求不擋（實測 AI 都做對）。
+_INFO_QUESTION_RE = re.compile(r"什麼|怎麼|為什麼|為何|如何|哪|幾|多少|是不是|有沒有")
+STATE_TOOLS = frozenset({"control_mac_app", "set_system_volume", "adjust_screen_brightness", "system_power_action", "open_project"})
+NO_ACTION_HINT = "這句話沒有執行任何電腦操作；回覆不得聲稱已經執行。"
+# 否定／敘述句連 chat call 也不送：實測（19 句×3 次）chat 回覆有 7 句謊稱已執行（『昨天把音量調到50』→『音量已調整至50』、
+# 『電腦剛剛自己睡眠了』→『睡眠模式已啟動』），system 裡寫明不得聲稱已執行也沒用；固定回覆誠實、也省掉約 1 秒
+NO_ACTION_REPLY = "好，我沒有執行任何動作。"
+# 糾正句開頭的『沒有／不是』是在糾正上一句，不是否定動作（實測：『沒有我說的是這網頁』『沒有，我說的是這個畫面』）
+_CORRECTION_RE = re.compile(r"^(?:沒有|不是|不對)(?:啦|喔|啊|耶|欸)?")
+
+
+def _strip_correction(clause: str) -> str:
+    rest = _CORRECTION_RE.sub("", clause, count=1)
+    return rest if rest != clause and (not rest or rest.startswith(("我說", "我是說", "我要", "是"))) else clause
+
+
+def intent_guard(utterance: str) -> Optional[str]:
+    """no_action：有任一子句是否定／敘述（整步只回話，寧可少做）；info_question：每個子句都是資訊提問；其餘 None"""
+    m = FastPathMatcher()
+    clauses = [c for c in (_strip_correction(canonicalize_clause(c)) for c in m.split_clauses(utterance)) if c]
+    if any(m._blocked(c) for c in clauses):
+        return "no_action"
+    if clauses and all(_INFO_QUESTION_RE.search(c) for c in clauses):
+        return "info_question"
+    return None
 
 
 def _local_reroute(utterance: str, query: str) -> Optional[Match]:
@@ -166,6 +196,12 @@ def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Op
     ctx.utterance = utterance
     if local_miss is not None:
         ctx.chat_hint = local_miss_hint(local_miss) + "回覆不得聲稱已經找到。"
+    guard = intent_guard(utterance) if local_miss is None else None
+    if guard is not None:
+        step["guard"] = guard
+    if guard == "no_action":  # 不呼叫 LLM（規劃與 chat 都不送），回固定文字
+        ctx.replies.append(NO_ACTION_REPLY)
+        return ["🛡️ 這句是否定或敘述，不執行任何電腦操作", f"💬 {NO_ACTION_REPLY}"]
     t0 = time.perf_counter()
     try:
         calls, reply, rejected = plan_slow_path(utterance, step, local_miss, front_hint(ctx))
@@ -176,6 +212,13 @@ def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Op
         llm["overhead_ms"] = max(0.0, step["llm_ms"] - llm["prefill_ms"] - llm["decode_ms"])
 
     logs = [f"⚠️ 已拒絕不合法的工具呼叫：{r}" for r in rejected] + list(step.get("reroutes") or [])
+    if guard == "info_question":
+        dropped = [(n, a) for n, a in calls if n in STATE_TOOLS]
+        if dropped:
+            calls = [(n, a) for n, a in calls if n not in STATE_TOOLS]
+            step["guard_dropped"] = [n for n, _ in dropped]
+            logs.append(f"🛡️ 提問句不執行會改變狀態的動作：{', '.join(f'{n}({a})' for n, a in dropped)}")
+            ctx.chat_hint = NO_ACTION_HINT
     if local_miss is not None and not calls:  # 模型判斷不是網路查詢、也沒有別的事要做：確認找不到
         text = local_miss_reply(local_miss, "AI 沒有選擇上網搜尋")
         ctx.replies.append(text)
@@ -183,9 +226,9 @@ def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Op
         return logs + [text]
     if not calls and not rejected:
         if _is_look_at_screen(utterance):
-            return [f"[Slow Path - 補救] read_screen({{}}) -> {run_tool('read_screen', {}, ctx)}"]
+            return logs + [f"[Slow Path - 補救] read_screen({{}}) -> {run_tool('read_screen', {}, ctx)}"]
         # 沒有工具可呼叫：規劃呼叫的 content 不採用，另外觸發 chat call
-        return [chat_reply(ctx)]
+        return logs + [chat_reply(ctx)]
     if rejected and not calls:
         ctx.status = "rejected"
     for name, args in calls:

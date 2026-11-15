@@ -190,8 +190,9 @@ def test_fallback_runs_fast_candidate_when_llm_down(sh, ambiguous_apps):
 def test_fallback_never_runs_guarded_sentence(sh, ambiguous_apps):
     out = r.process_voice_command("不要開 slackapp")
     assert sh == []
-    assert out["steps"][0]["status"] == "llm_unavailable"
-    assert any("這句沒有處理" in m for m in out["replies"])
+    assert out["steps"][0]["status"] == "ok"  # 否定句（G1）根本不呼叫 LLM，所以 LLM 不可用也沒有影響
+    assert out["steps"][0]["logs"][0] == "🛡️ 這句是否定或敘述，不執行任何電腦操作"
+    assert out["replies"] == ["好，我沒有執行任何動作。"]
 
 
 def test_candidate_not_used_when_llm_is_up(monkeypatch, sh, ambiguous_apps):

@@ -191,15 +191,16 @@ def test_look_request_missed_by_llm_runs_read_screen_directly(monkeypatch, tmp_p
     assert step["logs"][0].startswith("[Slow Path - 補救] read_screen")
 
 
-@pytest.mark.parametrize("text", [
-    "網頁是什麼", "螢幕解析度是什麼", "怎麼看螢幕亮度", "不要看畫面上寫什麼", "昨天看過畫面", "能看到畫面嗎",
+@pytest.mark.parametrize("text,calls,reply", [
+    ("網頁是什麼", 2, "一般回覆"), ("螢幕解析度是什麼", 2, "一般回覆"), ("怎麼看螢幕亮度", 2, "一般回覆"), ("能看到畫面嗎", 2, "一般回覆"),
+    ("不要看畫面上寫什麼", 0, "好，我沒有執行任何動作。"), ("昨天看過畫面", 0, "好，我沒有執行任何動作。"),  # 否定／敘述（G1）：不呼叫 LLM
 ])
-def test_non_look_requests_still_go_to_chat(monkeypatch, tmp_path, text):
+def test_non_look_requests_still_go_to_chat(monkeypatch, tmp_path, text, calls, reply):
     s = _screen_llm(monkeypatch, tmp_path, plan_content="一般回覆")
     out = r.process_voice_command(text)
     assert s.names == [] and s.vl_messages == []  # 沒有截圖
-    assert len(s.other) == 2  # 規劃＋chat call
-    assert out["replies"] == ["一般回覆"]
+    assert len(s.other) == calls  # 規劃＋chat call
+    assert out["replies"] == [reply]
 
 
 def test_look_request_after_failed_browser_is_skipped(monkeypatch, tmp_path):

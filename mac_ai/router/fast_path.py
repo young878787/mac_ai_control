@@ -129,6 +129,10 @@ class FastPathMatcher:
         rf"^(?:(?P<open>{_OPEN})|(?P<reveal>顯示|在\s*Finder\s*(?:中)?\s*(?:顯示|打開)))?(?:就是)?"
         r"(?:第(?P<n>[一二三四五1-5])(?:個|項|筆)?|(?P<last>最後(?:一)?(?:個|項|筆)))$", _I)
     _PICK_N = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5}
+    # 否定即指令：說的是『不要現在這個狀態』。『不要打開深色模式』『不要鎖定螢幕』是真否定，不在這裡（交給守門）
+    _neg_unmute_re = re.compile(r"^(?:不要|別)(?:再)?靜音了$")  # 要有『了』：『不要靜音』可能是真否定（別幫我靜音）
+    _neg_bright_re = re.compile(r"^(?:把)?(?:螢幕|畫面)?(?:不要|別)(?:那麼|這麼)(?P<d>亮|暗)(?:了)?$")
+    _neg_dark_re = re.compile(rf"^(?:我)?(?:不要|不想要?|別)(?:再)?(?:用)?{_DARK}模式(?:了)?$")
 
     def __init__(self, catalog=None):
         self.catalog = catalog if catalog is not None else catalog_mod.DEFAULT
@@ -146,6 +150,9 @@ class FastPathMatcher:
         if raw == "讓電腦睡眠":  # 睡眠誤觸成本高：只接受這個固定句，不做放寬
             return Match([("system_power_action", {"action": "sleep"})])
         s = canonicalize_clause(raw)
+        neg = self._r_negated_command(s)  # 『不要靜音了』這類是要求改變狀態：在否定守門之前比對（只收窄句型）
+        if neg is not None:
+            return neg
         if not s or self._blocked(s):
             return None
         for pattern in self._read_screen_re:
@@ -165,6 +172,16 @@ class FastPathMatcher:
             m = rule(s, candidates)
             if m is not None:
                 return m
+        return None
+
+    def _r_negated_command(self, s: str) -> Optional[Match]:
+        if self._neg_unmute_re.match(s):
+            return Match([("set_system_volume", {"mute": False})])
+        m = self._neg_bright_re.match(s)
+        if m:
+            return Match([("adjust_screen_brightness", {"direction": "down" if m["d"] == "亮" else "up", "steps": 3})])
+        if self._neg_dark_re.match(s):
+            return Match([("system_power_action", {"action": "dark_mode_off"})])
         return None
 
     @staticmethod

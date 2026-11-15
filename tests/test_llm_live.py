@@ -436,7 +436,7 @@ def test_typo_not_in_lexicon_is_understood_by_llm(utterance, check):
 
 
 # ---------- 否定／敘述句（含錯字）：Fast 會擋下、交給 LLM；LLM 不得規劃任何動作（chat_reply 除外）----------
-_MISFIRE = "已知誤執行（2026-11-15 實測 3/3），Slow Path 準確度問題，見計劃書 §14.6"
+_MISFIRE = "模型本身仍會誤規劃（2026-11-15 實測 3/3）；G1 在執行層擋下，見 test_guard_end_to_end_*。模型變好時 strict xfail 會提醒"
 MISFIRE_CASES = [
     "別存擋", "不要打開小蒜盤",
     pytest.param("不要關閉試窗", marks=pytest.mark.xfail(strict=True, reason=_MISFIRE + "：開 VS Code／Finder")),
@@ -452,3 +452,39 @@ def test_negative_or_narrative_sentence_plans_no_action(utterance):
     for _ in range(REPEAT):
         calls, reply, rejected = r.plan_slow_path(text)
         assert [n for n in _names(calls) if n != "chat_reply"] == [], f"{utterance!r} -> {calls}"
+
+
+# ---------- G1 端到端（計劃書 §15）：真的 LLM 走完整流程，sh 攔下所有系統指令 ----------
+_CLAIM_RE = __import__("re").compile(r"已(?:經)?(?:為你|幫你|替你|為您|幫您)?(?:鎖定|睡眠|關閉|關掉|開啟|打開|調整|調到|調暗|調亮|靜音|切換)")
+G1_BLOCKED = [
+    "我不想鎖定螢幕", "不要鎖定螢幕", "先不要鎖螢幕", "別讓電腦睡眠", "不要打開深色模式", "不用關掉Safari", "不要關閉視窗",
+    "不要把音量調到100", "別把螢幕調暗", "不要開小算盤", "剛剛鎖定螢幕了", "我已經打開小算盤了", "昨天把音量調到50",
+    "剛才關掉Safari了", "我之前開過深色模式", "電腦剛剛自己睡眠了", "要不要鎖定螢幕", "鎖定螢幕是什麼意思", "怎麼開深色模式",
+    "不要關閉試窗", "不要金音", "剛剛所定螢幕了",
+]
+
+
+@pytest.mark.parametrize("utterance", G1_BLOCKED)
+def test_guard_end_to_end_runs_nothing_and_never_claims(sh, utterance):
+    for _ in range(REPEAT):
+        sh.clear()
+        out = r.process_voice_command(utterance)
+        assert sh == [], f"{utterance!r} 執行了 {sh}"
+        assert out["replies"] and not any(_CLAIM_RE.search(x) for x in out["replies"]), f"{utterance!r} 回覆聲稱已執行：{out['replies']}"
+
+
+@pytest.mark.parametrize("utterance,expected", [
+    ("可以幫我開小算盤嗎", ["open", "-a", "Calculator"]),
+    ("可以把音量調到30嗎", ["osascript", "-e", "set volume output volume 30"]),
+    ("可以幫我開 Safari 嗎", ["open", "-a", "Safari"]),
+])
+def test_guard_end_to_end_keeps_polite_requests(sh, utterance, expected):
+    for _ in range(REPEAT):
+        sh.clear()
+        r.process_voice_command(utterance)
+        assert sh == [expected], f"{utterance!r} -> {sh}"
+
+
+def test_guard_end_to_end_keeps_weather_question(sh):
+    r.process_voice_command("今天台北會下雨嗎")
+    assert len(sh) == 1 and sh[0][0] == "open" and "google.com/search" in sh[0][-1]
