@@ -1,6 +1,6 @@
 # mac_ai_control
 
-在 Mac 上用語音控制電腦的本地語音助手。直接說出指令，就能開啟或關閉 App 等操作（預設常啟動，不需喚醒詞）。語音辨識與語言模型都在本機執行，不需要雲端 API。
+在 Mac 上用語音控制電腦的語音助手。直接說出指令，就能開啟或關閉 App 等操作（預設常啟動，不需喚醒詞）。語音辨識與常用指令都在本機執行；聊天、知識問答、複雜畫面與「更強的 AI 控制」可選用雲端模型（`.env` 填金鑰才啟用，沒填就完全在本機，見下方「雲端模型」）。
 
 - 範例：「打開小算盤」「關掉 Safari」
 - 喚醒詞（終端機模式預設關閉）：**露西婭**（別名：露醬、露西亞）。要啟用，把 `mac_ai/config.py` 的 `WAKE_WORD_ENABLED` 改成 `True`，之後須說「露西婭 打開小算盤」才會執行（喚醒詞前可以加一個招呼詞，如「嘿露西亞」，詞表在 `vocab/lexicon.json` 的 `wake_words.greetings`）。喚醒後進入 60 秒的**會話**（`WAKE_SESSION_S`）：期間每一句都不用再說喚醒詞，每說一句重新計時；逾時後要再喊一次
@@ -13,8 +13,9 @@
                                                           │
                                   ┌───────────────────────┴───────────────────────┐
                                   ▼                                               ▼
-                    Fast Path：詞典／規則直接比對                 Slow Path：本地 LLM 規劃工具呼叫
-                    （不需 LLM，LLM 掛掉仍可用）                  （mlx_vlm.server，HTTP :8080）
+                    Fast Path：詞典／規則直接比對                 Slow Path：LLM 規劃工具呼叫
+                    （不需 LLM，LLM 掛掉仍可用）                  雲端優先（有金鑰時），失敗退回本機
+                                                                  （本機：mlx_vlm.server，HTTP :8080）
                                   └───────────────────────┬───────────────────────┘
                                                           ▼
                                                   執行動作（開啟／關閉 App 等）
@@ -22,6 +23,7 @@
 
 - **語音辨識**交給 [macos-stt](#感謝)，它會呼叫 Apple 內建的 `SFSpeechRecognizer`，不需下載模型。
 - **語言模型**使用 `mlx_vlm.server` 載入的本地模型（預設 `AI_models/LFM3-VL-2B-MLX-4bit`）。
+- **雲端模型**（選用）：Slow Path 有金鑰時先問雲端（OpenAI 相容的 LiteLLM proxy），失敗、逾時、熔斷時同一步退回本機模型。雲端與本機用同一組工具與同一套驗證，雲端也不能繞過否定／敘述句守門。
 - 模型不可用時，Fast Path 仍能執行常見指令。
 
 ## 需要搭配 macos-stt
@@ -84,6 +86,22 @@ AI_models/LFM3-VL-2B-MLX-4bit/
 
 若改用其他模型，請同步修改 `mac_ai/config.py` 的 `MODEL_ID`。
 
+### 4-0. 雲端模型（選用）
+
+```bash
+cp .env.example .env && chmod 600 .env    # 然後編輯 .env，填入 AI_API_KEY
+```
+
+| 鍵 | 說明 |
+|---|---|
+| `AI_API_URL` | OpenAI 相容端點，必須是 `https://`（預設 `https://chatapi.ntubimdbirc.tw`） |
+| `AI_MODEL` | 模型名稱（預設 `BIRC-LLM`） |
+| `AI_API_KEY` | 金鑰；**留空＝不使用雲端**，完全在本機執行 |
+
+- `.env` 不入版控，程式只讀不寫；金鑰不會放進環境變數，也不會傳給 `mlx_vlm`、STT、Electron 子程序，紀錄與錯誤訊息都不含金鑰。
+- 會送到雲端的內容：Slow Path 的原句、前景 App 名稱、最近 5 輪對話摘要（60 秒內，含執行過的工具）；說「看畫面並翻譯／解釋／除錯」這類由雲端規劃的看畫面，會把縮小的**螢幕截圖**送到雲端（`config.CLOUD_VISION_ENABLED` 可關閉）。Fast Path 的指令、否定／敘述句（G1）、本機搜尋後轉交的判斷不送雲端。
+- `config.CLOUD_ENABLED = False` 可整個關閉雲端。啟動時會印一行雲端狀態。
+
 ### 4-1. 準備語音活動偵測模型（Silero VAD）
 
 端點偵測（`ENDPOINT_MODE = "client"`）與測試會用到 Silero VAD v5（MIT 授權，約 2.3 MB）。同樣因為 `*.onnx` 已加入 `.gitignore`，請自行下載：
@@ -129,6 +147,7 @@ python main.py --ui               # 同時顯示桌面角色（需先完成「�
 |---|---|
 | 找一下 ChatGPT／打開郵件 | 開啟已安裝的 App（也認系統語言的名稱，如「郵件」「計算機」） |
 | 打開下載資料夾／找桌面 | 在 Finder 開啟資料夾 |
+| 打開 YouTube／開油管／上 GitHub／開瀏覽器看 Facebook | 開網站首頁（Fast Path，不經 LLM）。網站與別名在 `vocab/lexicon.json` 的 `sites`；同名 App 已存在時 App 優先（「開 Google」＝Chrome），說「網站／首頁／官網」則一律開網站 |
 | 找 report.pdf／找昨天下載的 PDF／找桌面上的截圖 | 用 Spotlight 搜家目錄（排除 `~/Library`、隱藏資料夾、`node_modules`），預設**在 Finder 中顯示**；說「打開」才開檔，可執行檔（`.command`、`.sh`、`.app`…）一律只顯示 |
 | 找履歷、找 python 教學（沒有本機證據） | 先當檔名找；0 筆時轉交模型判斷，可能改開網頁搜尋（搜尋關鍵字用你說的原話，不用模型改寫的字）；模型也判斷不用查、或模型沒開，就回「找不到」並說明原因與下一步（說「搜尋 X」） |
 | 找 report.pdf、在電腦裡找履歷、找下載的履歷（有本機證據） | 0 筆時只回「本機沒有」，不會改開網頁 |
@@ -211,7 +230,7 @@ python scripts/record_human.py                 # 錄真人測試語料（清單�
 | 位置 | 內容 | 寫入者 |
 |---|---|---|
 | `logs/runtime/latency.jsonl` | 每句話的收音→定稿計時，`utt_id`＝這句 final 的編號（`e2e_ms`＝說完→定稿、`endpoint_ms`＝說完→決定收尾、`finalize_ms`＝送 flush→定稿；`e2e_ms` 為 null＝本端 VAD 沒偵測到說話） | `stt/client.py` |
-| `logs/runtime/commands.jsonl` | 每個指令的路由與執行結果：語音指令帶 `utt_id`（對應 latency 同一句）與 `queue_ms`（進佇列到開始執行的等待；UI 打字、清單點選沒有這兩欄）；各步 `kind`／`status`／`ms`／`intent`／`logs`、`stages`；家目錄以 `~` 表示，不含搜尋清單。`--text` 不寫 | `assistant.py` |
+| `logs/runtime/commands.jsonl` | 每個指令的路由與執行結果（Slow 步驟另有 `route`＝cloud／local、`cloud`＝model／status／total_ms／token 數，不含回應內容與金鑰）：語音指令帶 `utt_id`（對應 latency 同一句）與 `queue_ms`（進佇列到開始執行的等待；UI 打字、清單點選沒有這兩欄）；各步 `kind`／`status`／`ms`／`intent`／`logs`、`stages`；家目錄以 `~` 表示，不含搜尋清單。`--text` 不寫 | `assistant.py` |
 | `logs/runtime/normalize.jsonl` | STT 原文→正規化結果（只記詞庫造成的改動，用來回收誤聽詞） | `router/normalize.py` |
 | `logs/runtime/ui.jsonl` | 桌面角色每則訊息一行：`bus_ms`（後端→Electron）、`apply_ms`（→畫面套用） | `desktop/main.js` |
 | `logs/services/*.log` | 子服務（`mlx_vlm`／`stt`／`ui`）的 stdout，每次啟動覆寫 | `services.py` |
@@ -233,10 +252,11 @@ python scripts/stt_bench.py list             # bench 一覽
 ```bash
 pytest              # 離線測試（預設，含錯字語料 tests/test_typo_offline.py）
 pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
+pytest -m cloud -s  # 連真的雲端模型（需 .env 金鑰，約 200 次請求會產生費用）：規劃正確率／延遲、否定句、誠實、看圖、代名詞動作
 pytest -m app -v    # 真實 App 驗收：在 Safari、Finder、Terminal、VS Code 上實際執行並讀回狀態（會佔用螢幕約 2 分鐘）
 cd desktop && node --test   # 桌面角色的狀態機與路徑白名單測試
-python scripts/acceptance.py run [--app] [--live]   # 跑測試並把數字存到 logs/bench/acceptance_*.json
-python scripts/acceptance.py report                 # 和上一次比較，變差（新增失敗、矯正率下降、延遲 +20% 且 +20 ms）時結束碼 1
+python scripts/acceptance.py run [--app] [--live] [--cloud]   # 跑測試並把數字存到 logs/bench/acceptance_*.json
+python scripts/acceptance.py report                 # 和上一次比較，變差（新增失敗、矯正率下降、延遲 +20% 且 +20 ms；雲端：各類規劃正確率或代名詞正確數下降、規劃 p50 +30% 且 +300 ms）時結束碼 1
 python scripts/acceptance.py list                   # 歷次結果
 ```
 
@@ -251,14 +271,14 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
 | `mac_ai/wake.py` | 喚醒詞閘門與會話 |
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
-| `mac_ai/router/` | 正規化、Fast Path、Slow Path（LLM）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站 |
+| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站 |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
 | `desktop/` | 桌面角色（Electron）：`main.js` 視窗與連線、`state.js` 狀態機、`renderer/` 畫面與 Live2D |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |
 | `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
 | `vocab/stt_hints.txt` | 由 `build_vocab.py` 產生，餵給語音辨識當提示詞 |
-| `docs/` | 設計與實作計畫（端點偵測、桌面角色與喚醒會話、本機優先的找東西分流、前景視窗上下文與常用功能） |
+| `docs/` | 設計與實作計畫（端點偵測、桌面角色與喚醒會話、本機優先的找東西分流、前景視窗上下文與常用功能、端雲協同） |
 | `tests/` | 離線測試與 live 測試 |
 
 修改 `vocab/lexicon.json` 後，`main.py` 啟動時會自動重新產生詞表；也可以手動執行 `python build_vocab.py`。
