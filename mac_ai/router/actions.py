@@ -216,6 +216,7 @@ class ExecContext:
     front: Optional[context.FrontContext] = None  # 前景 App（第一次用到才讀，同句快取；見 front_context）
     front_loaded: bool = False
     front_host: Optional[str] = None  # 前景瀏覽器目前分頁的 host（None＝還沒讀；見 front_site）
+    calls: List[Tuple[str, dict, bool]] = field(default_factory=list)  # 這一句執行過的工具 (名稱, 參數, 成功)；句尾寫進對話記憶
 
 
 def front_context(ctx: ExecContext, used: bool = True) -> Optional[context.FrontContext]:
@@ -504,4 +505,5 @@ def run_tool(name: str, args: dict, ctx: ExecContext) -> str:
     if ctx.step is not None:
         ctx.step.setdefault("exec_ms", []).append((time.perf_counter() - t) * 1000)
     ctx.results.append(res)
+    ctx.calls.append((name, dict(args), not res.startswith(_FAIL_PREFIXES)))
     return res

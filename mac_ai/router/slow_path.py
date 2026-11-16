@@ -2,12 +2,13 @@
 import json
 import re
 import time
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from mac_ai.config import PLAN_TIMEOUT_S, WARMUP_TIMEOUT_S
+from mac_ai.router import memory
 from mac_ai.router.actions import ExecContext, chat_reply, front_context, run_tool
 from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match, canonicalize_clause
-from mac_ai.router.lexicon import _compact, build_hint_lines
+from mac_ai.router.lexicon import _alias_index, _compact, build_hint_lines, project_index
 from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
 from mac_ai.router.tools import validate_tool_call
 
@@ -113,6 +114,31 @@ def front_hint(ctx: ExecContext) -> Optional[str]:
     return front.app + (f"：{ctx.front_host}" if front.kind == "browser" and ctx.front_host else "")
 
 
+# 「它／剛剛那個」：句子沒明說對象。模型（本機或雲端）依記憶決定對象時，對象必須真的出現在最近成功的操作裡（計畫 §6.5 對象守門）
+_PRONOUN_RE = re.compile(r"它|牠|剛剛那個|剛才那個|剛剛開的|剛才開的|上一個")
+_TARGET_ARGS = {"control_mac_app": "app_name", "open_project": "project_name"}
+
+
+def _mentioned(name: str, target: str, utterance: str) -> bool:
+    """對象（或它的別名）有沒有直接出現在句子裡"""
+    u = _compact(utterance)
+    if _compact(target) in u:
+        return True
+    if name == "control_mac_app":
+        return any(k and k in u for k, v in _alias_index().items() if v == target)
+    return any(k and k in u for k, (n, _) in project_index().items() if n == target)
+
+
+def target_error(name: str, args: dict, utterance: str, targets: Set[str]) -> Optional[str]:
+    key = _TARGET_ARGS.get(name)
+    if key is None or not _PRONOUN_RE.search(utterance):
+        return None
+    target = args.get(key, "")
+    if target in targets or _mentioned(name, target, utterance):
+        return None
+    return f"{name} 被略過：不確定「它」指的是什麼（{target} 不在最近成功的操作裡）"
+
+
 def build_user_message(utterance: str, local_miss: Optional[dict] = None, front: Optional[str] = None) -> str:
     """規劃呼叫的使用者訊息：原句在最前面（不改字），有詞庫提示、本機搜尋結果、目前視窗時才附上 Markdown 段落。
     動態資訊放這裡而不是 system：實測放 system 時工具定義的前綴快取失效，prefill 約 2 秒（沒放約 0.2 秒）。
@@ -128,24 +154,14 @@ def build_user_message(utterance: str, local_miss: Optional[dict] = None, front:
     return "\n\n".join(parts)
 
 
-def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Optional[dict] = None,
-                   front: Optional[str] = None) -> Tuple[List[Tuple[str, dict]], Optional[str], List[str]]:
-    """送 LLM 規劃工具呼叫。回傳 (通過驗證的 [(工具, 參數)], LLM 純文字回覆, 被拒絕的原因)。
-    meta 若有傳入，回填 llm（server timings）與 validate_ms；LLM 不可用時拋出 LLMError。
-    local_miss：本機搜尋 0 筆而轉交過來（{"label", "scope"}）→ 提示模型本機結果，且不再導回本機（避免繞圈）"""
-    llm_meta: dict = {}
-    message = _llm(
-        [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": build_user_message(utterance, local_miss, front)}],
-        # 192：工具呼叫每個約 23 tokens（4 個工具實測 94）；模型對提問偶爾直接寫長篇 content（不採用），
-        # 實測 261 tokens／6.5 秒、甚至寫到逾時，上限讓它最多約 5 秒就收手
-        timeout=PLAN_TIMEOUT_S, max_tokens=192, meta=llm_meta,
-    )
-
-    t = time.perf_counter()
+def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict], meta: Optional[dict],
+                   targets: Set[str]) -> Tuple[List[Tuple[str, dict]], List[str], List[str]]:
+    """模型回傳的 tool_calls（本機、雲端共用）→ (通過驗證的 [(工具, 參數)], 被拒絕的原因, 導向本機的紀錄)。
+    依序：格式 → validate_tool_call → 對象守門 → 搜尋意圖守門 → 轉交時用原話 → 本機優先導向"""
     calls: List[Tuple[str, dict]] = []
     rejected: List[str] = []
     reroutes: List[str] = []
-    for call in message.get("tool_calls") or []:
+    for call in tool_calls:
         func = call.get("function") if isinstance(call, dict) else None
         if not isinstance(func, dict):
             rejected.append("tool_call 格式錯誤（缺少 function 物件）")
@@ -157,6 +173,8 @@ def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Opti
             rejected.append(f"{func.get('name')} 參數不是合法 JSON")
             continue
         clean, err = validate_tool_call(func.get("name", ""), args)
+        if not err:
+            err = target_error(func["name"], clean, utterance, targets)
         if not err and func["name"] == "web_search_or_open_url":
             err = _search_intent_error(utterance, clean["query"])
         if err:
@@ -178,6 +196,25 @@ def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Opti
                     meta["intent"] = local.intent.to_log()
                 continue
         calls.append((func["name"], clean))
+    return calls, rejected, reroutes
+
+
+def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Optional[dict] = None,
+                   front: Optional[str] = None, targets: Optional[Set[str]] = None) -> Tuple[List[Tuple[str, dict]], Optional[str], List[str]]:
+    """送 LLM 規劃工具呼叫。回傳 (通過驗證的 [(工具, 參數)], LLM 純文字回覆, 被拒絕的原因)。
+    meta 若有傳入，回填 llm（server timings）與 validate_ms；LLM 不可用時拋出 LLMError。
+    local_miss：本機搜尋 0 筆而轉交過來（{"label", "scope"}）→ 提示模型本機結果，且不再導回本機（避免繞圈）。
+    targets：「它」可以指的對象（預設＝記憶裡最近成功的操作）"""
+    llm_meta: dict = {}
+    message = _llm(
+        [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": build_user_message(utterance, local_miss, front)}],
+        # 192：工具呼叫每個約 23 tokens（4 個工具實測 94）；模型對提問偶爾直接寫長篇 content（不採用），
+        # 實測 261 tokens／6.5 秒、甚至寫到逾時，上限讓它最多約 5 秒就收手
+        timeout=PLAN_TIMEOUT_S, max_tokens=192, meta=llm_meta,
+    )
+    t = time.perf_counter()
+    calls, rejected, reroutes = validate_calls(message.get("tool_calls") or [], utterance, local_miss, meta,
+                                               memory.STORE.targets() if targets is None else targets)
     if meta is not None:
         meta["llm"] = llm_meta
         meta["validate_ms"] = (time.perf_counter() - t) * 1000
@@ -202,9 +239,10 @@ def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Op
     if guard == "no_action":  # 不呼叫 LLM（規劃與 chat 都不送），回固定文字
         ctx.replies.append(NO_ACTION_REPLY)
         return ["🛡️ 這句是否定或敘述，不執行任何電腦操作", f"💬 {NO_ACTION_REPLY}"]
+    targets = memory.STORE.targets() | memory.targets_of(ctx.calls)  # 「它」可以指的對象：最近幾輪＋這一句前面幾步
     t0 = time.perf_counter()
     try:
-        calls, reply, rejected = plan_slow_path(utterance, step, local_miss, front_hint(ctx))
+        calls, reply, rejected = plan_slow_path(utterance, step, local_miss, front_hint(ctx), targets)
     finally:
         step["llm_ms"] = (time.perf_counter() - t0) * 1000
     llm = step.get("llm") or {}

@@ -2,7 +2,7 @@
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from mac_ai.router import catalog
+from mac_ai.router import catalog, memory
 from mac_ai.router.actions import ExecContext, front_app, run_tool
 from mac_ai.router.fast_path import FastPathMatcher, Match
 from mac_ai.router.llm_client import LLMError, LLMUnavailable
@@ -133,6 +133,7 @@ def process_voice_command(stt_text: str) -> dict:
         step["logs"] = logs
         steps.append(step)
     ctx.step = None
+    memory.STORE.add(stt_text, ctx.calls, ctx.replies)  # 下一句的「它」與雲端的最近對話
 
     total_ms = (time.perf_counter() - start_time) * 1000
     for reply in ctx.replies:
