@@ -1,12 +1,15 @@
 """自動驗收的量化與監控（計劃書 §14）：跑測試、整理成數字存檔，和上一次比較有沒有變差。
 
-    python scripts/acceptance.py run [--app] [--live] [--label 名稱]   跑離線測試（加 --app 真實 App、--live 需 LLM），結果寫到 logs/bench/acceptance_*.json
+    python scripts/acceptance.py run [--app] [--live] [--cloud] [--label 名稱]   跑離線測試（加 --app 真實 App、--live 需 LLM、--cloud 連真的雲端會產生費用），結果寫到 logs/bench/acceptance_*.json
     python scripts/acceptance.py report [舊.json 新.json]              比較兩次（省略＝最近兩次）；變差時結束碼 1
     python scripts/acceptance.py list                                  列出歷次結果
 
 記錄的數字：各組與各測試檔的通過／失敗／略過／xfail 與耗時、每個測試的結果、錯字各類別的矯正率、
-路由（正規化＋切句＋Fast Path 比對，不執行）的耗時分布、真實 App 每句指令的整步耗時與讀前景／網址的耗時。
-變差的定義（D9）：新增任何失敗、任一類矯正率下降、p50 延遲增加超過 20% 且超過 20 ms。"""
+路由（正規化＋切句＋Fast Path 比對，不執行）的耗時分布、真實 App 每句指令的整步耗時與讀前景／網址的耗時、
+雲端（--cloud）各類規劃正確率、規劃延遲分布、token 數、代名詞動作正確數、看圖耗時。
+變差的定義（D9）：新增任何失敗、任一類矯正率下降、p50 延遲增加超過 20% 且超過 20 ms；
+雲端另算（網路波動大，門檻放寬）：任一類規劃正確率或代名詞正確數下降、規劃 p50 增加超過 30% 且超過 300 ms、
+回覆殘留簡體、回覆超過 60 字的比例上升超過 10 個百分點。"""
 import argparse
 import json
 import os
@@ -30,8 +33,11 @@ SUITES = {  # 名稱 → pytest 參數
     "offline": [],
     "app": ["-m", "app"],
     "live": ["-m", "live"],
+    "cloud": ["-m", "cloud"],
 }
 LATENCY_RATIO, LATENCY_MIN_MS = 1.20, 20.0
+CLOUD_LATENCY_RATIO, CLOUD_LATENCY_MIN_MS = 1.30, 300.0
+REPLY_OVER60_RISE = 0.10  # 回覆超過 60 字的比例上升超過 10 個百分點算變差
 _FAILED = ("failed", "error")
 
 
@@ -138,6 +144,34 @@ def app_metrics(path: Path) -> dict:
             "host_read_ms": dist(host_ms), "commands": commands}
 
 
+def cloud_metrics(path: Path) -> dict:
+    """雲端實測每次請求的紀錄（tests/test_cloud_live.py 的 record）→ 各類規劃正確率、延遲分布、token、代名詞、看圖"""
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()] if path.exists() else []
+    plan = [r for r in rows if r.get("kind") == "plan"]
+    cats: Dict[str, dict] = {}
+    for r in plan:
+        c = cats.setdefault(r["cat"], {"ok": 0, "n": 0})
+        c["n"] += 1
+        c["ok"] += bool(r["ok"])
+    for c in cats.values():
+        c["rate"] = round(c["ok"] / c["n"], 4)
+    pron = next((r for r in rows if r.get("kind") == "pronoun"), None)
+    reply = [r for r in rows if r.get("kind") == "reply"]
+    return {
+        "reply": {"n": len(reply), "over60": sum(r["chars"] > 60 for r in reply), "pct_over60": round(sum(r["chars"] > 60 for r in reply) / len(reply), 4),
+                  "max_chars": max(r["chars"] for r in reply), "over3": sum(r["sentences"] > 3 for r in reply),
+                  "newline": sum(bool(r["newline"]) for r in reply), "simplified": sum(bool(r["simplified"]) for r in reply)} if reply else None,
+        "plan": cats,
+        "plan_ms": dist([r["total_ms"] for r in plan if r.get("total_ms") is not None]),
+        "errors": sum(1 for r in plan if r.get("status") != "ok"),
+        "tokens": {"prompt": sum(r.get("prompt_tokens") or 0 for r in plan), "completion": sum(r.get("completion_tokens") or 0 for r in plan)},
+        "pronoun": {"right": pron["right"], "n": pron["n"], "wrong": pron["wrong"]} if pron else None,
+        "vision_ms": dist([r["total_ms"] for r in rows if r.get("kind") == "vision"]),
+        "vision_errors": sum(1 for r in rows if r.get("kind") == "vision_error"),
+        "misfire_without_g1": next(({"fired": r["fired"], "n": r["n"]} for r in rows if r.get("kind") == "misfire"), None),
+    }
+
+
 def git_rev() -> str:
     try:
         rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=5).stdout.strip()
@@ -152,8 +186,11 @@ def run_suite(name: str, work: Path) -> dict:
     xml = work / f"{name}.xml"
     env = dict(os.environ)
     metrics = work / "app_metrics.jsonl"
+    cloud_rows = work / "cloud_metrics.jsonl"
     if name == "app":
         env["ACCEPTANCE_METRICS"] = str(metrics)
+    if name == "cloud":
+        env["ACCEPTANCE_CLOUD_METRICS"] = str(cloud_rows)
     cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--junitxml={xml}", *SUITES[name]]
     print(f"▶ {name}：{' '.join(cmd[3:])}")
     t = time.perf_counter()
@@ -168,11 +205,13 @@ def run_suite(name: str, work: Path) -> dict:
         out["typo"] = typo_rates(tests)
     if name == "app":
         out["app"] = app_metrics(metrics)
+    if name == "cloud":
+        out["cloud"] = cloud_metrics(cloud_rows)
     return out
 
 
 def cmd_run(args) -> int:
-    names = ["offline"] + (["app"] if args.app else []) + (["live"] if args.live else [])
+    names = ["offline"] + (["app"] if args.app else []) + (["live"] if args.live else []) + (["cloud"] if args.cloud else [])
     started = datetime.now()
     result = {"meta": {"started_at": started.isoformat(timespec="seconds"), "git": git_rev(), "label": args.label,
                        "suites": names, "python": sys.version.split()[0]}, "suites": {}}
@@ -202,6 +241,18 @@ def print_summary(result: dict) -> None:
             for kind, d in app["step_ms"].items():
                 print(f"   App {kind:12} 整步 p50 {d['p50']} ms、p95 {d['p95']} ms（n={d['n']}）")
             print(f"   讀前景 p50 {app['front_read_ms']['p50']} ms；讀網址 p50 {app['host_read_ms']['p50']} ms")
+        cloud = s.get("cloud")
+        if cloud:
+            print("   雲端規劃 " + "、".join(f"{k} {c['ok']}/{c['n']}" for k, c in cloud["plan"].items()))
+            d = cloud["plan_ms"]
+            print(f"   雲端延遲 p50 {d['p50']} ms、p95 {d['p95']} ms（n={d['n']}）；請求失敗 {cloud['errors']}；token 輸入 {cloud['tokens']['prompt']}／輸出 {cloud['tokens']['completion']}")
+            if cloud.get("reply"):
+                q = cloud["reply"]
+                print(f"   回覆品質 n={q['n']}：超過 60 字 {q['over60']}（{q['pct_over60']:.0%}）、最長 {q['max_chars']} 字、超過三句 {q['over3']}、換行 {q['newline']}、殘留簡體 {q['simplified']}")
+            if cloud["pronoun"]:
+                print(f"   代名詞動作 {cloud['pronoun']['right']}/{cloud['pronoun']['n']}（錯的對象 {cloud['pronoun']['wrong']}）；看圖 p50 {cloud['vision_ms']['p50']} ms")
+            if cloud["misfire_without_g1"]:
+                print(f"   繞過 G1 時雲端誤規劃動作 {cloud['misfire_without_g1']['fired']}/{cloud['misfire_without_g1']['n']}（僅記錄）")
     r = result.get("routing_ms") or {}
     print(f"路由耗時 p50 {r.get('p50')} ms、p95 {r.get('p95')} ms（{r.get('n')} 句）")
 
@@ -215,6 +266,9 @@ def latency_points(result: dict) -> Dict[str, Optional[float]]:
             points[f"App {kind} p50"] = d["p50"]
         points["讀前景 p50"] = app["front_read_ms"]["p50"]
         points["讀網址 p50"] = app["host_read_ms"]["p50"]
+    cloud = (result["suites"].get("cloud") or {}).get("cloud")
+    if cloud:
+        points["雲端規劃 p50"] = cloud["plan_ms"]["p50"]
     return points
 
 
@@ -232,10 +286,26 @@ def compare(old: dict, new: dict) -> List[str]:
             before = (old["suites"][name].get("typo") or {}).get(cat)
             if before is not None and r["rate"] < before["rate"]:
                 problems.append(f"錯字矯正率下降［{cat}］{before['ok']}/{before['n']} → {r['ok']}/{r['n']}")
+    oc, nc = (old["suites"].get("cloud") or {}).get("cloud"), (new["suites"].get("cloud") or {}).get("cloud")
+    if oc and nc:
+        for cat, r in nc["plan"].items():
+            before = oc["plan"].get(cat)
+            if before is not None and r["rate"] < before["rate"]:
+                problems.append(f"雲端規劃正確率下降［{cat}］{before['ok']}/{before['n']} → {r['ok']}/{r['n']}")
+        nq, oq = nc.get("reply"), oc.get("reply")
+        if nq and nq["simplified"] > 0:
+            problems.append(f"雲端回覆殘留簡體 {nq['simplified']} 句")
+        if nq and oq and nq["pct_over60"] - oq["pct_over60"] > REPLY_OVER60_RISE:
+            problems.append(f"雲端回覆超過 60 字的比例上升 {oq['pct_over60']:.0%} → {nq['pct_over60']:.0%}（上升超過 {REPLY_OVER60_RISE * 100:.0f} 個百分點）")
+        if oc["pronoun"] and nc["pronoun"] and nc["pronoun"]["right"] < oc["pronoun"]["right"]:
+            problems.append(f"代名詞動作正確數下降 {oc['pronoun']['right']} → {nc['pronoun']['right']}")
+        if nc["pronoun"] and nc["pronoun"]["wrong"] > 0:
+            problems.append(f"代名詞動作執行了錯的對象 {nc['pronoun']['wrong']} 次")
     lo, ln = latency_points(old), latency_points(new)
     for key, v in ln.items():
         b = lo.get(key)
-        if v is not None and b is not None and v > b * LATENCY_RATIO and v - b > LATENCY_MIN_MS:
+        ratio, floor = (CLOUD_LATENCY_RATIO, CLOUD_LATENCY_MIN_MS) if key.startswith("雲端") else (LATENCY_RATIO, LATENCY_MIN_MS)
+        if v is not None and b is not None and v > b * ratio and v - b > floor:
             problems.append(f"延遲變高［{key}］{b} → {v} ms（+{(v / b - 1) * 100:.0f}%）")
     return problems
 
@@ -279,6 +349,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     r = sub.add_parser("run")
     r.add_argument("--app", action="store_true", help="加跑真實 App 測試（會佔用螢幕約 2 分鐘）")
     r.add_argument("--live", action="store_true", help="加跑 live 測試（需 mlx_vlm.server）")
+    r.add_argument("--cloud", action="store_true", help="加跑雲端實測（需 .env 金鑰；約 200 次請求，會產生費用）")
     r.add_argument("--label", help="標籤，放進檔名與 meta")
     p = sub.add_parser("report")
     p.add_argument("files", nargs="*", help="舊.json 新.json（省略＝最近兩次）")

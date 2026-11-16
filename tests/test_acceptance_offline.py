@@ -107,3 +107,80 @@ def test_report_exit_code(tmp_path, capsys):
     assert acceptance.main(["report", str(a), str(a)]) == 0
     assert acceptance.main(["report", str(a), str(b)]) == 1
     assert "新增失敗" in capsys.readouterr().out
+
+
+# ---------- 雲端（--cloud）----------
+CLOUD_ROWS = [
+    {"kind": "plan", "cat": "ctrl", "text": "a", "ok": True, "total_ms": 800.0, "status": "ok", "prompt_tokens": 1500, "completion_tokens": 40},
+    {"kind": "plan", "cat": "ctrl", "text": "b", "ok": False, "total_ms": 900.0, "status": "ok", "prompt_tokens": 1500, "completion_tokens": 60},
+    {"kind": "plan", "cat": "chat", "text": "c", "ok": True, "total_ms": 1000.0, "status": "ok", "prompt_tokens": 1500, "completion_tokens": 80},
+    {"kind": "plan", "cat": "chat", "text": "d", "ok": True, "total_ms": 1100.0, "status": "timeout"},
+    {"kind": "pronoun", "n": 30, "right": 30, "wrong": 0},
+    {"kind": "vision", "total_ms": 1600.0, "status": "ok"},
+    {"kind": "vision_error", "status": "timeout", "total_ms": 15000.0},
+    {"kind": "misfire", "n": 7, "fired": 1},
+    {"kind": "reply", "cat": "chat", "text": "e", "chars": 40, "sentences": 2, "newline": False, "emoji": 0, "simplified": False},
+    {"kind": "reply", "cat": "chat", "text": "f", "chars": 80, "sentences": 4, "newline": True, "emoji": 1, "simplified": False},
+]
+
+
+def _cloud_result(tmp_path, rows=CLOUD_ROWS):
+    import json
+    f = tmp_path / "cloud.jsonl"
+    f.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    return {"meta": {"git": "abc"}, "suites": {"cloud": {"exit_code": 0, "tests": {"t::c": "passed"}, "cloud": acceptance.cloud_metrics(f)}}}
+
+
+def test_cloud_metrics_parsing(tmp_path):
+    m = _cloud_result(tmp_path)["suites"]["cloud"]["cloud"]
+    assert m["plan"] == {"ctrl": {"ok": 1, "n": 2, "rate": 0.5}, "chat": {"ok": 2, "n": 2, "rate": 1.0}}
+    assert m["plan_ms"]["n"] == 4 and m["plan_ms"]["p50"] in (900.0, 1000.0) and m["errors"] == 1
+    assert m["tokens"] == {"prompt": 4500, "completion": 180}
+    assert m["pronoun"] == {"right": 30, "n": 30, "wrong": 0} and m["vision_ms"]["n"] == 1 and m["vision_errors"] == 1
+    assert m["misfire_without_g1"] == {"fired": 1, "n": 7}
+    assert acceptance.cloud_metrics(tmp_path / "missing.jsonl")["plan"] == {}  # 沒跑到雲端測試：不拋例外
+
+
+def test_cloud_regressions_use_their_own_thresholds(tmp_path):
+    old = _cloud_result(tmp_path)
+    assert acceptance.compare(old, copy.deepcopy(old)) == []
+    new = copy.deepcopy(old)
+    c = new["suites"]["cloud"]["cloud"]
+    c["plan"]["chat"] = {"ok": 1, "n": 2, "rate": 0.5}
+    c["pronoun"] = {"right": 27, "n": 30, "wrong": 1}
+    probs = acceptance.compare(old, new)
+    assert any("雲端規劃正確率下降［chat］2/2 → 1/2" in p for p in probs)
+    assert any("代名詞動作正確數下降 30 → 27" in p for p in probs) and any("錯的對象 1 次" in p for p in probs)
+
+
+@pytest.mark.parametrize("old,new,bad", [
+    (900.0, 1100.0, False),   # +22%：雲端門檻是 +30% 且 +300 ms
+    (300.0, 450.0, False),    # +50% 但只多 150 ms：絕對值門檻（300 ms）不夠
+    (900.0, 1150.0, False),   # +27.8%：比例不夠
+    (2000.0, 2500.0, False),  # +25%：比例不夠
+    (900.0, 1230.0, True),    # +36.7% 且 +330 ms
+])
+def test_cloud_latency_rule_is_looser_than_local(tmp_path, old, new, bad):
+    a, b = _cloud_result(tmp_path), _cloud_result(tmp_path)
+    a["suites"]["cloud"]["cloud"]["plan_ms"]["p50"], b["suites"]["cloud"]["cloud"]["plan_ms"]["p50"] = old, new
+    assert bool(acceptance.compare(a, b)) is bad
+
+
+def test_cloud_suite_missing_in_one_run_is_not_compared(tmp_path):
+    old, new = _cloud_result(tmp_path), copy.deepcopy(BASE)
+    assert acceptance.compare(old, new) == [] and acceptance.compare(new, old) == []
+
+
+def test_cloud_reply_quality_metrics_and_regressions(tmp_path):
+    old = _cloud_result(tmp_path)
+    q = old["suites"]["cloud"]["cloud"]["reply"]
+    assert q == {"n": 2, "over60": 1, "pct_over60": 0.5, "max_chars": 80, "over3": 1, "newline": 1, "simplified": 0}
+    assert acceptance.cloud_metrics(tmp_path / "missing.jsonl")["reply"] is None
+    assert acceptance.compare(old, copy.deepcopy(old)) == []
+    worse = copy.deepcopy(old)
+    worse["suites"]["cloud"]["cloud"]["reply"].update(simplified=2, pct_over60=0.61)
+    probs = acceptance.compare(old, worse)
+    assert any("殘留簡體 2 句" in p for p in probs) and any("超過 60 字的比例上升 50% → 61%" in p for p in probs)
+    ok = copy.deepcopy(old)
+    ok["suites"]["cloud"]["cloud"]["reply"]["pct_over60"] = 0.59   # 只上升 9 個百分點：不算
+    assert acceptance.compare(old, ok) == []
