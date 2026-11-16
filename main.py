@@ -15,7 +15,7 @@ from typing import List, Optional
 import build_vocab
 from mac_ai import config
 from mac_ai.assistant import run_voice_loop
-from mac_ai.router import LEXICON, catalog, process_choice, process_voice_command, warmup_llm
+from mac_ai.router import LEXICON, catalog, cloud_client, process_choice, process_voice_command, warmup_llm
 from mac_ai.services import ServiceError, check_ui_ready, llm_service, stop_all, stt_service, ui_service
 from mac_ai.stt.mic import MicSource
 from mac_ai.ui_bus import UiBus
@@ -102,6 +102,7 @@ def run(args: argparse.Namespace) -> int:
             warm = warmup_llm()
             if warm is not None:
                 print(f"✅ LLM 暖機完成：{warm:.2f}s")
+        print(cloud_client.status_line())
 
         if stt is None:
             print("（--no-stt）LLM 服務執行中，Ctrl+C 結束")

@@ -20,7 +20,8 @@ from mac_ai.wake import WakeGate, split_wake
 
 _CLEAR_LINE = "\r\033[K"
 _FAILED_STEP_STATUS = ("exec_failed", "llm_unavailable", "llm_error")
-_LOGGED_STEP_KEYS = ("kind", "text", "status", "ms", "llm_ms", "intent", "match")  # 寫進 commands.jsonl 的 step 欄位
+_LOGGED_STEP_KEYS = ("kind", "text", "status", "ms", "llm_ms", "intent", "match", "route", "cloud", "cloud_fallback",
+                     "vision_cloud", "memory_turns")  # 寫進 commands.jsonl 的 step 欄位
 
 
 def _ignore(event: dict) -> None:

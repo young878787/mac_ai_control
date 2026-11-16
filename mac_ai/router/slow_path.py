@@ -5,10 +5,11 @@ import time
 from typing import List, Optional, Set, Tuple
 
 from mac_ai.config import PLAN_TIMEOUT_S, WARMUP_TIMEOUT_S
-from mac_ai.router import memory
-from mac_ai.router.actions import ExecContext, chat_reply, front_context, run_tool
+from mac_ai.router import cloud_client, context, memory
+from mac_ai.router.actions import _FAIL_PREFIXES, ExecContext, chat_reply, front_context, run_tool
+from mac_ai.router.cloud_client import CloudError
 from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match, canonicalize_clause
-from mac_ai.router.lexicon import _alias_index, _compact, build_hint_lines, project_index
+from mac_ai.router.lexicon import _OPEN, _alias_index, _compact, build_hint_lines, project_index
 from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
 from mac_ai.router.tools import validate_tool_call
 
@@ -28,6 +29,24 @@ SYSTEM_PROMPT = (
 # 實測：『沒有我說的是這網頁』這類糾正句，小模型會編出『台北天氣 2025-09-27』之類的 query 亂開搜尋頁
 _SEARCH_INTENT_RE = re.compile(r"搜|查|找|google|谷歌|上網|天氣|下雨|氣溫|新聞|股價|股票|匯率", re.IGNORECASE)
 _URL_RE = re.compile(r"^(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:[/?#]\S*)?$", re.IGNORECASE)
+
+
+# 『打開 YouTube』『上 YouTube』『去 GitHub』：句子明說了詞庫裡的網站、也有開啟的動詞，模型給的網址又屬於那個網站時，放行並改成網站首頁
+# （實測雲端對這類說法都回正確的網址，卻被 _search_intent_error 全部擋下：9 種說法 0 通過）。改成首頁而不用模型的網址：模型可能編出深層連結
+_SITE_OPEN_RE = re.compile(rf"(?:{_OPEN}|上|去|前往|進入|連到|連上|逛)")
+
+
+def site_open_home(utterance: str, query: str) -> Optional[str]:
+    """放行條件（全部成立）：句子沒有搜尋字詞（有的維持模型的搜尋網址）、不是資訊提問、有開啟動詞、句子只明說一個詞庫網站（名稱或別名，
+    『YouTube Music』不算）、query 是那個網站網域的網址。回傳要開的首頁；不符合回傳 None（交給 _search_intent_error）"""
+    if _SEARCH_INTENT_RE.search(utterance) or _INFO_QUESTION_RE.search(utterance) or not _SITE_OPEN_RE.search(utterance):
+        return None
+    q = query.strip()
+    host = context.parse_host(q if "://" in q else "https://" + q)
+    site = context.site_for(host) if host else None
+    if site is None or not site.get("home") or context.site_in(utterance) is not site:
+        return None
+    return site["home"]
 
 
 def _search_intent_error(utterance: str, query: str) -> Optional[str]:
@@ -177,6 +196,9 @@ def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict],
             err = target_error(func["name"], clean, utterance, targets)
         if not err and func["name"] == "web_search_or_open_url":
             err = _search_intent_error(utterance, clean["query"])
+            home = site_open_home(utterance, clean["query"]) if err else None  # 只放寬原本會拒絕的；原本放行的（有搜尋字詞、字面網址）維持不變
+            if home:
+                clean, err = {**clean, "query": home}, None
         if err:
             rejected.append(err)
             continue
@@ -222,6 +244,63 @@ def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Opti
     return calls, message.get("content"), rejected
 
 
+def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str]) -> Tuple[List[Tuple[str, dict]], str, List[str]]:
+    """雲端規劃：工具同 TOOLS_SCHEMA（只有 chat_reply 多一個 text 參數）、同一套驗證（validate_calls）。user 訊息＝本機的 build_user_message＋最近對話。
+    回傳 (通過驗證的呼叫, 文字回覆, 被拒絕的原因)；雲端不可用時拋 CloudError（呼叫端退回本機）"""
+    user = build_user_message(utterance, front=front_hint(ctx))
+    mem = memory.STORE.render(ctx.calls)
+    if mem:
+        user += "\n\n## 最近對話\n" + mem
+        step["memory_turns"] = len(memory.STORE.recent())
+    meta: dict = {}
+    try:
+        message = cloud_client.chat([{"role": "system", "content": cloud_client.CLOUD_SYSTEM_PROMPT},
+                                     {"role": "user", "content": user}], tools=cloud_client.CLOUD_TOOLS, meta=meta)
+    finally:
+        step["cloud"] = meta
+    tool_calls, say = cloud_client.split_chat_texts(message.get("tool_calls") or [])  # chat_reply(text)：伴隨工具的文字回覆
+    calls, rejected, reroutes = validate_calls(tool_calls, utterance, None, step, targets)
+    step["reroutes"] = reroutes
+    return calls, message.get("content") or " ".join(say), rejected
+
+
+def _execute_cloud(utterance: str, step: dict, ctx: ExecContext, guard: Optional[str], targets: Set[str]) -> Optional[List[str]]:
+    """雲端規劃並在本機執行；雲端不可用回傳 None（呼叫端改走本機）。
+    文字回覆只在「沒有工具」或「工具全部通過驗證且執行成功」時採用（避免回『已幫你打開』但其實被拒絕）"""
+    step["route"] = "cloud"
+    t0 = time.perf_counter()
+    try:
+        calls, content, rejected = plan_cloud(utterance, ctx, step, targets)
+    except CloudError as e:
+        step["route"], step["cloud_fallback"] = "local", str(e)
+        print(f"☁️ 雲端無法使用（{e}），改用本機")
+        return None
+    finally:
+        step["llm_ms"] = (time.perf_counter() - t0) * 1000
+    logs = [f"⚠️ 已拒絕不合法的工具呼叫：{r}" for r in rejected] + list(step.get("reroutes") or [])
+    dropped = False
+    if guard == "info_question":
+        drop = [(n, a) for n, a in calls if n in STATE_TOOLS]
+        if drop:
+            calls = [(n, a) for n, a in calls if n not in STATE_TOOLS]
+            step["guard_dropped"] = [n for n, _ in drop]
+            logs.append(f"🛡️ 提問句不執行會改變狀態的動作：{', '.join(f'{n}({a})' for n, a in drop)}")
+            dropped = True
+    if rejected and not calls:
+        ctx.status = "rejected"
+    for name, args in calls:
+        logs.append(f"[Slow Path - 雲端] {name}({args}) -> {run_tool(name, args, ctx)}")
+    if not calls and not rejected and not content:
+        if _is_look_at_screen(utterance):
+            return logs + [f"[Slow Path - 補救] read_screen({{}}) -> {run_tool('read_screen', {}, ctx)}"]
+        return logs + [chat_reply(ctx)]
+    all_ok = not rejected and not dropped and not any(r.startswith(_FAIL_PREFIXES) for r in ctx.results)
+    if content and all_ok and "read_screen" not in {n for n, _ in calls}:  # 看畫面的結果本身就是回覆
+        ctx.replies.append(content)
+        logs.append(f"☁️ AI 回覆：{content}")
+    return logs
+
+
 def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Optional[ExecContext] = None,
                           local_miss: Optional[dict] = None) -> List[str]:
     """將未命中的自然語言指令送入本地 LLM 進行多工具拆解與執行；
@@ -236,10 +315,16 @@ def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Op
     guard = intent_guard(utterance) if local_miss is None else None
     if guard is not None:
         step["guard"] = guard
-    if guard == "no_action":  # 不呼叫 LLM（規劃與 chat 都不送），回固定文字
+    if guard == "no_action":  # 不呼叫 LLM（規劃與 chat 都不送，本機雲端都一樣），回固定文字
         ctx.replies.append(NO_ACTION_REPLY)
         return ["🛡️ 這句是否定或敘述，不執行任何電腦操作", f"💬 {NO_ACTION_REPLY}"]
     targets = memory.STORE.targets() | memory.targets_of(ctx.calls)  # 「它」可以指的對象：最近幾輪＋這一句前面幾步
+    # 雲端優先（計畫 §13：P0 實測雲端規劃比本機快又準）；轉交（local_miss）只問要不要上網，維持本機
+    if local_miss is None and cloud_client.available():
+        logs = _execute_cloud(utterance, step, ctx, guard, targets)
+        if logs is not None:
+            return logs
+    step.setdefault("route", "local")
     t0 = time.perf_counter()
     try:
         calls, reply, rejected = plan_slow_path(utterance, step, local_miss, front_hint(ctx), targets)

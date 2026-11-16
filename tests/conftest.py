@@ -6,7 +6,7 @@ import pytest
 
 import mac_ai.router as r
 from mac_ai import config
-from mac_ai.router import context, lexicon, native, normalize
+from mac_ai.router import cloud_client, context, lexicon, memory, native, normalize
 
 REAL_URLOPEN = urllib.request.urlopen  # 需要真的連線的測試（本機 socket）用這個
 REAL_READ_FRONT, REAL_READ_HOST = context.read_front, context.read_host  # 測讀取函式本身的測試用這個
@@ -16,17 +16,56 @@ REAL_READ_FRONT, REAL_READ_HOST = context.read_front, context.read_host  # 測�
 def _isolate_router(request, monkeypatch, tmp_path):
     """每個測試前重設 LLM 熔斷，並把正規化／延遲／指令紀錄導到暫存目錄（不污染專案的 logs/）。
     離線測試預設 LLM 不可用（不會誤打到本機正在跑的 server）；需要 LLM 的測試自己 monkeypatch llm_client._chat 或 urlopen。
-    live 測試要真的連 server，所以不套用這個預設。"""
+    live 與 cloud 測試要真的連 server，所以不套用這個預設。"""
     r.reset_llm_breaker()
+    real_cloud = request.node.get_closest_marker("cloud") is not None  # cloud 實測要讀真的 .env、連真的雲端
+    if not real_cloud:
+        for name in ("AI_API_URL", "AI_MODEL", "AI_API_KEY"):  # 雲端預設停用：不讀這台電腦的 .env 與環境變數（cloud fixture 才開）
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setattr(config, "ENV_PATH", tmp_path / "no.env")
+    config.reset_env_cache()
+    cloud_client.reset()
+    memory.STORE.clear()
     monkeypatch.setattr(normalize, "NORMALIZE_LOG", tmp_path / "logs" / "normalize.jsonl")
     monkeypatch.setattr(config, "LATENCY_LOG", tmp_path / "logs" / "latency.jsonl")
     monkeypatch.setattr(config, "COMMAND_LOG", tmp_path / "logs" / "commands.jsonl")
-    if request.node.get_closest_marker("live") is None:
+    if request.node.get_closest_marker("live") is None and not real_cloud:
         def offline(*a, **kw):
             raise urllib.error.URLError("offline test: LLM not mocked")
         monkeypatch.setattr(urllib.request, "urlopen", offline)
     yield
     r.reset_llm_breaker()
+    cloud_client.reset()
+    config.reset_env_cache()
+
+
+@pytest.fixture
+def cloud(monkeypatch, tmp_path):
+    """假雲端：寫一個暫存 .env（金鑰 sk-TEST-7f3a9c）並把 cloud_client._post 換成假的。
+    cloud.reply＝下一次回應的 message（dict），可設成函式 (body)→message 或 Exception；cloud.requests 記錄每次請求的 body"""
+    env = tmp_path / "cloud.env"
+    env.write_text("AI_API_URL=https://cloud.test\nAI_MODEL=TEST-LLM\nAI_API_KEY=sk-TEST-7f3a9c\n", encoding="utf-8")
+    env.chmod(0o600)
+    monkeypatch.setattr(config, "ENV_PATH", env)
+    config.reset_env_cache()
+    cloud_client.reset()
+
+    class Fake:
+        key = "sk-TEST-7f3a9c"
+        reply = {"content": "好的～"}
+        requests: list = []
+
+        def __call__(self, url, key, body, timeout):
+            self.requests.append(body)
+            reply = self.reply(body) if callable(self.reply) else self.reply
+            if isinstance(reply, Exception):
+                raise reply
+            return {"choices": [{"message": reply}], "usage": {"prompt_tokens": 100, "completion_tokens": 20}}
+
+    fake = Fake()
+    fake.requests = []
+    monkeypatch.setattr(cloud_client, "_post", fake)
+    return fake
 
 
 @pytest.fixture(autouse=True)

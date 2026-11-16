@@ -12,8 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from mac_ai.config import CHAT_TIMEOUT_S, VISION_TIMEOUT_S
-from mac_ai.router import context
+from mac_ai import config
+from mac_ai.config import CHAT_TIMEOUT_S, CLOUD_IMAGE_MAX_BYTES, CLOUD_VISION_TIMEOUT_S, VISION_TIMEOUT_S
+from mac_ai.router import cloud_client, context
 from mac_ai.router.lexicon import APP_KIND, MAC_APP_ALIASES, project_index, resolve_project
 from mac_ai.router.llm_client import LLMError, LLMUnavailable, _llm
 from mac_ai.router.normalize import to_traditional
@@ -372,6 +373,10 @@ def read_screen(ctx: Optional[ExecContext] = None) -> str:
         step["resize_ms"] = (time.perf_counter() - t) * 1000
         if not ok or not small.exists():
             return f"❌ 縮圖失敗（{err}）"
+        if step.get("route") == "cloud" and config.CLOUD_VISION_ENABLED and cloud_client.available():
+            res = _cloud_read_screen(ctx, step, small, tmp, target)
+            if res is not None:
+                return res
         data_uri = "data:image/png;base64," + base64.b64encode(small.read_bytes()).decode()
         messages = [
             {"role": "system", "content": SCREEN_SYSTEM_PROMPT},
@@ -399,6 +404,40 @@ def read_screen(ctx: Optional[ExecContext] = None) -> str:
         return f"❌ 讀取截圖失敗（{e}）"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _cloud_read_screen(ctx: ExecContext, step: dict, small: Path, tmp: Path, target: str) -> Optional[str]:
+    """雲端看畫面（計畫 §6.4）：縮好的 PNG 轉 JPEG（sips 不能寫 WebP，實測）送雲端，問題用使用者原句。
+    太大或雲端失敗回傳 None，呼叫端改用本機 VL。只記大小與耗時，不記圖片"""
+    jpg = tmp / "screen.jpg"
+    for quality in (80, 60):
+        ok, _ = _run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(quality), str(small), "--out", str(jpg)], EXTERNAL_TIMEOUT_S)
+        size = jpg.stat().st_size if ok and jpg.exists() else 0
+        step["image"] = {"bytes": size, "quality": quality}
+        if 0 < size <= CLOUD_IMAGE_MAX_BYTES:
+            break
+    else:
+        return None
+    meta: dict = {}
+    messages = [
+        {"role": "system", "content": cloud_client.CLOUD_VISION_SYSTEM_PROMPT},
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(jpg.read_bytes()).decode()}},
+            {"type": "text", "text": ctx.utterance or SCREEN_QUESTION},
+        ]},
+    ]
+    try:
+        message = cloud_client.chat(messages, timeout=CLOUD_VISION_TIMEOUT_S, meta=meta)
+    except cloud_client.CloudError as e:
+        print(f"☁️ 雲端看畫面失敗（{e}），改用本機")
+        return None
+    finally:
+        step["vision_cloud"] = meta
+    text = message.get("content") or ""
+    if not text:
+        return None
+    ctx.replies.append(text)
+    return f"✅ 畫面內容（{target}，雲端）：{text}"
 
 
 def _strip_think(text: str) -> str:
