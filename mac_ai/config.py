@@ -1,5 +1,7 @@
 """路徑、LLM 連線與逾時設定（單一來源）。"""
+import os
 from pathlib import Path
+from typing import Dict, Optional
 
 ROOT = Path(__file__).parent.parent
 LEXICON_PATH = ROOT / "vocab" / "lexicon.json"
@@ -23,6 +25,62 @@ CHAT_TIMEOUT_S = 10.0
 VISION_TIMEOUT_S = 30.0
 WARMUP_TIMEOUT_S = 60.0  # 首次載入較慢
 BREAKER_COOLDOWN_S = 30.0  # LLM 連不上之後，這段時間內不再嘗試
+
+# --- 雲端模型（LiteLLM proxy，OpenAI 相容）。端點、模型、金鑰在 .env（AI_API_URL／AI_MODEL／AI_API_KEY），見 env_value
+ENV_PATH = ROOT / ".env"  # 不入版控；程式只讀不寫。範本是 .env.example
+CLOUD_ENABLED = True  # False＝只用本機；AI_API_KEY 留空時也只用本機
+CLOUD_TIMEOUT_S = 8.0  # 規劃／回覆的總逾時（2026-11-15 實測 130 句：p50 0.87 s、p95 1.59 s、最慢 2.7 s）
+CLOUD_VISION_TIMEOUT_S = 15.0  # 看畫面（實測一張圖約 2.5 s）
+CLOUD_MAX_TOKENS = 600  # 含推理 token（reasoning_effort=low 實測 40–80）
+CLOUD_REASONING_EFFORT = "low"  # 底層 Qwen 的思考深度；low 實測推理 token 76→42、延遲 1.1→0.84 s
+CLOUD_USER_AGENT = "mac-ai-control/1.0"  # 端點前有 Cloudflare：Python-urllib 預設 UA 會被擋（實測 403 error code 1010）
+CLOUD_NO_CACHE = False  # True＝請求帶 cache:{no-cache:true} 繞過 LiteLLM 的回應快取。proxy 對相同請求逐字回傳同一份答案（實測重複請求 1323→426→400 ms、內容完全相同），
+# 日常使用維持快取（快）；實測／A-B 比較一定要開，否則重複執行不是獨立樣本。header 的 Cache-Control 無效，要放 body
+CLOUD_VISION_ENABLED = True  # 雲端規劃的看畫面請求，截圖送雲端辨識（使用者 2026-11-15 同意）；失敗退回本機 VL
+CLOUD_IMAGE_MAX_BYTES = 250_000  # 送雲端的截圖上限：JPEG 品質 80 超過就改 60（實測整個螢幕縮到 1280、品質 80 約 311 KB）
+MEMORY_TURNS = 5  # 對話記憶保留幾輪（給雲端參考、解析「它」）；有效期同 WAKE_SESSION_S
+
+_env_file: Optional[Dict[str, str]] = None  # .env 的內容（第一次用到才讀）
+_env_path_loaded: Optional[Path] = None
+
+
+def parse_env(text: str) -> Dict[str, str]:
+    """KEY=VALUE 一行一個；忽略空行與 # 註解、允許 export 前綴、去掉成對引號；不做變數展開。格式錯的行略過"""
+    out: Dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not key.replace("_", "").isalnum():
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        out[key] = value
+    return out
+
+
+def env_value(name: str) -> str:
+    """設定值：先看程序環境變數，再看 .env；沒有回空字串。讀到的值不寫回 os.environ（子程序會繼承 os.environ，金鑰會外洩給它們）"""
+    global _env_file, _env_path_loaded
+    if os.environ.get(name):
+        return os.environ[name]
+    if _env_file is None or _env_path_loaded != ENV_PATH:
+        try:
+            _env_file = parse_env(ENV_PATH.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            _env_file = {}
+        _env_path_loaded = ENV_PATH
+    return _env_file.get(name, "")
+
+
+def reset_env_cache() -> None:
+    global _env_file, _env_path_loaded
+    _env_file, _env_path_loaded = None, None
+
 
 WAKE_WORD_ENABLED = False  # False＝常啟動，每一句都當指令；True＝句首要有喚醒詞才執行
 WAKE_SESSION_S = 60.0  # 喚醒後的會話長度：這段時間內每一句都不用喚醒詞，且每句都會重新計時

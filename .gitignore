@@ -13,6 +13,7 @@ build/
 # Secrets / local config
 .env
 .env.*
+!.env.example
 
 # macOS
 .DS_Store
