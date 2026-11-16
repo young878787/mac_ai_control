@@ -20,6 +20,9 @@ CASES = [
     # 常用功能（前景視窗的快捷鍵）：整句命中才算完整；後面可能還有『分頁／視窗』的不能早收
     ("關閉視窗", COMPLETE), ("上一頁", COMPLETE), ("全螢幕", COMPLETE), ("存檔", COMPLETE), ("開終端機", COMPLETE),
     ("關掉這個", INCOMPLETE), ("關閉這個", INCOMPLETE), ("開新", INCOMPLETE), ("打開新", INCOMPLETE),
+    # 開已知網站：整句命中才算完整；名稱還沒說完、後面還有東西的不能早收
+    ("打開 YouTube", COMPLETE), ("開油管", COMPLETE), ("上 YouTube", COMPLETE), ("幫我開瀏覽器看 YouTube", COMPLETE), ("開 GitHub 首頁", COMPLETE),
+    ("打開 YouTube 然後", INCOMPLETE), ("打開 YouTube，", COMPLETE), ("打開 You", UNKNOWN), ("去 YouTube 看影片", UNKNOWN), ("打開 YouTube Music", UNKNOWN),
     # 半個詞、聽不懂、聊天：交給預設門檻
     ("打開小", UNKNOWN), ("今天天氣怎麼樣", UNKNOWN), ("我想聽音樂", UNKNOWN), ("你好", UNKNOWN),
     ("", UNKNOWN), ("   ", UNKNOWN), ("，。", UNKNOWN),

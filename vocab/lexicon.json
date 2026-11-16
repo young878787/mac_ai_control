@@ -44,7 +44,7 @@
   ],
   "s2t": {
     "打开": "打開", "开启": "開啟", "开": "開", "关掉": "關掉", "关闭": "關閉", "关": "關",
-    "启动": "啟動", "屏幕": "螢幕", "设置": "設定", "设定": "設定", "设": "設",
+    "启动": "啟動", "屏幕": "螢幕", "设置": "設定", "设定": "設定", "设": "設", "适": "適",
     "搜索": "搜尋", "查询": "查詢", "浏览器": "瀏覽器", "计算器": "小算盤", "计算机": "計算機",
     "备忘录": "備忘錄", "标签": "標籤", "终端": "終端", "静音": "靜音", "静": "靜", "声音": "聲音", "调到": "調到",
     "调成": "調成", "调整": "調整", "调": "調", "锁定": "鎖定", "锁": "鎖", "页面": "頁面",
@@ -95,10 +95,10 @@
   },
   "terms": ["深色模式", "暗黑模式", "夜間模式", "靜音", "鎖定螢幕", "螢幕亮度"],
   "sites": [
-    {"name": "Google", "hosts": ["google.com", "google.com.tw"], "search_url": "https://www.google.com/search?q={q}"},
-    {"name": "Facebook", "hosts": ["facebook.com"], "search_url": "https://www.facebook.com/search/top?q={q}"},
-    {"name": "YouTube", "hosts": ["youtube.com"], "search_url": "https://www.youtube.com/results?search_query={q}"},
-    {"name": "GitHub", "hosts": ["github.com"], "search_url": "https://github.com/search?q={q}"}
+    {"name": "Google", "hosts": ["google.com", "google.com.tw"], "search_url": "https://www.google.com/search?q={q}", "home": "https://www.google.com", "aliases": ["谷歌", "估狗"]},
+    {"name": "Facebook", "hosts": ["facebook.com"], "search_url": "https://www.facebook.com/search/top?q={q}", "home": "https://www.facebook.com", "aliases": ["臉書", "FB"]},
+    {"name": "YouTube", "hosts": ["youtube.com"], "search_url": "https://www.youtube.com/results?search_query={q}", "home": "https://www.youtube.com", "aliases": ["油管", "YT"]},
+    {"name": "GitHub", "hosts": ["github.com"], "search_url": "https://github.com/search?q={q}", "home": "https://github.com", "aliases": []}
   ],
   "app_shortcuts": [
     {"id": "close_window", "label": "關閉視窗", "scope": "一般視窗", "phrases": ["關閉視窗", "關掉視窗", "關視窗", "關閉這個視窗", "關掉這個視窗", "關閉目前的視窗", "關掉目前的視窗", "關閉窗口", "關掉窗口"],

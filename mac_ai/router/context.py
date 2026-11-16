@@ -64,6 +64,34 @@ def parse_host(url: str) -> str:
     return (parts.hostname or "").lower() if parts.scheme in ("http", "https") else ""
 
 
+def _name_re(name: str) -> "re.Pattern":
+    """網站名稱／別名的比對式。拉丁字母名稱要有詞邊界，且後面不能再接英數字詞（『YouTube Music』不是 YouTube、『my-youtube』也不是）；中文別名直接比對"""
+    n = name.lower()
+    if re.fullmatch(r"[a-z0-9 ._\-]+", n):
+        return re.compile(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])(?!\s*[a-z0-9])")
+    return re.compile(re.escape(n))
+
+
+def site_names(site: dict) -> List[str]:
+    return [site["name"], *site.get("aliases", [])]
+
+
+def site_in(text: str) -> Optional[dict]:
+    """句子裡明說的網站（名稱或別名，不分大小寫）；沒有、或同時提到兩個以上網站（對象不明）回傳 None。純函式，不做 IO"""
+    low = text.lower()
+    hit = [site for site in SITES if any(_name_re(n).search(low) for n in site_names(site))]
+    return hit[0] if len(hit) == 1 else None
+
+
+def site_exact(text: str) -> Optional[dict]:
+    """整段文字剛好是某個網站的名稱或別名（不分大小寫）→ 該條目"""
+    low = text.strip().lower()
+    for site in SITES:
+        if any(low == n.lower() for n in site_names(site)):
+            return site
+    return None
+
+
 def site_for(host: str) -> Optional[dict]:
     """host（含子網域）→ 詞庫 sites 的條目"""
     for site in SITES:

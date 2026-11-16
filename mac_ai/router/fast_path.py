@@ -124,6 +124,10 @@ class FastPathMatcher:
     _tab_next_re = re.compile(rf"^(?:(?:切換|跳|切|換)(?:到|去)?)?(?:下一個|下個|下一張|後一個|右邊的?){_TAB}$")
     _tab_prev_re = re.compile(rf"^(?:(?:切換|跳|切|換)(?:到|去)?)?(?:上一個|上個|上一張|前一個|左邊的?){_TAB}$")
     _app_re = re.compile(rf"^(?P<v>{_VERB})(?:一下|個|一個)?\s*(?:那個|這個)?\s*(?P<app>.+)$", _I)
+    # 開已知網站：『打開 YouTube』『上 YouTube』『開瀏覽器看 YouTube』『去油管』『開 GitHub 首頁』。整句只能是「動詞（＋瀏覽器）＋網站名稱（＋網站）」，
+    # 名稱必須整段等於詞庫 sites 的名稱或別名；多的受詞（『去 YouTube 看影片』）不收，交給 LLM（再由 slow_path.site_open_home 放行）
+    _site_re = re.compile(
+        rf"^(?:{_OPEN}|上|去|前往|進入|連到|連上)(?:一下|個)?\s*(?:瀏覽器\s*(?:看|上|去|到|開|打開)?\s*)?(?P<site>.+?)\s*(?P<w>的?(?:網站|網頁|官網|首頁))?$", _I)
     # 選擇多筆結果：『第二個』『打開第三個』『在 Finder 顯示第一個』『最後一個』（一定要有序號，不會和『下一個分頁』混淆）
     _pick_re = re.compile(
         rf"^(?:(?P<open>{_OPEN})|(?P<reveal>顯示|在\s*Finder\s*(?:中)?\s*(?:顯示|打開)))?(?:就是)?"
@@ -167,7 +171,7 @@ class FastPathMatcher:
             return None
         for rule in (
             self._r_front, self._r_tab, self._r_project, self._r_volume, self._r_mute,
-            self._r_brightness, self._r_dark, self._r_lock, self._r_find, self._r_pick, self._r_app,
+            self._r_brightness, self._r_dark, self._r_lock, self._r_find, self._r_pick, self._r_site, self._r_app,
         ):
             m = rule(s, candidates)
             if m is not None:
@@ -362,6 +366,20 @@ class FastPathMatcher:
         elif m["reveal"]:
             args["action"] = "reveal"
         return Match([("pick_choice", args)], intent=Intent("choice", "pick", s, dict(args), "scope_word"))
+
+    def _r_site(self, s: str, candidates: bool) -> Optional[Match]:
+        """開詞庫裡的網站首頁。本機優先：同名 App 已存在（『打開 Google』→ Chrome）就讓給 _r_app，除非句子明說『網站／網頁／官網／首頁』。
+        純比對：不讀前景、不做 IO（開在哪個瀏覽器由執行階段依對象優先順序決定）"""
+        m = self._site_re.match(s)
+        if not m:
+            return None
+        site = context.site_exact(m["site"])
+        if site is None or not site.get("home"):
+            return None
+        if not m["w"] and self.catalog.resolve_app(m["site"]) is not None:
+            return None
+        intent = Intent("web", "open", site["name"], {"query": site["home"]}, "site")
+        return Match([("web_search_or_open_url", {"query": site["home"]})], "exact", f"開網站：{site['name']}", intent)
 
     def _r_app(self, s: str, candidates: bool) -> Optional[Match]:
         m = self._app_re.match(s)

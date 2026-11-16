@@ -1,5 +1,6 @@
 """B3／B4：Fast Path 放寬後的正例（指令序列必須完全相等、且不呼叫 LLM）與反例（絕不誤執行）。
 走完整的 normalize → split → match → 執行，subprocess 與 LLM 皆為假物件。"""
+import subprocess
 import urllib.parse
 
 import pytest
@@ -285,3 +286,79 @@ def test_canonicalize_clause():
     assert c("深色模式打開") == "打開深色模式"
     assert c("把音量調到50") == "把音量調到50"      # 結尾不是動詞，不改寫
     assert c("搜尋如何關閉") == "搜尋如何關閉"      # 含動作詞的主題不改寫
+
+
+# ---------- 開已知網站（_r_site）：整句只有「動詞（＋瀏覽器）＋網站名稱（＋網站）」，不經 LLM ----------
+YT_HOME, FB_HOME, GH_HOME, GOOGLE_HOME = "https://www.youtube.com", "https://www.facebook.com", "https://github.com", "https://www.google.com"
+SITE_HITS = [
+    ("打開 YouTube", YT_HOME), ("打開youtube", YT_HOME), ("開 YouTube", YT_HOME), ("上 YouTube", YT_HOME), ("去 YouTube", YT_HOME),
+    ("幫我開瀏覽器看 YouTube", YT_HOME), ("開瀏覽器上 YouTube", YT_HOME), ("請打開 YouTube 一下", YT_HOME), ("打開 YouTube 網站", YT_HOME),
+    ("打開打開 YouTube", YT_HOME), ("打開ＹＯＵＴＵＢＥ", YT_HOME), ("嗯 打開 YouTube 好不好", YT_HOME),
+    ("開油管", YT_HOME), ("幫我開 yt", YT_HOME), ("打開臉書", FB_HOME), ("開 Facebook", FB_HOME), ("幫我開 FB", FB_HOME),
+    ("去 GitHub", GH_HOME), ("開 GitHub 首頁", GH_HOME), ("進入 GitHub 官網", GH_HOME),
+    ("打開谷歌網站", GOOGLE_HOME), ("開估狗", GOOGLE_HOME),   # 『Google／谷歌』單獨說＝Chrome App（見 test_site_defers_to_same_name_app）
+]
+
+
+@pytest.mark.parametrize("text,home", SITE_HITS, ids=[h[0] for h in SITE_HITS])
+def test_site_open_is_fast_and_opens_the_home_page(monkeypatch, sh, text, home):
+    monkeypatch.setattr(llm_client, "_chat", lambda *a, **k: pytest.fail("不應呼叫 LLM"))
+    out = r.process_voice_command(text)
+    assert sh == [["open", home]] and [s["kind"] for s in out["steps"]] == ["fast"] and out["steps"][0]["status"] == "ok"
+    assert out["steps"][0]["intent"] == {"domain": "web", "verb": "open", "slots": {"query": home}, "source": "site"}
+
+
+SITE_MISSES = [
+    "去 YouTube 看影片", "打開 YouTube Music", "打開 You", "打開 Tube", "打開 YouTube 跟 Facebook", "打開瀏覽器",   # 多的受詞、別的名稱、半個詞
+    "不要開 YouTube", "別打開臉書", "剛剛開了 YouTube", "我昨天去 GitHub", "YouTube 是什麼", "打開 YouTube 嗎", "為什麼打開 YouTube",  # 守門
+    "YouTube", "油管", "我說的是 YouTube", "沒有，我要開的是 YouTube",   # 沒有開啟動詞／糾正句
+]
+
+
+@pytest.mark.parametrize("text", SITE_MISSES)
+def test_site_misses_never_open_a_page(monkeypatch, sh, text):
+    m = r.FastPathMatcher()
+    assert all(m.match(c) is None or m.match(c).actions[0][0] != "web_search_or_open_url" for c in m.split_clauses(r.normalize_utterance(text)))
+    monkeypatch.setattr(llm_client, "_chat", lambda *a, **k: (_ for _ in ()).throw(llm_client.LLMUnavailable("測試")))
+    r.process_voice_command(text)
+    assert [c for c in sh if c[0] == "open" and c[-1].startswith("http")] == []   # 沒有開任何網頁（開 App 是另一回事）
+
+
+def test_site_defers_to_same_name_app(monkeypatch, sh, installed_apps):
+    monkeypatch.setattr(llm_client, "_chat", lambda *a, **k: pytest.fail("不應呼叫 LLM"))
+    r.process_voice_command("開 Google")                 # 詞庫別名＝Chrome App
+    assert sh == [APP(CHROME)]
+    sh.clear()
+    installed_apps({"YouTube": "YouTube"})               # 已安裝同名 App：本機優先
+    r.process_voice_command("打開 YouTube")
+    assert sh == [APP("YouTube")]
+    sh.clear()
+    r.process_voice_command("打開 YouTube 網站")          # 明說『網站』：一律開網站
+    assert sh == [["open", YT_HOME]]
+
+
+def test_site_match_is_a_pure_function(monkeypatch, sh):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("match() 不得執行任何外部指令"))
+    m = r.FastPathMatcher()
+    for text, _ in SITE_HITS:
+        for clause in m.split_clauses(r.normalize_utterance(text)):
+            m.match(clause)
+
+
+@pytest.mark.parametrize("text", ["打開 YouTube", "開瀏覽器看 YouTube"])
+def test_site_open_target_browser_priority(front, sh, text):
+    front("Safari")
+    r.process_voice_command(text)
+    assert sh == [["open", "-a", "Safari", YT_HOME]]          # 前景是瀏覽器：開在那裡
+    sh.clear()
+    front("Finder")
+    r.process_voice_command(text)
+    assert sh == [["open", YT_HOME]]                           # 前景不是瀏覽器：預設
+    sh.clear()
+    front(None)
+    r.process_voice_command(text)
+    assert sh == [["open", YT_HOME]]                           # 讀不到：預設，不猜
+    sh.clear()
+    front("Safari")
+    r.process_voice_command("打開 Chrome，" + text)             # 同句剛開的優先於前景
+    assert sh == [APP(CHROME), ["open", "-a", CHROME, YT_HOME]]
