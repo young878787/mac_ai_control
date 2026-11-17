@@ -250,7 +250,8 @@ python scripts/stt_bench.py list             # bench 一覽
 ## 測試
 
 ```bash
-pytest              # 離線測試（預設，含錯字語料 tests/test_typo_offline.py）
+pytest              # 離線測試（預設，含錯字語料 tests/flow/test_typo.py）
+pytest -m unit      # 只跑單元層（約 1.4 秒，改程式時的快速回饋）；另有 -m flow（整條路由）、-m runtime（真執行緒／socket）
 pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
 pytest -m cloud -s  # 連真的雲端模型（需 .env 金鑰，約 200 次請求會產生費用）：規劃正確率／延遲、否定句、誠實、看圖、代名詞動作
 pytest -m app -v    # 真實 App 驗收：在 Safari、Finder、Terminal、VS Code 上實際執行並讀回狀態（會佔用螢幕約 2 分鐘）
@@ -279,7 +280,7 @@ python scripts/acceptance.py list                   # 歷次結果
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
 | `vocab/stt_hints.txt` | 由 `build_vocab.py` 產生，餵給語音辨識當提示詞 |
 | `docs/` | 設計與實作計畫（端點偵測、桌面角色與喚醒會話、本機優先的找東西分流、前景視窗上下文與常用功能、端雲協同） |
-| `tests/` | 離線測試與 live 測試 |
+| `tests/` | 分層測試：`unit/` 單元、`flow/` 整條路由、`runtime/` 真執行緒與 socket、`real/` live／cloud／app 實測；共用假物件與語料在 `support/` |
 
 修改 `vocab/lexicon.json` 後，`main.py` 啟動時會自動重新產生詞表；也可以手動執行 `python build_vocab.py`。
 

@@ -7,9 +7,8 @@ import pytest
 import mac_ai.router as r
 from mac_ai import config
 from mac_ai.router import cloud_client, context, lexicon, memory, native, normalize
-
-REAL_URLOPEN = urllib.request.urlopen  # 需要真的連線的測試（本機 socket）用這個
-REAL_READ_FRONT, REAL_READ_HOST = context.read_front, context.read_host  # 測讀取函式本身的測試用這個
+from support.clock import Clock
+from support.cloud import KEY
 
 
 @pytest.fixture(autouse=True)
@@ -40,18 +39,24 @@ def _isolate_router(request, monkeypatch, tmp_path):
 
 
 @pytest.fixture
+def clock():
+    """可注入的假時鐘（support.clock.Clock）：clock.now += 秒數 推進，時間相關邏輯不要 sleep"""
+    return Clock()
+
+
+@pytest.fixture
 def cloud(monkeypatch, tmp_path):
     """假雲端：寫一個暫存 .env（金鑰 sk-TEST-7f3a9c）並把 cloud_client._post 換成假的。
     cloud.reply＝下一次回應的 message（dict），可設成函式 (body)→message 或 Exception；cloud.requests 記錄每次請求的 body"""
     env = tmp_path / "cloud.env"
-    env.write_text("AI_API_URL=https://cloud.test\nAI_MODEL=TEST-LLM\nAI_API_KEY=sk-TEST-7f3a9c\n", encoding="utf-8")
+    env.write_text(f"AI_API_URL=https://cloud.test\nAI_MODEL=TEST-LLM\nAI_API_KEY={KEY}\n", encoding="utf-8")
     env.chmod(0o600)
     monkeypatch.setattr(config, "ENV_PATH", env)
     config.reset_env_cache()
     cloud_client.reset()
 
     class Fake:
-        key = "sk-TEST-7f3a9c"
+        key = KEY
         reply = {"content": "好的～"}
         requests: list = []
 
@@ -188,13 +193,24 @@ def find_env(monkeypatch, tmp_path):
     return env
 
 
+class ShCalls(list):
+    """sh 記錄的指令清單；sh.fail(cmd, ..., stderr=) 讓指定指令回傳結束碼 1"""
+    failing = ()
+    stderr = "boom"
+
+    def fail(self, *cmds, stderr="boom"):
+        self.failing, self.stderr = cmds, stderr
+
+
 @pytest.fixture
 def sh(monkeypatch):
-    """記錄所有 subprocess.run 呼叫，不真的執行（一律回傳結束碼 0）"""
-    calls = []
+    """記錄所有 subprocess.run 呼叫，不真的執行（預設一律回傳結束碼 0；用 sh.fail(指令) 讓某些指令失敗）"""
+    calls = ShCalls()
 
     def fake_run(cmd, **kw):
         calls.append(cmd)
+        if cmd in calls.failing:
+            return subprocess.CompletedProcess(cmd, 1, "", calls.stderr)
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -211,3 +227,14 @@ def projects(monkeypatch, tmp_path):
     monkeypatch.setitem(r.LEXICON, "projects", [
         {"name": "mac_ai_control", "aliases": ["語音助手"], "path": str(tmp_path / "mac_ai_control")}])
     return tmp_path
+
+
+LAYERS = ("unit", "flow", "runtime")  # tests/ 下的分層目錄；real/ 另有 live／cloud／app marker
+
+
+def pytest_collection_modifyitems(items):
+    """依所在目錄自動加上層級 marker：pytest -m unit（快速回饋）、-m "unit or flow"…"""
+    for item in items:
+        layer = item.path.parent.name
+        if layer in LAYERS:
+            item.add_marker(getattr(pytest.mark, layer))

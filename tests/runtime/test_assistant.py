@@ -1,0 +1,285 @@
+"""assistant：CommandRouter、utt_id 對應、command_worker 單執行緒依序、假麥克風→假 STT server→閘門→執行的端到端"""
+import queue
+import threading
+import time
+from urllib.parse import quote
+
+import pytest
+
+import mac_ai.router as r
+from mac_ai import config
+from mac_ai.assistant import CommandRouter, command_worker, run_voice_loop
+from mac_ai.wake import WakeGate
+from support.stt import FakeAudio, FakeSttServer, wait_until
+
+
+@pytest.fixture
+def commands():
+    return queue.Queue()
+
+
+@pytest.fixture
+def said():
+    return []
+
+
+@pytest.fixture
+def router(clock, commands, said):
+    return CommandRouter(WakeGate(["露西婭", "露醬"], session_s=8.0, clock=clock, enabled=True), commands, said.append)
+
+
+def queued(commands):
+    return list(commands.queue)
+
+
+# ---------- CommandRouter ----------
+@pytest.mark.parametrize("kind", ["utterance", "final"])
+def test_wake_word_plus_command_is_queued_without_the_wake_word(router, commands, said, kind):
+    router({"type": kind, "text": "露醬，打開小算盤"})
+    assert queued(commands) == ["打開小算盤"] and said == []
+
+
+@pytest.mark.parametrize("kind", ["utterance", "final"])
+def test_sentence_without_wake_word_is_shown_dimmed_and_not_queued(router, commands, said, kind):
+    router({"type": kind, "text": "打開小算盤"})
+    assert queued(commands) == []
+    assert said == ["\033[90m（未喚醒）打開小算盤\033[0m"]
+
+
+def test_wake_word_only_announces_session_then_following_sentences_are_queued(router, commands, said, clock):
+    router({"type": "final", "text": "露西婭"})
+    assert "已喚醒" in said[0] and "8 秒" in said[0] and queued(commands) == []
+    clock.now += 3
+    router({"type": "final", "text": "把音量調到 30"})
+    assert queued(commands) == ["把音量調到 30"]
+    clock.now += 3  # 距上一句 3 秒，會話仍在（每句重新計時）
+    router({"type": "final", "text": "打開小算盤"})
+    assert queued(commands) == ["把音量調到 30", "打開小算盤"]
+
+
+def test_partial_never_executes_and_only_shows_when_enabled(clock, commands, said):
+    shown = []
+    r = CommandRouter(WakeGate(["露醬"], clock=clock, enabled=True), commands, said.append, shown.append)
+    r({"type": "partial", "text": "露醬打開小算"})
+    assert shown == ["露醬打開小算"] and queued(commands) == []
+    r({"type": "connected"})
+    assert said[-1].startswith("\r\033[K")  # 有顯示 partial 時，訊息前先清掉那一行
+    CommandRouter(WakeGate(["露醬"], clock=clock, enabled=True), commands, said.append)({"type": "partial", "text": "x"})  # 不報錯
+
+
+def test_blank_text_is_ignored_silently(router, commands, said):
+    router({"type": "final", "text": "  "})
+    router({"type": "final"})
+    assert queued(commands) == [] and said == []
+
+
+def test_connection_and_error_events_are_reported(router, said):
+    router({"type": "connected"})
+    router({"type": "disconnected", "message": "refused"})
+    router({"type": "error", "code": "too_many_sessions", "message": "limit"})
+    router({"type": "session_restarted"})  # 透明重開，不需要顯示
+    assert len(said) == 3
+    assert "已連上" in said[0] and "refused" in said[1] and "too_many_sessions" in said[2]
+
+
+# ---------- utt_id：讓 latency.jsonl 與 commands.jsonl 對得起來 ----------
+def test_voice_command_in_queue_is_a_plain_str_that_carries_utt_id_and_enqueue_time(router, commands):
+    router({"type": "final", "text": "露醬，打開小算盤", "utt_id": 7})
+    item = commands.get_nowait()
+    assert item == "打開小算盤" and isinstance(item, str) and item.utt_id == 7 and item.enqueued_at > 0
+
+
+def test_event_without_utt_id_and_ui_typed_command_have_no_utt_id(router, commands):
+    router({"type": "utterance", "text": "露醬，打開小算盤"})
+    router.on_ui_message({"type": "command", "text": "打開計算機"})
+    assert [getattr(c, "utt_id", None) for c in list(commands.queue)] == [None, None]
+
+
+def test_worker_command_log_carries_utt_id_and_queue_ms_for_voice_commands_only(commands):
+    from mac_ai.assistant import SpokenCommand
+    logged = []
+    voice = SpokenCommand("打開小算盤")
+    voice.utt_id, voice.enqueued_at = 3, time.monotonic() - 0.05
+    commands.put(voice)
+    commands.put("UI 打的字")
+    stop = threading.Event()
+    t = threading.Thread(target=command_worker, args=(commands, lambda c: None, stop, None, None, logged.append), daemon=True)
+    t.start()
+    assert wait_until(lambda: len(logged) == 2)
+    stop.set()
+    t.join(timeout=2)
+    assert logged[0]["utt_id"] == 3 and logged[0]["queue_ms"] >= 50 and logged[0]["command"] == "打開小算盤"
+    assert "utt_id" not in logged[1] and "queue_ms" not in logged[1]
+
+
+def test_worker_failure_record_also_carries_utt_id(commands, capsys):
+    from mac_ai.assistant import SpokenCommand
+    logged = []
+    voice = SpokenCommand("x")
+    voice.utt_id, voice.enqueued_at = 9, time.monotonic()
+    commands.put(voice)
+
+    def boom(cmd):
+        raise RuntimeError("壞掉了")
+
+    stop = threading.Event()
+    t = threading.Thread(target=command_worker, args=(commands, boom, stop, None, None, logged.append), daemon=True)
+    t.start()
+    assert wait_until(lambda: logged)
+    stop.set()
+    t.join(timeout=2)
+    assert logged[0]["utt_id"] == 9 and logged[0]["ok"] is False and "queue_ms" in logged[0]
+
+
+# ---------- command_worker ----------
+def run_worker(commands, execute):
+    stop = threading.Event()
+    t = threading.Thread(target=command_worker, args=(commands, execute, stop), daemon=True)
+    t.start()
+    return stop, t
+
+
+def test_worker_runs_commands_in_order(commands):
+    done = []
+    stop, t = run_worker(commands, done.append)
+    for c in ("a", "b", "c"):
+        commands.put(c)
+    assert wait_until(lambda: done == ["a", "b", "c"])
+    stop.set()
+    t.join(timeout=2)
+    assert not t.is_alive()
+
+
+def test_worker_survives_a_failing_command(commands, capsys):
+    done = []
+
+    def execute(cmd):
+        if cmd == "boom":
+            raise RuntimeError("壞掉了")
+        done.append(cmd)
+
+    stop, t = run_worker(commands, execute)
+    for c in ("a", "boom", "b"):
+        commands.put(c)
+    assert wait_until(lambda: done == ["a", "b"])
+    stop.set()
+    t.join(timeout=2)
+    assert "壞掉了" in capsys.readouterr().err
+
+
+# ---------- 端到端：假麥克風 → 假 STT server → 閘門 → 執行 ----------
+def test_voice_loop_end_to_end():
+    server = FakeSttServer(events=[
+        {"type": "utterance", "text": "今天天氣很好"},  # 沒喚醒（會話尚未開始）
+        {"type": "utterance", "text": "露醬，打開小算盤"},
+        {"type": "final", "text": "露西婭"},
+        {"type": "final", "text": "把音量調到 30"},
+    ])
+    executed, said = [], []
+    stop = threading.Event()
+    t = threading.Thread(target=run_voice_loop, args=(FakeAudio(), executed.append, stop),
+                         kwargs={"url": server.url, "say": said.append, "gate": WakeGate(enabled=True)}, daemon=True)
+    t.start()
+    try:
+        assert wait_until(lambda: executed == ["打開小算盤", "把音量調到 30"])
+        assert any("（未喚醒）今天天氣很好" in s for s in said)
+    finally:
+        stop.set()
+        t.join(timeout=5)
+        server.stop()
+    assert not t.is_alive()
+
+
+def test_disabled_gate_queues_every_sentence_and_prints_no_unwoken_notice(commands, said):
+    r = CommandRouter(WakeGate(["露醬"], enabled=False), commands, said.append)
+    r({"type": "final", "text": "打開小算盤"})
+    r({"type": "final", "text": "。"})
+    assert queued(commands) == ["打開小算盤"] and said == []
+
+
+# ---------- 端點偵測模式 ----------
+class _ScriptedVad:
+    """每個 chunk 一窗：前 8 窗是語音，之後靜音"""
+
+    def __init__(self):
+        self.n = 0
+        self.infer_ms = [0.1]
+
+    def feed(self, pcm):
+        self.n += 1
+        return [0.9 if self.n <= 8 else 0.02]
+
+    def reset(self):
+        self.n = 0
+
+
+def test_voice_loop_client_endpoint_mode_flushes_when_sentence_is_done_and_logs_latency(monkeypatch):
+    import mac_ai.assistant as assistant
+
+    logged = []
+
+    class _Log:
+        def write(self, record):
+            logged.append(record)
+
+    monkeypatch.setattr(assistant, "SileroVad", _ScriptedVad)
+    monkeypatch.setattr(assistant, "JsonlLog", _Log)
+    final = {"type": "final", "text": "打開小算盤", "timing": {"reason": "client_flush", "pre_delay_ms": 100, "finish_ms": 60}}
+    server = FakeSttServer(after_frames={5: [{"type": "partial", "text": "打開小算盤"}]}, reply_on_flush=final)
+    executed, stop = [], threading.Event()
+    t = threading.Thread(target=run_voice_loop, args=(FakeAudio([b"\x01\x00" * 512] * 400, pace=0.01), executed.append, stop),
+                         kwargs={"url": server.url, "say": lambda m: None, "gate": WakeGate(enabled=False),
+                                 "endpoint_mode": "client"}, daemon=True)
+    t.start()
+    try:
+        assert wait_until(lambda: executed == ["打開小算盤"] and logged, timeout=8)
+        assert server.flush_at_frame and server.configs[0]["vad_flush_seconds"] == config.EP_SERVER_BACKUP_FLUSH_S
+        assert logged[0]["mode"] == "client" and logged[0]["reason"] in ("complete", "default")
+        assert executed[0].utt_id == logged[0]["utt_id"] == 1  # 整條鏈：STT final → latency 紀錄 → 佇列裡的指令用同一個編號
+    finally:
+        stop.set()
+        t.join(timeout=5)
+        server.stop()
+
+
+def test_voice_loop_default_mode_does_not_load_vad_or_send_flush(monkeypatch):
+    import mac_ai.assistant as assistant
+
+    monkeypatch.setattr(assistant, "SileroVad", lambda: pytest.fail("server 模式不該載入 VAD"))
+    server = FakeSttServer(events=[{"type": "final", "text": "打開小算盤"}])
+    executed, stop = [], threading.Event()
+    t = threading.Thread(target=run_voice_loop, args=(FakeAudio([b"\x01\x00" * 512] * 5), executed.append, stop),
+                         kwargs={"url": server.url, "say": lambda m: None, "gate": WakeGate(enabled=False),
+                                 "endpoint_mode": "server"}, daemon=True)
+    t.start()
+    try:
+        assert wait_until(lambda: executed == ["打開小算盤"])
+        assert server.flush_at_frame == []
+    finally:
+        stop.set()
+        t.join(timeout=5)
+        server.stop()
+
+
+# ---------- 取代人工驗收 U2：語音流程（假 STT server → 閘門 → 佇列 → 執行）也用前景視窗 ----------
+def test_u2_voice_loop_uses_front_window(sh, front):
+    import threading
+
+    from support.stt import FakeAudio, FakeSttServer, wait_until
+
+    from mac_ai.assistant import run_voice_loop
+    from mac_ai.wake import WakeGate
+    front("Safari", host="www.facebook.com")
+    server = FakeSttServer(events=[{"type": "final", "text": "查貓咪專頁"}, {"type": "final", "text": "金音"}])
+    done, stop = [], threading.Event()
+    t = threading.Thread(target=run_voice_loop, args=(FakeAudio(), lambda text: done.append(r.process_voice_command(text)), stop),
+                         kwargs={"url": server.url, "say": lambda s: None, "gate": WakeGate(enabled=False)}, daemon=True)
+    t.start()
+    try:
+        assert wait_until(lambda: len(done) == 2)
+    finally:
+        stop.set()
+        t.join(timeout=5)
+        server.stop()
+    assert sh == [["open", "-a", "Safari", f"https://www.facebook.com/search/top?q={quote('貓咪專頁')}"],
+                  ["osascript", "-e", "set volume output muted true"]]  # 第二句是錯字『金音』→ 靜音

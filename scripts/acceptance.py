@@ -76,7 +76,7 @@ def summarize(tests: Dict[str, dict]) -> dict:
 
 def typo_rates(tests: Dict[str, dict]) -> Dict[str, dict]:
     """test_typo_offline 的參數 id 前綴是類別代號 → {類別: {"ok", "n", "rate"}}"""
-    from test_typo_offline import CATEGORIES
+    from support.typo_corpus import CATEGORIES
     rates: Dict[str, dict] = {}
     for nodeid, t in tests.items():
         if "test_typo_is_corrected_by_backend[" not in nodeid:
@@ -103,7 +103,7 @@ def dist(values: List[float]) -> dict:
 
 def routing_latency(reps: int = 20) -> dict:
     """路由耗時（不執行任何動作）：錯字語料每句 正規化＋切句＋Fast Path 比對，取每句中位數再算分布"""
-    from test_typo_offline import CASES
+    from support.typo_corpus import CASES
 
     from mac_ai.router import catalog
     from mac_ai.router.fast_path import FastPathMatcher
