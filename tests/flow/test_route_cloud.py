@@ -78,7 +78,11 @@ def test_cloud_plan_runs_same_commands_as_local_plan(cloud, local, sh):
     [tc("rm_rf", {})],
     [tc("control_mac_app", {"app_name": "FooBarApp", "action": "open"})],
     [tc("set_system_volume", {"level": 30, "bogus": 1})],
-    [tc("front_action", {"id": "close_window"})],       # LOCAL_TOOLS，不在 TOOLS_SCHEMA
+    [tc("front_action", {"id": "rm_everything"})],      # 雲端可用，但 id 必須是詞庫常用功能
+    [tc("front_action", {"id": "close_window", "fallback": [["control_mac_app", {"app_name": "Safari", "action": "quit"}]]})],  # fallback 只給 Fast Path
+    [tc("front_action", {"id": "terminal_new_tab"})],   # 沒有說法的內部 id 不給雲端
+    [tc("site_search", {"query": ""})],
+    [tc("context_search", {"query": "x"})],             # 本機工具名稱：雲端看不到
     [tc("find_file", {"query": "x"})],
 ])
 def test_cloud_tool_calls_pass_the_same_trust_boundary(cloud, sh, calls):
@@ -139,11 +143,14 @@ def test_cloud_request_shape(cloud):
     assert body["messages"][1]["content"].startswith("今天心情不錯")  # 原句在最前面、不改字
 
 
-def test_cloud_tools_differ_from_local_schema_only_in_chat_reply_text():
-    pairs = [(c, t) for c, t in zip(cloud_client.CLOUD_TOOLS, r.TOOLS_SCHEMA) if c != t]
-    assert [t["function"]["name"] for _, t in pairs] == ["chat_reply"] and len(cloud_client.CLOUD_TOOLS) == len(r.TOOLS_SCHEMA)
+def test_cloud_tools_differ_from_local_schema_only_in_chat_reply_text_and_cloud_only_tools():
+    n = len(r.TOOLS_SCHEMA)
+    pairs = [(c, t) for c, t in zip(cloud_client.CLOUD_TOOLS[:n], r.TOOLS_SCHEMA) if c != t]
+    assert [t["function"]["name"] for _, t in pairs] == ["chat_reply"]
+    assert [t["function"]["name"] for t in cloud_client.CLOUD_TOOLS[n:]] == ["front_action", "site_search"]
+    assert "front_action" not in {t["function"]["name"] for t in r.TOOLS_SCHEMA}  # 本機模型看不到
     assert r.TOOLS_SCHEMA[-1]["function"]["parameters"]["properties"] == {}  # 本機（prefix cache）的 schema 不動
-    assert cloud_client.CLOUD_TOOLS[-1]["function"]["parameters"]["required"] == ["text"]
+    assert cloud_client.CLOUD_TOOLS[n - 1]["function"]["parameters"]["required"] == ["text"]
 
 
 def test_chat_reply_text_rides_along_with_tools_and_is_adopted_when_all_succeed(cloud, sh):
@@ -500,3 +507,80 @@ def test_context_site_name_matching():
     assert names == {"打開 YouTube": "YouTube", "開油管": "YouTube", "去 FB": "Facebook", "幫我開 yt": "YouTube",
                      "打開 YouTube Music": None, "myyoutube": None, "開 Facebook 跟 YouTube": None}
     assert context.site_exact(" youtube ")["name"] == "YouTube" and context.site_exact("YouTube Music") is None
+
+
+# ---------- 雲端的目前視窗工具（front_action、site_search）----------
+def test_cloud_front_action_runs_on_the_front_window(cloud, sh, native_calls, front):
+    front("Safari")
+    cloud.reply = {"tool_calls": [tc("front_action", {"id": "scroll_down"})], "content": "好喔～"}
+    out = r.process_voice_command("再往下")
+    (step,) = out["steps"]
+    assert step["route"] == "cloud" and step["status"] == "ok" and native_calls == ["key 121"]
+    assert step["logs"][-2].endswith("✅ Safari：往下捲") and out["replies"] == ["好喔～"]
+
+
+def test_cloud_front_action_out_of_scope_does_nothing(cloud, sh, native_calls, front):
+    front("Finder")
+    cloud.reply = {"tool_calls": [tc("front_action", {"id": "scroll_down"})], "content": "好喔～"}
+    out = r.process_voice_command("再往下")
+    assert native_calls == [] and out["steps"][0]["status"] == "exec_failed" and out["replies"] == []
+
+
+def test_memory_tells_cloud_which_front_action_ran_last(cloud, sh, native_calls, front):
+    front("Safari")
+    r.process_voice_command("往下滑")
+    cloud.reply = {"content": "好～"}
+    r.process_voice_command("再往下")
+    assert "front_action(id=scroll_down) ✅" in cloud.requests[-1]["messages"][1]["content"]
+
+
+def test_cloud_front_action_dropped_for_information_question(cloud, sh, native_calls, front):
+    front("Safari")
+    cloud.reply = {"tool_calls": [tc("front_action", {"id": "fullscreen"})], "content": "按綠色按鈕就可以喔"}
+    out = r.process_voice_command("要怎麼讓視窗變成全螢幕")
+    assert native_calls == [] and out["steps"][0]["guard_dropped"] == ["front_action"]
+
+
+def test_local_model_cannot_call_cloud_only_tools(local, sh, native_calls, front):
+    front("Safari")
+    local.plan = {"tool_calls": [tc("front_action", {"id": "scroll_down"}), tc("site_search", {"query": "貓"})]}
+    out = r.process_voice_command("再往下")
+    assert native_calls == [] and sh == [] and out["steps"][0]["status"] == "rejected"
+
+
+def test_cloud_site_search_uses_the_site_in_front(cloud, sh, front):
+    front("Safari", host="www.youtube.com")
+    cloud.reply = {"tool_calls": [tc("site_search", {"query": "貓咪影片"})]}
+    out = r.process_voice_command("在這裡幫我找貓咪影片好不好")
+    assert sh[-1] == ["open", "-a", "Safari", "https://www.youtube.com/results?search_query=%E8%B2%93%E5%92%AA%E5%BD%B1%E7%89%87"]
+    assert out["steps"][0]["status"] == "ok"
+
+
+def test_cloud_site_search_without_site_falls_back_to_web_search(cloud, sh, front):
+    front("Finder")
+    cloud.reply = {"tool_calls": [tc("site_search", {"query": "貓咪影片"})]}
+    r.process_voice_command("在這裡幫我找貓咪影片好不好")
+    assert sh[-1][0] == "open" and "google.com/search" in sh[-1][-1]
+
+
+def test_cloud_site_search_needs_search_intent(cloud, sh, front):
+    front("Safari", host="www.youtube.com")
+    cloud.reply = {"tool_calls": [tc("site_search", {"query": "貓咪"})]}
+    out = r.process_voice_command("沒有我說的是這網頁")
+    assert [c for c in sh if c[0] == "open"] == [] and out["steps"][0]["status"] == "rejected"
+    assert any("site_search 被略過" in l for l in out["steps"][0]["logs"])
+
+
+@pytest.mark.parametrize("text", ["把它關掉", "它關掉", "幫我把它關閉", "把它關起來", "把它退出", "把它關"])
+def test_close_words_never_become_minimize(cloud, sh, native_calls, front, text):
+    front("Safari")
+    cloud.reply = {"tool_calls": [tc("front_action", {"id": "minimize"})]}
+    out = r.process_voice_command(text)
+    assert native_calls == [] and out["steps"][0]["status"] == "rejected"
+    assert any("不是最小化" in l for l in out["steps"][0]["logs"])
+
+
+def test_put_away_may_minimize(cloud, sh, native_calls, front):
+    front("Safari")
+    cloud.reply = {"tool_calls": [tc("front_action", {"id": "minimize"})]}
+    assert r.process_voice_command("把它收起來")["steps"][0]["status"] == "ok" and native_calls == ["window minimize"]

@@ -274,6 +274,26 @@ def test_front_action_guards_and_near_misses(text):
     assert m is None or all(name != "front_action" for name, _ in m.actions), text
 
 
+@pytest.mark.parametrize("text,sid", [
+    ("再往下滑", "scroll_down"), ("多往下滑", "scroll_down"), ("繼續往下滑", "scroll_down"), ("往下滑一點", "scroll_down"),
+    ("往下滑多一點", "scroll_down"), ("往下翻", "scroll_down"), ("滑下去", "scroll_down"), ("捲下去", "scroll_down"),
+    ("再往上滑一點", "scroll_up"), ("往上翻", "scroll_up"), ("再放大一點", "zoom_in"), ("稍微縮小", "zoom_out"),
+    ("幫我再往下滑一下", "scroll_down"),
+])
+def test_front_action_with_degree_words(text, sid):
+    """常用功能說法前後多了『再／多／繼續／稍微』『一點／多一點』：拿掉後整句等於詞庫說法才命中"""
+    m = FastPathMatcher().match(text)
+    assert m is not None and m.actions == [("front_action", {"id": sid})], text
+
+
+@pytest.mark.parametrize("text", [
+    "往下", "往上", "再往下", "再一點", "多", "再", "不要再往下滑", "別再往下滑了", "再往下滑嗎", "怎麼再放大一點", "再往下滑到底",
+])
+def test_front_action_degree_words_near_misses(text):
+    m = FastPathMatcher().match(text)
+    assert m is None or all(name != "front_action" for name, _ in m.actions), text
+
+
 @pytest.mark.parametrize("text,front_app,expected", [
     ("開終端機", "Finder", [["open", "-a", "Terminal"]]),        # 前景不是編輯器：照舊開 Terminal.app
     ("開終端機", None, [["open", "-a", "Terminal"]]),

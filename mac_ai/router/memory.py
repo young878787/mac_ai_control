@@ -14,8 +14,11 @@ REPLY_MAX_CHARS = 80
 
 
 def call_text(name: str, args: dict, ok: bool) -> str:
-    """給模型看的一筆工具紀錄。不在 TOOLS_SCHEMA 的本機工具只留名稱（參數可能有路徑、搜尋字）"""
+    """給模型看的一筆工具紀錄。不在 TOOLS_SCHEMA 的本機工具只留名稱（參數可能有路徑、搜尋字）；
+    front_action 留功能代號（詞庫的 id，雲端才看得出『再往下』要重複哪個操作）"""
     shown = ", ".join(f"{k}={v}" for k, v in args.items()) if name in _SCHEMA_TOOLS else ""
+    if name == "front_action":
+        shown = f"id={args.get('id')}"
     return f"{name}({shown}) {'✅' if ok else '❌'}"
 
 

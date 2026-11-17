@@ -232,9 +232,12 @@ def test_pronoun_actions_hit_the_right_app(monkeypatch):
             memory.STORE.clear()
             r.process_voice_command(first)
             ran.clear()
-            r.process_voice_command(follow)
+            out = r.process_voice_command(follow)
             quits = [c for c in ran if c[0] == "osascript" and " to quit" in c[-1]]
+            minimized = any("front_action({'id': 'minimize'})" in l for s in out["steps"] for l in s["logs"])
             if len(quits) == 1 and f'"{app}"' in quits[0][-1]:
+                right += 1
+            elif "收起來" in follow and minimized and not quits:  # 2026-11-17 使用者決定：『收起來』最小化也可以；『關掉』類一定要關（slow_path._CLOSE_RE 守門）
                 right += 1
             elif quits:
                 wrong_target += 1

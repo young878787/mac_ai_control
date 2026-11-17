@@ -11,6 +11,7 @@ import urllib.request
 from typing import List, Optional, Tuple
 
 from mac_ai import config
+from mac_ai.router.context import SHORTCUTS
 from mac_ai.router.hant import hans_to_hant
 from mac_ai.router.normalize import to_traditional
 from mac_ai.router.tools import TOOLS_SCHEMA
@@ -36,6 +37,9 @@ CLOUD_SYSTEM_PROMPT = (
     "<rule>「打開瀏覽器查某事」只呼叫 web_search_or_open_url，不另外開瀏覽器。</rule>\n"
     "<rule>只有使用者明說「專案」時才呼叫 open_project。</rule>\n"
     "<rule>使用者要看、讀、翻譯、解釋或總結畫面內容時呼叫 read_screen；畫面內容由程式另外讀取並回覆。</rule>\n"
+    "<rule>捲動、翻頁、放大縮小、播放暫停、全螢幕、關閉視窗這類對使用者正在看的視窗的操作，呼叫 front_action；"
+    "「再往下」「多滑一點」這類延續說法，依最近對話判斷要重複哪個操作。</rule>\n"
+    "<rule>使用者要在正在看的網站裡找東西時呼叫 site_search；明說 Google、上網或要開網址時用 web_search_or_open_url。</rule>\n"
     "<rule>純聊天或提問時不呼叫工具，直接用文字回答。</rule>\n"
     "<rule>同一句同時有操作與聊天時，呼叫操作的工具，並呼叫 chat_reply，把回答聊天部分的話放在 text（只要有呼叫工具，文字回覆就不會顯示）。</rule>\n"
     "</tools>\n"
@@ -55,8 +59,24 @@ CLOUD_VISION_SYSTEM_PROMPT = (
 )
 
 
+# 只給雲端的工具（本機 4bit 模型看不到：加了會誤判，也會拖慢 prefix cache）。執行時對應到本機工具，參數只有 schema 裡的這些
+FRONT_ACTION_IDS = [e["id"] for e in SHORTCUTS.values() if e["phrases"]]  # 沒有說法的（terminal_new_tab）只給 Fast Path 內部用
+CLOUD_ONLY_TOOLS = [
+    {"type": "function", "function": {
+        "name": "front_action",
+        "description": "對使用者正在看的視窗（最前面的 App）執行常用功能；功能不支援目前的 App 時程式會回報。id："
+                       + "、".join(f"{e['id']}＝{e['label']}（{e['scope']}）" for e in SHORTCUTS.values() if e["phrases"]),
+        "parameters": {"type": "object", "properties": {"id": {"type": "string", "enum": FRONT_ACTION_IDS}}, "required": ["id"]}}},
+    {"type": "function", "function": {
+        "name": "site_search",
+        "description": "在使用者正在看的網站裡搜尋（例如停在 YouTube 就搜 YouTube）；不是支援站內搜尋的網站時改用一般網頁搜尋。",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "搜尋關鍵字"}}, "required": ["query"]}}},
+]
+CLOUD_TOOL_TARGETS = {"site_search": "context_search"}  # 雲端工具名稱 → 本機執行的工具（front_action 同名）
+
+
 def _cloud_tools() -> list:
-    """雲端用的工具清單：和本機 TOOLS_SCHEMA 相同，只有 chat_reply 多一個 text 參數。
+    """雲端用的工具清單：本機 TOOLS_SCHEMA（只有 chat_reply 多一個 text 參數）＋只給雲端的 CLOUD_ONLY_TOOLS。
     實測（2026-11-16，19 句動作＋聊天的混合句）：只要有 tool_calls，這個模型就不寫文字回覆（三種提示詞都 0/19）；
     改成 chat_reply(text) 後 19/19，其他類別不變。本機的 TOOLS_SCHEMA（prefix cache）不動"""
     tools = copy.deepcopy(TOOLS_SCHEMA)
@@ -66,10 +86,11 @@ def _cloud_tools() -> list:
             fn["description"] = "同一句同時有操作與聊天時，與操作的工具一併呼叫：text 放要對使用者說的話。純聊天或提問時不呼叫，直接用文字回答。"
             fn["parameters"] = {"type": "object", "properties": {"text": {"type": "string", "description": "回答聊天部分的話（繁體中文，簡短）"}},
                                 "required": ["text"]}
-    return tools
+    return tools + copy.deepcopy(CLOUD_ONLY_TOOLS)
 
 
 CLOUD_TOOLS = _cloud_tools()
+CLOUD_SCHEMAS = {t["function"]["name"]: t["function"]["parameters"] for t in CLOUD_TOOLS}  # validate_tool_call 用
 
 
 def split_chat_texts(tool_calls: list) -> Tuple[list, List[str]]:

@@ -23,6 +23,10 @@ _NEG_RE = re.compile(r"不要|不用|不必|不想|不能|不可以|不行|不�
 _NARR_RE = re.compile(rf"昨天|前天|剛剛|剛才|之前|已經|以前|上次|曾經|本來|原本|(?:{_VERB})了")
 _QUESTION_RE = re.compile(r"嗎|什麼|怎麼|為什麼|為何|如何|是不是|有沒有|哪|幾|多少|\?")
 
+# 常用功能說法前後的程度詞（『再往下滑』『多往下滑』『往下滑一點』）：拿掉後整句仍要等於詞庫說法才算
+_DEGREE_PREFIX_RE = re.compile(r"^(?:再多|再|多|繼續|稍微)")
+_DEGREE_SUFFIX_RE = re.compile(r"(?:多一點|多一些|一點點|一點|一些)$")
+
 
 def _narrative_exempt(s: str) -> bool:
     """『找昨天下載的 PDF』的『昨天』是檔案的時間條件，不是敘述過去：句首是『找』、沒有『了』、
@@ -172,6 +176,7 @@ class FastPathMatcher:
         for rule in (
             self._r_front, self._r_tab, self._r_project, self._r_volume, self._r_mute,
             self._r_brightness, self._r_dark, self._r_lock, self._r_find, self._r_pick, self._r_site, self._r_app,
+            self._r_front_degree,
         ):
             m = rule(s, candidates)
             if m is not None:
@@ -277,6 +282,11 @@ class FastPathMatcher:
         if prior is not None:
             args["fallback"] = [list(a) for a in prior.actions]
         return Match([("front_action", args)], prior.confidence if prior else "exact", prior.note if prior else "")
+
+    def _r_front_degree(self, s: str, candidates: bool) -> Optional[Match]:
+        """常用功能的說法前後多了程度詞（『再往下滑』『往下滑一點』）。放在規則最後：只補原本沒命中的句子"""
+        t = _DEGREE_SUFFIX_RE.sub("", _DEGREE_PREFIX_RE.sub("", s, count=1), count=1).strip()
+        return self._r_front(t, candidates) if t and t != s else None
 
     def _r_project(self, s: str, candidates: bool) -> Optional[Match]:
         m = self._project_re.match(s)

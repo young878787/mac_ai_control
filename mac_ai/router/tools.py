@@ -87,10 +87,11 @@ TOOLS_SCHEMA = [
 _SCHEMA_BY_NAME = {t["function"]["name"]: t["function"]["parameters"] for t in TOOLS_SCHEMA}
 
 
-def validate_tool_call(name: str, args: Any) -> Tuple[Optional[dict], Optional[str]]:
+def validate_tool_call(name: str, args: Any, schemas: Optional[Dict[str, dict]] = None) -> Tuple[Optional[dict], Optional[str]]:
     """檢查 LLM 回傳的工具名稱與參數，回傳 (乾淨參數, None) 或 (None, 錯誤原因)。
-    只信任 schema：未知工具、未知參數、缺必填、型別錯誤、enum 不符一律拒絕，不交給 executor。"""
-    schema = _SCHEMA_BY_NAME.get(name)
+    只信任 schema：未知工具、未知參數、缺必填、型別錯誤、enum 不符一律拒絕，不交給 executor。
+    schemas：工具名稱→parameters（雲端多了只給雲端的工具）；預設是本機的 TOOLS_SCHEMA"""
+    schema = (schemas or _SCHEMA_BY_NAME).get(name)
     if schema is None:
         return None, f"未知工具：{name}"
     if not isinstance(args, dict):

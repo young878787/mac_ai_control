@@ -49,14 +49,14 @@ def site_open_home(utterance: str, query: str) -> Optional[str]:
     return site["home"]
 
 
-def _search_intent_error(utterance: str, query: str) -> Optional[str]:
-    """web_search_or_open_url 的語意守門：沒有搜尋意圖字，且 query 不是原句裡字面出現的網址，就拒絕"""
+def _search_intent_error(utterance: str, query: str, name: str = "web_search_or_open_url") -> Optional[str]:
+    """web_search_or_open_url（與雲端的 site_search）的語意守門：沒有搜尋意圖字，且 query 不是原句裡字面出現的網址，就拒絕"""
     if _SEARCH_INTENT_RE.search(utterance):
         return None
     q = query.strip().lower()
     if _URL_RE.match(q) and re.sub(r"^https?://", "", q).rstrip("/") in utterance.lower():
         return None
-    return "web_search_or_open_url 被略過：這句話沒有搜尋的意思（要搜尋請說『搜尋』『查』『找』…）"
+    return f"{name} 被略過：這句話沒有搜尋的意思（要搜尋請說『搜尋』『查』『找』…）"
 
 
 # 『要看畫面』的說法：LLM 沒呼叫 read_screen 時，chat call 看不到畫面卻會編內容（實測回過「畫面上寫『Hello…』」），所以直接讀畫面。
@@ -75,7 +75,11 @@ def _is_look_at_screen(text: str) -> bool:
 # 所以否定／敘述句不讓 LLM 規劃工具，只回話；資訊提問只保留不改變狀態的工具。
 # 『可以幫我開小算盤嗎』『今天台北會下雨嗎』這類只有『嗎』的是非問句／客氣請求不擋（實測 AI 都做對）。
 _INFO_QUESTION_RE = re.compile(r"什麼|怎麼|為什麼|為何|如何|哪|幾|多少|是不是|有沒有")
-STATE_TOOLS = frozenset({"control_mac_app", "set_system_volume", "adjust_screen_brightness", "system_power_action", "open_project"})
+# front_action 只有雲端會呼叫（『怎麼全螢幕』『關閉視窗要按什麼』是在問，不是要做）
+# 說『關掉／關閉…』就一定是關閉：雲端的 front_action 不能把它換成最小化（『收起來』→ 最小化可以）
+_CLOSE_RE = re.compile(r"關掉|關閉|關起來|關上|退出|結束|關$")
+STATE_TOOLS = frozenset({"control_mac_app", "set_system_volume", "adjust_screen_brightness", "system_power_action", "open_project",
+                         "front_action"})
 NO_ACTION_HINT = "這句話沒有執行任何電腦操作；回覆不得聲稱已經執行。"
 # 否定／敘述句連 chat call 也不送：實測（19 句×3 次）chat 回覆有 7 句謊稱已執行（『昨天把音量調到50』→『音量已調整至50』、
 # 『電腦剛剛自己睡眠了』→『睡眠模式已啟動』），system 裡寫明不得聲稱已執行也沒用；固定回覆誠實、也省掉約 1 秒
@@ -174,9 +178,10 @@ def build_user_message(utterance: str, local_miss: Optional[dict] = None, front:
 
 
 def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict], meta: Optional[dict],
-                   targets: Set[str]) -> Tuple[List[Tuple[str, dict]], List[str], List[str]]:
+                   targets: Set[str], schemas: Optional[dict] = None) -> Tuple[List[Tuple[str, dict]], List[str], List[str]]:
     """模型回傳的 tool_calls（本機、雲端共用）→ (通過驗證的 [(工具, 參數)], 被拒絕的原因, 導向本機的紀錄)。
-    依序：格式 → validate_tool_call → 對象守門 → 搜尋意圖守門 → 轉交時用原話 → 本機優先導向"""
+    依序：格式 → validate_tool_call → 對象守門 → 搜尋意圖守門 → 轉交時用原話 → 本機優先導向。
+    schemas：雲端傳 CLOUD_SCHEMAS（多了 front_action、site_search）；site_search 通過後換成本機的 context_search 執行"""
     calls: List[Tuple[str, dict]] = []
     rejected: List[str] = []
     reroutes: List[str] = []
@@ -191,7 +196,7 @@ def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict],
         except json.JSONDecodeError:
             rejected.append(f"{func.get('name')} 參數不是合法 JSON")
             continue
-        clean, err = validate_tool_call(func.get("name", ""), args)
+        clean, err = validate_tool_call(func.get("name", ""), args, schemas)
         if not err:
             err = target_error(func["name"], clean, utterance, targets)
         if not err and func["name"] == "web_search_or_open_url":
@@ -199,6 +204,10 @@ def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict],
             home = site_open_home(utterance, clean["query"]) if err else None  # 只放寬原本會拒絕的；原本放行的（有搜尋字詞、字面網址）維持不變
             if home:
                 clean, err = {**clean, "query": home}, None
+        if not err and func["name"] == "front_action" and clean["id"] == "minimize" and _CLOSE_RE.search(utterance):
+            err = "front_action 被略過：句子說的是關閉，不是最小化"
+        if not err and func["name"] == "site_search":
+            err = _search_intent_error(utterance, clean["query"], "site_search")
         if err:
             rejected.append(err)
             continue
@@ -209,7 +218,7 @@ def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict],
             clean = {**clean, "query": local_miss["query"]}
             if (func["name"], clean) in calls:
                 continue
-        if func["name"] == "web_search_or_open_url" and local_miss is None:
+        if func["name"] in ("web_search_or_open_url", "site_search") and local_miss is None:
             local = _local_reroute(utterance, clean["query"])
             if local is not None:
                 calls.extend(local.actions)
@@ -217,7 +226,7 @@ def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict],
                 if meta is not None:
                     meta["intent"] = local.intent.to_log()
                 continue
-        calls.append((func["name"], clean))
+        calls.append((cloud_client.CLOUD_TOOL_TARGETS.get(func["name"], func["name"]), clean))
     return calls, rejected, reroutes
 
 
@@ -245,7 +254,7 @@ def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Opti
 
 
 def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str]) -> Tuple[List[Tuple[str, dict]], str, List[str]]:
-    """雲端規劃：工具同 TOOLS_SCHEMA（只有 chat_reply 多一個 text 參數）、同一套驗證（validate_calls）。user 訊息＝本機的 build_user_message＋最近對話。
+    """雲端規劃：工具＝TOOLS_SCHEMA（chat_reply 多一個 text 參數）＋front_action、site_search，同一套驗證（validate_calls）。user 訊息＝本機的 build_user_message＋最近對話。
     回傳 (通過驗證的呼叫, 文字回覆, 被拒絕的原因)；雲端不可用時拋 CloudError（呼叫端退回本機）"""
     user = build_user_message(utterance, front=front_hint(ctx))
     mem = memory.STORE.render(ctx.calls)
@@ -259,7 +268,7 @@ def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str]) 
     finally:
         step["cloud"] = meta
     tool_calls, say = cloud_client.split_chat_texts(message.get("tool_calls") or [])  # chat_reply(text)：伴隨工具的文字回覆
-    calls, rejected, reroutes = validate_calls(tool_calls, utterance, None, step, targets)
+    calls, rejected, reroutes = validate_calls(tool_calls, utterance, None, step, targets, cloud_client.CLOUD_SCHEMAS)
     step["reroutes"] = reroutes
     return calls, message.get("content") or " ".join(say), rejected
 
