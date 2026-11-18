@@ -37,16 +37,85 @@ python scripts/ui_demo.py [--hold|--choices-test]   # 不用麥克風預覽桌�
 
 ## 3. 架構與資料流
 
+### 3.1 輸入處理流程圖
+
 ```
-mic.py → stt/client.py（WS :8765，Silero VAD + endpoint.py 決定何時 flush）
-       → assistant.py CommandRouter（WakeGate 喚醒詞閘門 → queue）→ command_worker（單執行緒依序執行）
-       → router/pipeline.py process_voice_command：
-            normalize → split_clauses → 每個子句 FastPathMatcher.match
-              命中 → fast 步驟（各自成一步）
-              未命中 → 連續未命中的子句合併成一個 slow 步驟 → slow_path.py（LLM）
-            → actions.run_tool 執行（ExecContext 帶「剛開的瀏覽器／編輯器」等同句狀態）
-       → result 事件 →（--ui）ui_bus.py WebSocket :8766 → desktop/（Electron + Live2D）
+【A. 輸入來源】三種，最後都匯進同一個佇列（--text 除外）
+ ├─ 麥克風 stt/mic.MicSource（PCM）
+ │    → stt/client.SttClient：送音訊到 macos-stt（WS :8765）；同時逐窗跑 Silero VAD → endpoint.EndpointDetector
+ │        EndpointDetector（純邏輯、時間注入）：VAD onset／offset 遲滯 ＋ partial 文字經 completeness.classify
+ │          classify：去喚醒詞 → normalize → split_clauses → 每個子句都 FastPathMatcher.match 命中＝complete
+ │          收句門檻：complete 靜音 0.35 s／incomplete（句尾接續詞、光動詞）多等／default；另有 asr_stall、max_len
+ │          決定「說完了」→ 先送剩下的音訊，再送 {"type":"flush"}；一直沒文字的語音段當噪音放棄
+ │    ← server 事件：partial（只更新偵測器）／final（編 utt_id、計時寫 logs/runtime/latency.jsonl）
+ │    → assistant.CommandRouter（STT 執行緒）
+ │        partial → 終端顯示；--ui 時 publish {"partial", wake}
+ │        utterance／final → paused 就丟 → WakeGate.feed（加鎖）
+ │            command（去掉句首喚醒詞／會話內）→ SpokenCommand(utt_id, enqueued_at) 放進佇列
+ │            armed（只說喚醒詞）→ 開 60 s 會話；ignored → 不執行
+ ├─ 桌面角色（--ui）：ui_bus（127.0.0.1:8766、token、無 Origin）→ parse_ui_message 驗證 → CommandRouter.on_ui_message
+ │        command → 佇列（不經 WakeGate、不續會話）；choose → 佇列（dict）；wake／pause／quit → 只改狀態
+ └─ CLI：main.py --text → 直接呼叫 process_voice_command（不起服務、不經佇列與喚醒詞）
+
+【B. command_worker】單執行緒、依序；單一指令例外只記錯，不停下
+    str  → pipeline.process_voice_command
+    dict → pipeline.process_choice → run_tool("pick_choice")（和語音「第 N 個」同一個工具）
+    → result_event → publish（UI）；command_record（家目錄換 ~、不含 choices）→ logs/runtime/commands.jsonl（帶 utt_id、queue_ms）
+
+【C. process_voice_command】
+  0. catalog.refresh_if_stale()（已安裝 App 清單逾 60 s 才重掃，在指令執行緒做）
+  1. normalize_utterance：NFKC＋空白 → 簡轉繁（詞庫 s2t）→ 誤聽詞（記 misheard，供還原原話）→ 中文數字（只在數值語境）→ 疊詞
+     → log_normalization（只記詞庫造成的改動）
+  2. split_clauses：依標點與「然後／接著／再幫我／順便／還有／並且／以及」切（不以空白切）
+  3. 逐子句 FastPathMatcher.match（純比對：不執行、不讀前景、不碰網路／LLM）
+       「讓電腦睡眠」固定句 → canonicalize_clause（去填充詞、「把 X 打開」→「打開 X」）
+       → _r_negated_command（窄的否定即指令）→ _blocked（否定／敘述，_narrative_exempt 例外）→ None
+       → _read_screen_re → _r_open_search → _r_search（這三項在問句守門之前）→ _QUESTION_RE → None
+       → _r_front → _r_tab → _r_project → _r_volume → _r_mute → _r_brightness → _r_dark → _r_lock
+       → _r_find → _r_pick → _r_site → _r_app → _r_front_degree（第一個命中的規則勝出）
+     命中 → ("fast", [子句], Match) 各自成一步；未命中 → 併進前一個 slow 段（連續的才合併），否則新開 slow 段
+  4. 建立 ExecContext（整句共用、不跨語句），依說話順序跑每一段：
+       fast → Match.run → run_tool（逐個動作）
+              find_file 0 筆且非 local_only → ctx.escalate → _escalate_to_llm（查詢用原話＋restore_misheard）
+                 前景是瀏覽器 → context_search（不問模型）
+                 否則 → execute_slow_path_llm(local_miss=…)（只走本機 LLM）；LLMError → local_miss_reply
+       slow → execute_slow_path_llm（送原句，不是 canonicalize 後的）
+              LLMError → _recover_slow_segment：match(candidates=True) 有候選才執行，否則回「AI 無法使用」
+       step["status"] = _step_status（ctx.status 優先，再看結果字串前綴 ❌⚠️→exec_failed、⏭️→skipped）
+  5. memory.STORE.add（原句、工具與成敗、回覆）→ 回傳 {stages, steps, replies, total_ms}
+
+【D. execute_slow_path_llm】
+  intent_guard（local_miss 時不跑）
+     no_action（任一子句否定／敘述）→ 回 NO_ACTION_REPLY，本機與雲端都不呼叫
+     info_question（每個子句都是資訊提問）→ 照常規劃，但執行前丟掉 STATE_TOOLS
+  targets＝memory 最近成功的對象 ∪ 本句前面步驟的對象（「它」的對象守門用）
+  ├─ 雲端（local_miss 為 None 且 cloud_client.available()）→ _execute_cloud
+  │    user＝build_user_message（原句＋名稱對照＋目前視窗）＋最近對話 → cloud_client.chat(CLOUD_SYSTEM_PROMPT, CLOUD_TOOLS)
+  │    → split_chat_texts（chat_reply(text) 抽成文字）→ validate_calls(CLOUD_SCHEMAS)
+  │    CloudError → step["route"]="local"、cloud_fallback，往下走本機
+  │    執行通過的 calls；沒工具也沒文字 → 看畫面補救或 chat_reply（本機 LLM 的 chat call）
+  │    文字回覆只在沒有被拒絕／丟棄／失敗時採用；read_screen 的結果本身就是回覆
+  └─ 本機 → plan_slow_path：_llm(SYSTEM_PROMPT＋build_user_message(含本機搜尋結果)，PLAN_TIMEOUT_S，max_tokens 192) → validate_calls
+       info_question 丟 STATE_TOOLS；local_miss 而且沒有 calls → 「找不到」
+       沒 calls 也沒被拒 → 看畫面補救（_is_look_at_screen）或 chat_reply；規劃呼叫的 content 不採用
+       有 calls → 逐個 run_tool
+
+  validate_calls（本機、雲端共用，依序）：格式／JSON → validate_tool_call(schemas) → target_error
+     → web_search_or_open_url：_search_intent_error，被拒時 site_open_home 可放寬成網站首頁
+     → front_action：句子說關閉時不得是 minimize → site_search：_search_intent_error
+     → local_miss 時 query 換成原話 → 沒有 local_miss 的搜尋：_local_reroute（本機優先導向）
+     → CLOUD_TOOL_TARGETS（site_search → context_search）
+
+【E. 執行】actions.run_tool → _dispatch（記 exec_ms、ctx.results、ctx.calls）
+    control_mac_app 開瀏覽器／編輯器 → 記 last_browser／last_editor、成功時重置前景快取；失敗 → ctx.failed
+    web_search／browser_tab／open_project／read_screen：前置失敗就 ⏭️ 略過；對象＝明說 → 同句剛開 → 前景 → 預設
+    LOCAL_TOOLS（open_folder、find_file、pick_choice、context_search、front_action）→ local_actions
+    front_action → native.py（視窗／選單／按鈕／App 指令；最後才送按鍵，送前重讀前景 pid）
+    read_screen → screencapture；雲端路線且 CLOUD_VISION_ENABLED 時看圖走雲端
+→ 結果 → result 事件 →（--ui）ui_bus WebSocket :8766 → desktop/（Electron + Live2D）
 ```
+
+### 3.2 模組職責
 
 | 路徑 | 職責 |
 |---|---|
