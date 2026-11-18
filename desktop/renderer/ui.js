@@ -1,4 +1,4 @@
-// 畫面上的 DOM 元件：泡泡、輸入框、紀錄面板。文字一律用 textContent，不解析成 HTML。
+// 畫面上的 DOM 元件：泡泡、輸入框、快捷泡泡、搜尋結果清單。文字一律用 textContent，不解析成 HTML。
 
 export function createBubbles(container, { onHover }) {
   const els = new Map();
@@ -44,35 +44,18 @@ export function createInputBox(form, input, { onSubmit, onClose }) {
   return box;
 }
 
-const ICONS = { heard: '🎙️', user: '⌨️', result: '✅', error: '⚠️' };
-
-export function createHistory(panel, list, closeButton, { onClose }) {
-  let shown = -1;
-  const h = {
-    isOpen: () => !panel.hidden,
-    open() { panel.hidden = false; shown = -1; },
-    close() { if (panel.hidden) return; panel.hidden = true; onClose(); },
-    render(entries) {
-      if (panel.hidden || entries.length === shown) return;
-      shown = entries.length;
-      list.replaceChildren();
-      if (!entries.length) {
-        const li = document.createElement('li');
-        li.className = 'empty'; li.textContent = '還沒有紀錄';
-        list.appendChild(li);
-        return;
-      }
-      for (const e of entries) {
-        const li = document.createElement('li');
-        li.className = e.kind;
-        li.textContent = `${ICONS[e.kind] || '•'} ${e.text}`;
-        list.appendChild(li);
-      }
-      list.scrollTop = list.scrollHeight;
+/** 快捷泡泡（點角色彈出）：目前只有「聊天室」一顆。show(top) 時放在頭部旁邊；滑鼠停在上面不收 */
+export function createQuick(box, button, { onOpen, onHover }) {
+  button.addEventListener('click', () => onOpen());
+  box.addEventListener('mouseenter', () => onHover(true));
+  box.addEventListener('mouseleave', () => onHover(false));
+  return {
+    render(show, top) {
+      if (!show) { if (!box.hidden) box.hidden = true; return; }
+      box.hidden = false;
+      box.style.top = `${Math.round(top)}px`;
     },
   };
-  closeButton.addEventListener('click', () => h.close());
-  return h;
 }
 
 /** 搜尋結果清單：每列一筆（序號、檔名、所在資料夾）。點整列＝預設動作，右邊按鈕＝另一個動作。文字一律 textContent */

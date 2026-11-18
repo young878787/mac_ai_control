@@ -290,7 +290,8 @@ def test_timing_structure(monkeypatch, sh):
 
     monkeypatch.setattr(llm_client, "_chat", fake)
     out = r.process_voice_command("開 Chrome，螢幕太亮了，還有今天台北會下雨嗎，靜音")
-    assert set(out) == {"stages", "steps", "replies", "total_ms"}
+    assert set(out) == {"stages", "steps", "replies", "total_ms", "expand"}
+    assert out["expand"] == "complex"  # 4 個動作
     assert set(out["stages"]) == {"normalize_ms", "split_ms", "match_ms"}
     assert all(v >= 0 for v in out["stages"].values())
     assert [s["kind"] for s in out["steps"]] == ["fast", "slow", "fast"]

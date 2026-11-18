@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createController, summarize, bubbleLifetime, MOTIONS, EXPRESSION_MS, SLEEPY_MS, IDLE_RETREAT_MS,
-  BUBBLE_MAX, BUBBLE_MIN_MS, BUBBLE_MAX_MS, HISTORY_MAX, APPEAR_MS, RETREAT_MS, CHOICES_MAX,
+  BUBBLE_MAX, BUBBLE_MIN_MS, BUBBLE_MAX_MS, QUICK_MS, EXPAND_NOTICE, APPEAR_MS, RETREAT_MS, CHOICES_MAX,
 } from '../state.js';
 
 const T0 = 1_000_000;
@@ -34,14 +34,13 @@ test('沒喚醒、不在會話中的 partial／heard(ignored)：不反應、不�
   assert.deepEqual(c.handle({ type: 'partial', text: '今天天氣很好', wake: false }, T0), []);
   assert.deepEqual(c.handle({ type: 'heard', text: '今天天氣很好', status: 'ignored', command: '' }, T0), []);
   const s = c.snapshot(T0);
-  assert.equal(s.pose, 'peek'); assert.deepEqual(s.bubbles, []); assert.deepEqual(s.history, []);
+  assert.equal(s.pose, 'peek'); assert.deepEqual(s.bubbles, []);
 });
 
-test('heard armed／command → 出場並記入紀錄；ignored 不記', () => {
+test('heard armed／command → 出場；ignored 不反應', () => {
   const c = createController();
   const fx = c.handle({ type: 'heard', text: '露醬 打開小算盤', status: 'command', command: '打開小算盤' }, T0);
   assert.deepEqual(poses(fx), ['out']);
-  assert.deepEqual(c.snapshot(T0).history.map(h => h.kind), ['heard']);
 });
 
 // ---------- 會話 ----------
@@ -145,7 +144,6 @@ test('typed command（沒有喚醒）也會出場；結果出現後不重演驚�
   c.handle({ type: 'executing', command: '打開小算盤' }, T0 + 10);
   const fx = c.handle(ok(), T0 + 500);
   assert.ok(!motions(fx).includes(MOTIONS.surprised));
-  assert.equal(c.snapshot(T0).history[0].kind, 'user');
 });
 
 // ---------- 非會話觸發的退場 ----------
@@ -171,12 +169,6 @@ test('輸入框開著不退場；關閉後才重新計時', () => {
   c.setInputOpen(false, T0 + 60_000);
   assert.deepEqual(poses(c.tick(T0 + 60_000 + IDLE_RETREAT_MS - 1)), []);
   assert.deepEqual(poses(c.tick(T0 + 60_000 + IDLE_RETREAT_MS)), ['peek']);
-});
-
-test('紀錄面板開著不退場', () => {
-  const c = createController();
-  c.setHistoryOpen(true, T0);
-  assert.deepEqual(poses(c.tick(T0 + 100_000)), []);
 });
 
 test('會話結束時輸入框開著：不退場，關閉後 15 秒才退', () => {
@@ -263,12 +255,49 @@ test('partial 泡泡沒有後續事件時 4 秒後自己消失', () => {
   assert.equal(c.snapshot(T0).bubbles.length, 0);
 });
 
-// ---------- 紀錄 ----------
-test('紀錄最多保留 50 筆', () => {
+// ---------- 快捷泡泡 ----------
+test('點角色彈出快捷泡泡（原本的反應照舊）；再點一下收起；QUICK_MS 沒操作就收', () => {
   const c = createController();
-  for (let i = 0; i < HISTORY_MAX + 20; i++) c.userCommand(`指令${i}`, T0 + i);
-  const h = c.snapshot(T0).history;
-  assert.equal(h.length, HISTORY_MAX); assert.equal(h[0].text, '指令20');
+  assert.equal(c.snapshot(T0).quick, false);
+  const head = c.click('head', T0);
+  assert.deepEqual(sends(head), [{ type: 'wake' }]);   // 點頭仍然是開始聆聽
+  assert.equal(c.snapshot(T0).quick, true);
+  c.click('body', T0 + 100);                           // 再點一下：收起，身體仍然演 happy
+  assert.equal(c.snapshot(T0 + 100).quick, false);
+  c.click('body', T0 + 200);
+  c.tick(T0 + 200 + QUICK_MS - 1); assert.equal(c.snapshot(T0).quick, true);
+  c.tick(T0 + 200 + QUICK_MS); assert.equal(c.snapshot(T0).quick, false);
+});
+
+test('快捷泡泡：滑鼠停在上面不收，移開後重新計時；closeQuick 立刻收', () => {
+  const c = createController();
+  c.click('body', T0);
+  c.hoverQuick(true, T0 + 1000);
+  c.tick(T0 + QUICK_MS * 4); assert.equal(c.snapshot(T0).quick, true);
+  c.hoverQuick(false, T0 + QUICK_MS * 4);
+  c.tick(T0 + QUICK_MS * 5 - 1); assert.equal(c.snapshot(T0).quick, true);
+  c.tick(T0 + QUICK_MS * 5); assert.equal(c.snapshot(T0).quick, false);
+  c.click('body', T0 + QUICK_MS * 6);
+  c.closeQuick(); assert.equal(c.snapshot(T0).quick, false);
+  c.hoverQuick(true, T0); assert.equal(c.snapshot(T0).quick, false);   // 沒開時懸停無作用
+});
+
+// ---------- 聊天室主動展開 ----------
+test('result 帶 expand：角色泡泡只放提示，種類仍依成敗；沒有 expand 照舊顯示摘要', () => {
+  for (const reason of ['screen', 'chat', 'complex']) {
+    const c = createController();
+    c.handle(ok({ expand: reason, replies: ['很長很長的回覆'.repeat(20)] }), T0);
+    assert.deepEqual(c.snapshot(T0).bubbles.map(b => [b.kind, b.text]), [['result', EXPAND_NOTICE]]);
+  }
+  const f = createController();
+  f.handle(ok({ ok: false, expand: 'complex', steps: [{ kind: 'fast', text: 'x', status: 'exec_failed', logs: ['❌ 壞了'] }] }), T0);
+  assert.deepEqual(f.snapshot(T0).bubbles.map(b => [b.kind, b.text]), [['error', EXPAND_NOTICE]]);
+  const plain = createController();
+  plain.handle(ok({ replies: ['嗨'] }), T0);
+  assert.deepEqual(plain.snapshot(T0).bubbles.map(b => b.text), ['嗨']);
+  const odd = createController();
+  odd.handle(ok({ expand: 'nope', replies: ['嗨'] }), T0);
+  assert.deepEqual(odd.snapshot(T0).bubbles.map(b => b.text), ['嗨']);
 });
 
 test('summarize：回覆優先；失敗取錯誤行；沒有內容用預設字；超長截斷', () => {
@@ -306,7 +335,7 @@ test('隨機事件序列：不會選到 Talk、動作與表情都在白名單、
       }
       const s = c.snapshot(now);
       assert.ok(s.bubbles.length <= BUBBLE_MAX);
-      assert.ok(s.history.length <= HISTORY_MAX);
+      assert.equal(typeof s.quick, 'boolean');
       assert.ok(['peek', 'out'].includes(s.pose));
     }
   }
@@ -329,14 +358,13 @@ const withChoices = (over = {}) => ok({
 });
 const sends = fx => fx.filter(e => e.type === 'send').map(e => e.message);
 
-test('result 帶 choices → 清單開啟，記一筆紀錄，倒數照後端給的秒數', () => {
+test('result 帶 choices → 清單開啟，倒數照後端給的秒數', () => {
   const c = createController();
   c.handle(withChoices(), T0);
   const s = c.snapshot(T0 + 1000);
   assert.equal(s.choices.listId, 4); assert.equal(s.choices.query, '報告'); assert.equal(s.choices.total, 3);
   assert.equal(s.choices.defaultAction, 'reveal'); assert.deepEqual(s.choices.items, ITEMS);
   assert.equal(s.choices.remainingMs, 59_000);
-  assert.ok(s.history.some(h => h.text === '找到 3 筆「報告」（列出 3 筆）'));
   assert.deepEqual(s.bubbles, []);  // 清單本身就是輸出：不另外跳泡泡（會被清單蓋住）
   assert.equal(createController().snapshot(T0).choices, null);
 });

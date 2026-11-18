@@ -116,7 +116,8 @@ def test_events_for_a_spoken_command_in_order(bus):
     assert by["executing"]["command"] == "打開小算盤"
     res = by["result"]
     assert res["ok"] is True and res["command"] == "打開小算盤" and res["total_ms"] == 4.0
-    assert res["steps"] == [{"kind": "fast", "text": "打開小算盤", "status": "ok", "logs": ["已開啟 小算盤"]}]
+    assert res["steps"] == [{"kind": "fast", "text": "打開小算盤", "status": "ok", "logs": ["已開啟 小算盤"], "ms": 3.0}]
+    assert "expand" not in res
     assert all(isinstance(e["ts"], float) for e in events)
 
 
@@ -471,3 +472,14 @@ def test_choose_message_round_trips_over_the_bus(bus):
         time.sleep(0.1)
     assert commands.get_nowait() == {"type": "choose", "list_id": 9, "n": 3, "action": "open"}
     assert commands.empty() and any("choose" in w for w in bus.warnings)
+
+
+def test_result_event_carries_expand_route_and_ms_only_when_present():
+    step = {"kind": "slow", "text": "講個笑話", "status": "ok", "logs": ["x"], "route": "cloud", "ms": 981.234}
+    ev = result_event("講個笑話", {"steps": [step], "replies": ["好"], "total_ms": 1.0, "expand": "chat"})
+    assert ev["expand"] == "chat"
+    assert ev["steps"] == [{"kind": "slow", "text": "講個笑話", "status": "ok", "logs": ["x"], "route": "cloud", "ms": 981.2}]
+    bare = {"steps": [{"kind": "fast", "text": "x", "status": "ok", "logs": []}], "replies": [], "total_ms": 1.0}
+    ev = result_event("x", bare)
+    assert "expand" not in ev and ev["steps"] == [{"kind": "fast", "text": "x", "status": "ok", "logs": []}]
+    assert "expand" not in result_event("x", None) and "expand" not in result_event("x", {**bare, "expand": None})

@@ -306,6 +306,7 @@ def _execute_cloud(utterance: str, step: dict, ctx: ExecContext, guard: Optional
     all_ok = not rejected and not dropped and not any(r.startswith(_FAIL_PREFIXES) for r in ctx.results)
     if content and all_ok and "read_screen" not in {n for n, _ in calls}:  # 看畫面的結果本身就是回覆
         ctx.replies.append(content)
+        ctx.ai_reply = True
         logs.append(f"☁️ AI 回覆：{content}")
     return logs
 

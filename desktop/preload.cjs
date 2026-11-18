@@ -11,11 +11,11 @@ contextBridge.exposeInMainWorld('desktop', {
   focus: (v) => ipcRenderer.send('focus', !!v),
   applied: (id, at) => ipcRenderer.send('applied', id, at),
   menu: () => ipcRenderer.send('menu'),
+  toggleChat: () => ipcRenderer.send('toggle-chat'),
   dragStart: () => ipcRenderer.send('drag-start'),
   dragMove: (dx) => ipcRenderer.send('drag-move', dx),
   dragEnd: () => ipcRenderer.send('drag-end'),
   onBus: on('bus'),
   onCursor: on('cursor'),
   onToggleInput: on('toggle-input'),
-  onToggleHistory: on('toggle-history'),
 });

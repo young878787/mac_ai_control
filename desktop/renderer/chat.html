@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src app:; style-src app:; img-src app: data:; connect-src 'none'">
+  <title>聊天室</title>
+  <link rel="stylesheet" href="app://ui/renderer/chat.css">
+</head>
+<body class="hidden">
+  <div id="win">
+    <header id="bar"><span id="title">💬 聊天室</span><button type="button" id="close" aria-label="關閉">✕</button></header>
+    <main id="log" aria-live="polite"><p id="empty">還沒有對話。說「看一下畫面」或在下面打字試試～</p></main>
+    <div id="live" hidden></div>
+    <form id="form">
+      <textarea id="box" rows="1" maxlength="200" spellcheck="false" placeholder="輸入指令，Enter 送出，Shift+Enter 換行"></textarea>
+      <button type="submit" id="send">送出</button>
+    </form>
+  </div>
+  <script type="module" src="app://ui/renderer/chat-app.js"></script>
+</body>
+</html>

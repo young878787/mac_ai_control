@@ -227,3 +227,10 @@ def test_log_view_limits_rows_and_handles_empty_dir(tmp_path, capsys):
     log_view.main(["--dir", str(d), "-n", "1"])
     assert "共 3 筆，只列最後 1 列" in capsys.readouterr().out  # 3 句語音
     assert log_view.main(["--dir", str(tmp_path / "empty")]) == 1
+
+
+def test_command_record_keeps_expand_only_when_present():
+    base = {"command": "x", "ok": True, "total_ms": 1.0, "replies": []}
+    outcome = {"stages": {}, "replies": [], "total_ms": 1.0, "steps": []}
+    assert command_record({**base, "expand": "screen"}, outcome)["expand"] == "screen"
+    assert "expand" not in command_record(base, outcome)

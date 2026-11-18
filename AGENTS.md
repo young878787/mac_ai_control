@@ -30,10 +30,10 @@ cd desktop && node --test                 # 桌面角色狀態機／路徑白名
 python main.py --text 打開小算盤           # 不啟動服務、不檢查喚醒詞，直接跑一句（改路由後的最快實測方式）
 python main.py [--no-stt] [--ui] [--device N]
 python build_vocab.py                     # 改 vocab/lexicon.json 後重產 stt_hints／userdict（main.py 啟動時也會自動跑）
-python scripts/ui_demo.py [--hold|--choices-test]   # 不用麥克風預覽桌面角色
+python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥克風預覽桌面角色；--chat-test 驗聊天室（會短暫出現視窗）
 ```
 
-基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 46 pass。新增行為要新增測試。
+基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 67 pass（2026-11-18 加聊天室後實測 pytest 1725 通過、5 skipped）。新增行為要新增測試。
 
 ## 3. 架構與資料流
 
@@ -60,7 +60,7 @@ python scripts/ui_demo.py [--hold|--choices-test]   # 不用麥克風預覽桌�
 【B. command_worker】單執行緒、依序；單一指令例外只記錯，不停下
     str  → pipeline.process_voice_command
     dict → pipeline.process_choice → run_tool("pick_choice")（和語音「第 N 個」同一個工具）
-    → result_event → publish（UI）；command_record（家目錄換 ~、不含 choices）→ logs/runtime/commands.jsonl（帶 utt_id、queue_ms）
+    → result_event（steps 帶 route／ms；有 expand 才帶這個欄位，見 C.6）→ publish（UI）；command_record（家目錄換 ~、不含 choices）→ logs/runtime/commands.jsonl（帶 utt_id、queue_ms、expand）
 
 【C. process_voice_command】
   0. catalog.refresh_if_stale()（已安裝 App 清單逾 60 s 才重掃，在指令執行緒做）
@@ -82,7 +82,9 @@ python scripts/ui_demo.py [--hold|--choices-test]   # 不用麥克風預覽桌�
        slow → execute_slow_path_llm（送原句，不是 canonicalize 後的）
               LLMError → _recover_slow_segment：match(candidates=True) 有候選才執行，否則回「AI 無法使用」
        step["status"] = _step_status（ctx.status 優先，再看結果字串前綴 ❌⚠️→exec_failed、⏭️→skipped）
-  5. memory.STORE.add（原句、工具與成敗、回覆）→ 回傳 {stages, steps, replies, total_ms}
+  5. memory.STORE.add（原句、工具與成敗、回覆）→ 回傳 {stages, steps, replies, total_ms}＋expand（有才帶）
+  6. expand_reason（聊天室主動展開，只看這一句的 ctx）：read_screen 成功→screen → ctx.ai_reply（本機 chat call 或雲端文字被採用）→chat
+     → 動作數（ctx.calls 不含 chat_reply）≥ EXPAND_MIN_ACTIONS 或回覆總字數 > EXPAND_REPLY_CHARS→complex → 都不是就沒有 expand
 
 【D. execute_slow_path_llm】
   intent_guard（local_miss 時不跑）
@@ -112,7 +114,9 @@ python scripts/ui_demo.py [--hold|--choices-test]   # 不用麥克風預覽桌�
     LOCAL_TOOLS（open_folder、find_file、pick_choice、context_search、front_action）→ local_actions
     front_action → native.py（視窗／選單／按鈕／App 指令；最後才送按鍵，送前重讀前景 pid）
     read_screen → screencapture；雲端路線且 CLOUD_VISION_ENABLED 時看圖走雲端
-→ 結果 → result 事件 →（--ui）ui_bus WebSocket :8766 → desktop/（Electron + Live2D）
+→ 結果 → result 事件 →（--ui）ui_bus WebSocket :8766 → desktop/main.js（唯一持有連線與 token）
+     ├→ 角色視窗（Electron + Live2D＋泡泡；有 expand 時泡泡只放「詳細內容在對話視窗」）
+     └→ chat.js（紀錄只放記憶體、重開清空）→ 聊天室視窗（獨立視窗，平常隱藏；有 expand 時 showInactive 展開、無互動 20 秒收回）
 ```
 
 ### 3.2 模組職責
@@ -138,6 +142,7 @@ python scripts/ui_demo.py [--hold|--choices-test]   # 不用麥克風預覽桌�
 | `mac_ai/router/tools.py` | `TOOLS_SCHEMA`（LLM 看得到的工具）與 `validate_tool_call`（唯一信任邊界） |
 | `mac_ai/router/actions.py` | 實際執行器（`open -a`、`osascript`、`screencapture`…）、`ExecContext`、`read_screen`、`chat_reply`、`run_tool` |
 | `mac_ai/router/llm_client.py` | `mlx_vlm.server` OpenAI 相容呼叫；連不上即熔斷 30 秒 |
+| `desktop/` | 桌面角色（Electron）：`main.js` 兩個視窗與匯流排連線、`state.js` 角色狀態機、`chat.js` 聊天室紀錄與開關狀態機（純邏輯、時間注入）、`chat-preload.cjs` 聊天室專用預載（只開放必要動作）、`renderer/` 畫面 |
 | `mac_ai/stt/` | `mic`、`client`（WS＋重連）、`vad`（Silero ONNX）、`endpoint`（純邏輯，時間由外部注入）、`completeness`（句子完整度）、`latency_log` |
 | `vocab/lexicon.json` | **詞庫單一來源**：App、別名、誤聽、動詞、資料夾、檔案類型、喚醒詞 |
 | `archive/` | 舊版單檔實作，**唯讀參考，不要改、不要 import** |
@@ -180,7 +185,7 @@ python scripts/ui_demo.py [--hold|--choices-test]   # 不用麥克風預覽桌�
 12. **誠實回報**：結果字串前綴 ✅／❌／⚠️／⏭️ 決定 step status（`_step_status`），UI 依此顯示。不要把失敗寫成 ✅。
 13. 給 Fast Path 的 `canonicalize_clause` 只用在比對；**送給 LLM 的永遠是原句**（填充詞要留給模型判斷語氣）。
 14. `ExecContext` **不跨語句**；要跨語句的狀態（如選擇清單）放在獨立的 store。
-15. 桌面角色匯流排：只綁 127.0.0.1、連線需 token 且不得帶 `Origin`（擋網頁）、UI 訊息一律經 `parse_ui_message` 驗證。Electron 的 `app://` 只經 `resolveAppFile` 白名單。這些不要放寬。
+15. 桌面角色匯流排：只綁 127.0.0.1、連線需 token 且不得帶 `Origin`（擋網頁）、UI 訊息一律經 `parse_ui_message` 驗證。Electron 的 `app://` 只經 `resolveAppFile` 白名單。這些不要放寬。聊天室視窗同理：有自己的預載腳本（不開放 menu、拖曳、穿透）、送出的文字經主程序驗證且只能是 `command`、IPC 只認自己的 webContents、CSP 不放 `unsafe-inline`／`unsafe-eval`、紀錄不寫硬碟。**主動展開一律 `showInactive()`，不得搶焦點**（前景 App 會決定 `front_action`、分頁、看畫面的對象）；`result.expand` 是選用欄位，沒有就不帶。
 16. **對象的優先順序固定**：句子明說的 → 同句剛開的（`last_browser`／`last_editor`）→ 前景視窗 → 預設。前景讀不到（含桌面角色自己在前景）就退回預設，不猜。
 17. **常用功能只走 `front_action`，以底層直接執行為主**（`native.py`，對前景 App 的 pid 下指令，不經鍵盤與輸入法）：
    - 詞庫 `app_shortcuts` 的每個綁定擇一：`window`（關閉鈕／最小化／全螢幕屬性）、`path`（依選單標題，各語言名稱並列）、`char`＋`mods`（依快捷鍵找 App 自己的選單項目，和介面語言無關）、`button`（視窗裡說明文字符合的按鈕，例如 YouTube 播放器）、`script`（App 自己的指令，例如 Music 的 playpause）。
@@ -202,7 +207,8 @@ python scripts/ui_demo.py [--hold|--choices-test]   # 不用麥克風預覽桌�
 | 新增站內搜尋網站／常用功能快捷鍵／可開啟的網站 | 只改 `vocab/lexicon.json` 的 `sites`（`search_url` 站內搜尋、`home` 首頁、`aliases` 別名）／`app_shortcuts`（說法要整句完全相同才命中）；`home` 有填的網站，「打開／上／去＋名稱」會由 Fast Path（`_r_site`）開首頁，雲端／本機規劃的開網站呼叫也靠它放行（`slow_path.site_open_home`）；跑 `tests/flow/test_route_context.py`、`tests/unit/test_context.py` 與 `tests/unit/test_completeness.py`，確認新說法不是其他指令的前半句 |
 | 調整範圍判斷 | 只動 `domain.py`（純函式）；要有 Intent 層的測試（`tests/unit/test_domain.py`、`tests/flow/test_route_find.py`） |
 | 調端點偵測參數 | 動 `config.py` 的 `EP_*`／`VAD_*`；用 `scripts/stt_bench.py` A/B 比對再決定 |
-| 改 UI 協定 | `ui_bus.py` 與 `desktop/protocol.js`／`state.js` 一起改，兩邊測試都要跑 |
+| 改 UI 協定 | `ui_bus.py` 與 `desktop/protocol.js`／`state.js`／`chat.js` 一起改，兩邊測試都要跑；跑 `python scripts/ui_demo.py --chat-test` |
+| 調聊天室主動展開的條件 | 只動 `config.EXPAND_*` 與 `pipeline.expand_reason`；案例在 `tests/flow/test_route_expand.py` |
 
 ## 7. 測試規範
 

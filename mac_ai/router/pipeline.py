@@ -2,6 +2,7 @@
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from mac_ai import config
 from mac_ai.router import catalog, memory
 from mac_ai.router.actions import ExecContext, front_app, run_tool
 from mac_ai.router.fast_path import FastPathMatcher, Match
@@ -18,6 +19,28 @@ def _step_status(ctx: ExecContext) -> str:
     if any(r.startswith("⏭️") for r in ctx.results):
         return "skipped"
     return "ok"
+
+
+def expand_reason(ctx: ExecContext) -> Optional[str]:
+    """這一句要不要讓聊天室主動展開（result 事件的 expand）：screen 看畫面成功 → chat 模型寫了回覆 → complex 動作數或回覆字數過門檻；
+    都不是回傳 None（事件不帶這個欄位）。只看這一句的 ctx，不讀前景、不碰網路。chat_reply 是回覆不是動作，不算進動作數"""
+    if any(name == "read_screen" and ok for name, _, ok in ctx.calls):
+        return "screen"
+    if ctx.ai_reply:
+        return "chat"
+    if sum(1 for name, _, _ in ctx.calls if name != "chat_reply") >= config.EXPAND_MIN_ACTIONS:
+        return "complex"
+    if sum(len(r.strip()) for r in ctx.replies) > config.EXPAND_REPLY_CHARS:
+        return "complex"
+    return None
+
+
+def _outcome(ctx: ExecContext, stages: dict, steps: list, total_ms: float) -> dict:
+    outcome: Dict[str, Any] = {"stages": stages, "steps": steps, "replies": ctx.replies, "total_ms": total_ms}
+    expand = expand_reason(ctx)
+    if expand:
+        outcome["expand"] = expand
+    return outcome
 
 
 def _recover_slow_segment(clauses: List[str], matcher: FastPathMatcher, ctx: ExecContext, err: LLMError) -> List[str]:
@@ -140,7 +163,7 @@ def process_voice_command(stt_text: str) -> dict:
         print(f"💬 回覆：{reply}")
     print(f"⏱️ 階段：normalize {stages['normalize_ms']:.2f}ms｜split {stages['split_ms']:.2f}ms｜match {stages['match_ms']:.2f}ms")
     print(f"⏱️ 全部完成：{total_ms:.0f}ms（{len(steps)} 步）")
-    return {"stages": stages, "steps": steps, "replies": ctx.replies, "total_ms": total_ms}
+    return _outcome(ctx, stages, steps, total_ms)
 
 
 def process_choice(msg: dict) -> dict:
@@ -155,4 +178,4 @@ def process_choice(msg: dict) -> dict:
     step["logs"] = logs
     ctx.step = None
     print(f"\n🖱️ {step['text']} -> {logs[0]}")
-    return {"stages": {}, "steps": [step], "replies": ctx.replies, "total_ms": step["ms"]}
+    return _outcome(ctx, {}, [step], step["ms"])

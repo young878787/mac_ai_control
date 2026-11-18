@@ -2,7 +2,7 @@
 import { createController, PEEK_RATIO } from '../state.js';
 import { createFixedPhysics } from './physics-clock.js';
 import { installDrawableColors } from './drawable-colors.js';
-import { createBubbles, createChoices, createHistory, createInputBox } from './ui.js';
+import { createBubbles, createChoices, createInputBox, createQuick } from './ui.js';
 
 const MODEL_H = 420;                              // 出場時模型高度（px）
 const REGION = { x: 380, y: 0, w: 1280, h: 2048 };  // 模型座標中的「全身」範圍（與預覽相同）
@@ -133,28 +133,23 @@ async function main() {
   // ---------- 狀態機與介面 ----------
   const controller = createController();
   const bubbles = createBubbles($('bubbles'), { onHover: (id, on) => controller.hoverBubble(id, on, Date.now()) });
-  const history = createHistory($('history'), $('history-list'), $('history-close'), {
-    onClose: () => { applyEffects(controller.setHistoryOpen(false, Date.now())); if (!input.isOpen()) desktop.focus(false); } });
+  const quick = createQuick($('quick'), $('quick-chat'), {
+    onOpen: () => { controller.closeQuick(); desktop.toggleChat(); wake(); },
+    onHover: (on) => controller.hoverQuick(on, Date.now()) });
   const choices = createChoices($('choices'), $('choices-title'), $('choices-list'), $('choices-close'), {
     onChoose: (n, action) => applyEffects(controller.choose(n, action, Date.now())),
     onClose: () => applyEffects(controller.closeChoices(Date.now())) });
   const input = createInputBox($('input-box'), $('input'), {
     onSubmit: (text) => { desktop.send({ type: 'command', text }); applyEffects(controller.userCommand(text, Date.now())); },
-    onClose: () => { applyEffects(controller.setInputOpen(false, Date.now())); if (!history.isOpen()) desktop.focus(false); } });
+    onClose: () => { applyEffects(controller.setInputOpen(false, Date.now())); desktop.focus(false); } });
   function toggleInput() {
     if (input.isOpen()) { input.close(); return; }
     applyEffects(controller.setInputOpen(true, Date.now()));
     input.open(); desktop.focus(true); wake();
   }
-  function toggleHistory() {
-    if (history.isOpen()) { history.close(); return; }
-    applyEffects(controller.setHistoryOpen(true, Date.now()));
-    history.open(); desktop.focus(true); wake();
-  }
   desktop.onToggleInput(toggleInput);
-  desktop.onToggleHistory(toggleHistory);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { input.close(); history.close(); } });
-  window.addEventListener('blur', () => { input.close(); history.close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { input.close(); controller.closeQuick(); } });
+  window.addEventListener('blur', () => { input.close(); });
 
   let poseOut = false, busyUntil = 0;                 // 目前是否出場、高幀率維持到何時（決定幀率）
   const pendingApplied = [];
@@ -258,7 +253,7 @@ async function main() {
     if (bottom !== lastBottom) { lastBottom = bottom; bubblesEl.style.bottom = `${bottom - 14}px`; bubblesEl.style.maxHeight = `${Math.max(0, H - bottom + 14)}px`; }
     const key = snap.bubbles.map(b => `${b.id}|${b.kind}|${b.text}`).join('\n');
     if (key !== lastBubbleKey) { lastBubbleKey = key; bubbles.render(snap.bubbles); }
-    history.render(snap.history);
+    quick.render(snap.quick, topY() + 0.04 * MODEL_H);
     choices.render(snap.choices);
     if (snap.session.active) {
       halo.style.display = 'block';

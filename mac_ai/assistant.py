@@ -41,7 +41,10 @@ def result_event(command: str, outcome) -> dict:
     steps, replies, total_ms = [], [], 0.0
     if isinstance(outcome, dict):
         steps = [{"kind": st.get("kind"), "text": st.get("text"), "status": st.get("status"),
-                  "logs": [str(x) for x in st.get("logs", [])]} for st in outcome.get("steps", [])]
+                  "logs": [str(x) for x in st.get("logs", [])],
+                  **({"route": st["route"]} if st.get("route") else {}),
+                  **({"ms": round(st["ms"], 1)} if isinstance(st.get("ms"), (int, float)) else {})}
+                 for st in outcome.get("steps", [])]
         replies = [str(r) for r in outcome.get("replies", [])]
         total_ms = outcome.get("total_ms", 0.0)
     event = {"type": "result", "command": command, "ok": all(st["status"] not in _FAILED_STEP_STATUS for st in steps),
@@ -50,6 +53,8 @@ def result_event(command: str, outcome) -> dict:
     choices = next((st["choices"] for st in reversed(outcome.get("steps", [])) if st.get("choices")), None) if isinstance(outcome, dict) else None
     if choices:
         event["choices"] = choices
+    if isinstance(outcome, dict) and outcome.get("expand"):  # 聊天室主動展開的原因（screen／chat／complex）；沒有就不帶這個欄位
+        event["expand"] = outcome["expand"]
     return event
 
 
@@ -61,6 +66,8 @@ def command_record(event: dict, outcome) -> dict:
              for st in raw_steps]
     record = {"command": event["command"], "ok": event["ok"], "total_ms": event["total_ms"],
               "stages": outcome.get("stages", {}) if isinstance(outcome, dict) else {}, "steps": steps, "replies": event["replies"]}
+    if event.get("expand"):
+        record["expand"] = event["expand"]
     text = json.dumps(record, ensure_ascii=False, default=str).replace(str(Path.home()), "~")
     return json.loads(text)
 

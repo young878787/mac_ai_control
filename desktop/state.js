@@ -17,7 +17,9 @@ export const BUBBLE_MAX_MS = 12000;
 export const BUBBLE_PER_CHAR_MS = 150;
 export const PARTIAL_BUBBLE_MS = 4000;   // partial 泡泡的保險期限：沒有後續事件也會消失
 export const PENDING_BUBBLE_MS = 30000;
-export const HISTORY_MAX = 50;
+export const QUICK_MS = 5000;            // 點角色彈出的快捷泡泡，沒有操作這麼久就收起來
+export const EXPAND_NOTICE = '詳細內容在對話視窗';   // 後端要求聊天室展開（result.expand）時，角色泡泡只放這句，內容在聊天室
+const EXPAND_REASONS = ['screen', 'chat', 'complex'];
 export const CHOICES_MAX = 5;            // 搜尋結果清單最多顯示幾列（與後端 FIND_RESULTS_MAX 一致）
 
 export function bubbleLifetime(text) {
@@ -57,10 +59,9 @@ export function createController() {
     lastActivityAt: 0,
     retreatAt: null,
     inputOpen: false,
-    historyOpen: false,
+    quick: null,             // 快捷泡泡：{ until, hover }；沒開就是 null（until 在 hover 時不計）
     choices: null,           // 搜尋結果清單：{ listId, query, total, defaultAction, items, endsAt }；沒有就是 null
     bubbles: [],
-    history: [],
     nextBubbleId: 1,
   };
 
@@ -77,10 +78,6 @@ export function createController() {
     }
   }
   function removeBubble(id) { s.bubbles = s.bubbles.filter(b => b.id !== id); }
-  function log(kind, text, now) {
-    s.history.push({ at: now, kind, text });
-    if (s.history.length > HISTORY_MAX) s.history.splice(0, s.history.length - HISTORY_MAX);
-  }
   function setExpression(effects, name, now, ms = 0) {
     s.expression = { name, until: ms ? now + ms : 0 };
     effects.push({ type: 'expression', name });
@@ -142,7 +139,6 @@ export function createController() {
       if (s.mode === 'listening') s.mode = 'idle';
       if (ev.status === 'ignored') return;
       appear(effects, now);
-      log('heard', ev.text, now);
     },
     session(ev, now, effects) {
       if (s.paused && ev.remaining_s > 0) return;
@@ -169,14 +165,13 @@ export function createController() {
         setExpression(effects, 'pout', now, EXPRESSION_MS);
       }
       const list = ev.choices && !ev.choices.closed ? cleanChoices(ev.choices) : null;
-      if (list) {                                            // 有清單：清單本身就是輸出，不另外跳泡泡（會被清單蓋住），只記紀錄
+      if (list) {                                            // 有清單：清單本身就是輸出，不另外跳泡泡（會被清單蓋住）
         s.choices = { ...list, endsAt: now + Math.max(0, Number(ev.choices.expires_in_s) || 0) * 1000 };
-        log('result', `${text}（列出 ${list.items.length} 筆）`, now);
         return;
       }
       if (ev.choices && ev.choices.closed && s.choices && s.choices.listId === ev.choices.list_id) s.choices = null;  // 後端通知：清單已用掉或被新搜尋取代
-      bubble(effects, now, { kind: ev.ok ? 'result' : 'error', text, ms: bubbleLifetime(text) });
-      log(ev.ok ? 'result' : 'error', text, now);
+      const shown = EXPAND_REASONS.includes(ev.expand) ? EXPAND_NOTICE : text;   // 聊天室會主動展開：完整內容在那裡
+      bubble(effects, now, { kind: ev.ok ? 'result' : 'error', text: shown, ms: bubbleLifetime(shown) });
     },
     paused(ev, now, effects) {
       s.paused = !!ev.value;
@@ -208,13 +203,14 @@ export function createController() {
       if (s.session.active && now >= s.session.endsAt) endSession(effects, now);
       if (s.retreatAt !== null && now >= s.retreatAt) {
         s.retreatAt = null;
-        if (!s.inputOpen && !s.historyOpen && !s.choices) retreat(effects);
-        else s.lastActivityAt = now;                       // 輸入框／紀錄面板開著：關掉之後再從頭算 15 秒
-      } else if (s.pose === 'out' && !s.session.active && s.retreatAt === null && !s.inputOpen && !s.historyOpen && !s.choices &&
+        if (!s.inputOpen && !s.choices) retreat(effects);
+        else s.lastActivityAt = now;                       // 輸入框／清單開著：關掉之後再從頭算 15 秒
+      } else if (s.pose === 'out' && !s.session.active && s.retreatAt === null && !s.inputOpen && !s.choices &&
                  now - s.lastActivityAt >= IDLE_RETREAT_MS) {
         retreat(effects);
       }
       if (s.choices && now >= s.choices.endsAt) { s.choices = null; s.lastActivityAt = now; }
+      if (s.quick && !s.quick.hover && now >= s.quick.until) s.quick = null;
       s.bubbles = s.bubbles.filter(b => b.hoverLeft !== null || now < b.expiresAt);
       return effects;
     },
@@ -228,12 +224,12 @@ export function createController() {
         effects.push({ type: 'motion', group: MOTIONS.happy });
         setExpression(effects, 'happy', now, EXPRESSION_MS);
       }
+      s.quick = s.quick ? null : { until: now + QUICK_MS, hover: false };   // 點一下彈出快捷泡泡，再點一下收起
       return effects;
     },
     userCommand(text, now) {
       const effects = [];
       appear(effects, now, { greet: false });
-      log('user', text, now);
       return effects;
     },
     setInputOpen(open, now) {
@@ -243,12 +239,12 @@ export function createController() {
       if (open) appear(effects, now, { greet: false });
       return effects;
     },
-    setHistoryOpen(open, now) {
-      s.historyOpen = open;
-      s.lastActivityAt = now;
-      const effects = [];
-      if (open) appear(effects, now, { greet: false });
-      return effects;
+    /** 快捷泡泡：用掉（點了「聊天室」）或按 Esc 就收起；滑鼠停在上面不計時，移開後再給一段時間 */
+    closeQuick() { s.quick = null; },
+    hoverQuick(hovering, now) {
+      if (!s.quick) return;
+      s.quick.hover = hovering;
+      if (!hovering) s.quick.until = now + QUICK_MS;
     },
     /** 點選清單的第 n 筆；action 沒給就用清單的預設動作。清單要等後端回報成功才會關（失敗時留著可以重選） */
     choose(n, action, now) {
@@ -280,7 +276,7 @@ export function createController() {
         bubbles: s.bubbles.map(b => ({ id: b.id, kind: b.kind, text: b.text })),
         choices: s.choices && { listId: s.choices.listId, query: s.choices.query, total: s.choices.total,
           defaultAction: s.choices.defaultAction, items: s.choices.items.map(i => ({ ...i })), remainingMs: Math.max(0, s.choices.endsAt - now) },
-        history: s.history.slice(),
+        quick: !!s.quick,
         fps: s.pose === 'out' ? 30 : 15,
       };
     },

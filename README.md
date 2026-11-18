@@ -4,7 +4,7 @@
 
 - 範例：「打開小算盤」「關掉 Safari」
 - 喚醒詞（終端機模式預設關閉）：**露西婭**（別名：露醬、露西亞）。要啟用，把 `mac_ai/config.py` 的 `WAKE_WORD_ENABLED` 改成 `True`，之後須說「露西婭 打開小算盤」才會執行（喚醒詞前可以加一個招呼詞，如「嘿露西亞」，詞表在 `vocab/lexicon.json` 的 `wake_words.greetings`）。喚醒後進入 60 秒的**會話**（`WAKE_SESSION_S`）：期間每一句都不用再說喚醒詞，每說一句重新計時；逾時後要再喊一次
-- 桌面角色（`python main.py --ui`）：Rushia（Live2D）常駐螢幕右下角，平常從下緣探頭，喚醒時出場、依執行結果做動作並以泡泡顯示；可用快捷鍵叫出輸入框打字。此模式預設啟用喚醒詞。見下方「桌面角色」
+- 桌面角色（`python main.py --ui`）：Rushia（Live2D）常駐螢幕右下角，平常從下緣探頭，喚醒時出場、依執行結果做動作並以泡泡顯示；可用快捷鍵叫出輸入框打字；點角色可開「聊天室」視窗，看圖、聊天等長回覆會自動展開。此模式預設啟用喚醒詞。見下方「桌面角色」
 
 ## 運作方式
 
@@ -201,12 +201,27 @@ ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/inst
 |---|---|
 | 說喚醒詞 | 角色出場、頭上出現會話光環（倒數環）；60 秒內每句免喚醒詞、每句重新計時 |
 | `⌥Space`（可在 Electron 的 `userData/settings.json` 的 `shortcut` 改） | 叫出／關閉輸入框，Enter 送出（不用喚醒詞）、Esc 關閉；收音時 partial 以灰字顯示在輸入框裡 |
-| 點頭部 | 出場並開啟會話；點身體：開心動作 |
+| 點頭部 | 出場並開啟會話，並彈出快捷泡泡「💬 聊天室」；點身體：開心動作（同樣彈出快捷泡泡）。再點一下角色、5 秒沒操作會收起 |
+| 點「💬 聊天室」／右鍵「聊天室」 | 開關聊天室視窗（手動開啟不會自動收）；視窗內可看完整對話、展開每一步的狀態／路線／耗時，多行輸入框 Enter 送出、Shift+Enter 換行 |
 | 拖曳 | 只能沿螢幕下緣左右移動，位置會記住 |
-| 右鍵 | 對話紀錄／暫停聽指令／結束 |
+| 右鍵 | 聊天室／暫停聽指令／結束 |
 | 點搜尋結果清單的一列 | 執行清單的預設動作（顯示或打開）；列尾按鈕執行另一個 |
 
-不用麥克風也能預覽演出：`python scripts/ui_demo.py`（`--hold` 播完後保持執行，可手動操作；`--choices-test` 驗證搜尋結果清單）。效能量測：`python scripts/ui_perf.py`。
+不用麥克風也能預覽演出：`python scripts/ui_demo.py`（`--hold` 播完後保持執行，可手動操作；`--choices-test` 驗證搜尋結果清單；`--chat-test` 驗證聊天室）。效能量測：`python scripts/ui_perf.py`。
+
+### 聊天室
+
+平常不開，只用角色與泡泡。獨立視窗（白底淺藍、可縮放、貼在角色左側，放不下改右側），紀錄只放記憶體、重開就清空。
+
+後端判斷這句需要看完整內容時，會在 `result` 事件帶 `expand`，聊天室就會帶動畫自動展開（不搶焦點，最前面的 App 不變），角色泡泡只放「詳細內容在對話視窗」：
+
+| `expand` | 條件 |
+|---|---|
+| `screen` | 看畫面（截圖、讀螢幕）成功 |
+| `chat` | 模型寫了回覆（本機 chat call，或雲端文字被採用） |
+| `complex` | 一句話執行了 2 個以上動作（`chat_reply` 不算），或回覆超過 20 字（`config.EXPAND_MIN_ACTIONS`／`EXPAND_REPLY_CHARS`） |
+
+主動展開後，滑鼠沒移上去、也沒點進去，20 秒後自動收回；有互動就一直開著，直到按 ✕ 或 Esc。沒有 `expand` 的指令（開 App、調音量…）不會打擾。
 
 ## 端點偵測（說完就收）
 
@@ -255,7 +270,7 @@ pytest -m unit      # 只跑單元層（約 1.4 秒，改程式時的快速回�
 pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
 pytest -m cloud -s  # 連真的雲端模型（需 .env 金鑰，約 200 次請求會產生費用）：規劃正確率／延遲、否定句、誠實、看圖、代名詞動作
 pytest -m app -v    # 真實 App 驗收：在 Safari、Finder、Terminal、VS Code 上實際執行並讀回狀態（會佔用螢幕約 2 分鐘）
-cd desktop && node --test   # 桌面角色的狀態機與路徑白名單測試
+cd desktop && node --test   # 桌面角色的狀態機、聊天室紀錄與路徑白名單測試
 python scripts/acceptance.py run [--app] [--live] [--cloud]   # 跑測試並把數字存到 logs/bench/acceptance_*.json
 python scripts/acceptance.py report                 # 和上一次比較，變差（新增失敗、矯正率下降、延遲 +20% 且 +20 ms；雲端：各類規劃正確率或代名詞正確數下降、規劃 p50 +30% 且 +300 ms）時結束碼 1
 python scripts/acceptance.py list                   # 歷次結果
@@ -274,7 +289,7 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
 | `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站 |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
-| `desktop/` | 桌面角色（Electron）：`main.js` 視窗與連線、`state.js` 狀態機、`renderer/` 畫面與 Live2D |
+| `desktop/` | 桌面角色（Electron）：`main.js` 視窗與連線、`state.js` 角色狀態機、`chat.js` 聊天室紀錄與開關、`renderer/` 畫面（角色＋Live2D、聊天室） |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |
 | `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |

@@ -7,6 +7,7 @@
     python scripts/ui_demo.py --focus-test N   輸入框開關 N 次，確認每次前景 App 都沒被搶走（取代人工的 E5 前半段）
     python scripts/ui_demo.py --interact-test  注入點擊與打字，確認 UI 會把 wake／command 送回後端（走完整條 Electron → 後端的路）
     python scripts/ui_demo.py --choices-test   推送搜尋結果清單，確認畫面顯示、點選會送出 choose、後端通知關閉時清單消失
+    python scripts/ui_demo.py --chat-test [N]  聊天室：快捷泡泡、主動展開 N 次（預設 10）前景 App 不變、內容完整、自動收回與互動後不收、輸入送出
 """
 import argparse
 import json
@@ -22,6 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from mac_ai import config  # noqa: E402
 from mac_ai.services import ServiceError, check_ui_ready, stop_all, ui_service  # noqa: E402
 from mac_ai.ui_bus import UiBus  # noqa: E402
+
+AUTO_CLOSE_S = 20.0  # 要和 desktop/chat.js 的 AUTO_CLOSE_MS 一致
+EXPAND_NOTICE = "詳細內容在對話視窗"  # 要和 desktop/state.js 的 EXPAND_NOTICE 一致
 
 OK_RESULT = {"type": "result", "command": "打開小算盤", "ok": True, "total_ms": 12.0, "replies": [],
              "steps": [{"kind": "fast", "text": "打開小算盤", "status": "ok", "logs": ["✅ 已開啟 小算盤"]}]}
@@ -183,6 +187,124 @@ def choices_test(bus: UiBus, received: list, capture_dir: Path) -> bool:
     return all(results)
 
 
+LONG_REPLY = "今天台北多雲，氣溫約 24 度，晚上可能有短暫陣雨，出門記得帶傘。" * 8  # 約 270 字：泡泡放不下、聊天室要完整顯示
+EXPAND_RESULTS = [
+    {"type": "result", "command": "看一下畫面", "ok": True, "total_ms": 1500.0, "expand": "screen", "replies": [LONG_REPLY],
+     "steps": [{"kind": "slow", "text": "看一下畫面", "status": "ok", "route": "cloud", "ms": 1400.0, "logs": ["✅ 畫面內容（雲端）：" + LONG_REPLY]}]},
+    {"type": "result", "command": "講個笑話", "ok": True, "total_ms": 900.0, "expand": "chat", "replies": ["為什麼程式設計師都分不清萬聖節和聖誕節？因為 Oct 31 == Dec 25。"],
+     "steps": [{"kind": "slow", "text": "講個笑話", "status": "ok", "route": "cloud", "ms": 880.0, "logs": ["☁️ AI 回覆：..."]}]},
+    {"type": "result", "command": "開 Safari 然後搜尋天氣", "ok": True, "total_ms": 400.0, "expand": "complex", "replies": [],
+     "steps": [{"kind": "fast", "text": "開 Safari", "status": "ok", "ms": 120.0, "logs": ["✅ 已開啟 Safari"]},
+               {"kind": "fast", "text": "搜尋天氣", "status": "ok", "ms": 230.0, "logs": ["✅ 已開啟瀏覽器搜尋：天氣"]}]},
+]
+
+
+def rss_mb() -> float:
+    """桌面角色相關程序（命令列含 desktop 目錄）的 RSS 加總，MB"""
+    out = subprocess.run(["ps", "-axo", "rss=,command="], capture_output=True, text=True, timeout=10).stdout
+    return sum(int(line.split(None, 1)[0]) for line in out.splitlines() if str(config.UI_DIR) in line) / 1024
+
+
+def chat_test(bus: UiBus, received: list, capture_dir: Path, rounds: int) -> bool:
+    """聊天室：快捷泡泡 → 手動開關；主動展開 rounds 次（每次前景 App 不變）；完整內容與步驟；自動收回／互動後不收；輸入送出"""
+    results = []
+
+    def info(name: str, kind: str = "chat") -> dict:
+        bus.publish({"type": "debug_chat_capture" if kind == "chat" else "debug_capture", "name": name})
+        time.sleep(0.8)
+        return json.loads((capture_dir / f"{name}.json").read_text())
+
+    def check(label: str, ok: bool) -> None:
+        print(f"{'PASS' if ok else 'FAIL'}  {label}")
+        results.append(ok)
+
+    before = frontmost_app()
+    print(f"前景 App：{before}")
+    rss0 = rss_mb()
+    check("一開始聊天室是隱藏的", info("chat-0-hidden")["visible"] is False)
+
+    # ---- 快捷泡泡 → 手動開關 ----
+    bus.publish({"type": "partial", "text": "露西婭", "wake": True})
+    time.sleep(1.5)
+    received.clear()
+    bus.publish({"type": "debug_click", "x": 180, "y": 140 + 0.10 * 420})
+    time.sleep(0.8)
+    st = info("chat-1-quick", "role")["state"]
+    check("點頭部 → wake 照舊送出，並出現快捷泡泡", {"type": "wake"} in received and st["quick"] is True)
+    bus.publish({"type": "debug_click", "x": st["quickBtn"]["x"], "y": st["quickBtn"]["y"]})
+    time.sleep(1.0)
+    c = info("chat-2-manual-open")
+    check("點「💬 聊天室」→ 聊天室手動開啟（不會自動收）", c["visible"] and c["lastOpen"]["auto"] is False and c["page"]["hidden"] is False)
+    check("快捷泡泡已收起", info("chat-2b-quick-gone", "role")["state"]["quick"] is False)
+    after_manual = frontmost_app()
+    print(f"（資訊）手動開啟並取得焦點後前景 App：{after_manual}（開啟前：{before}）")
+    bus.publish({"type": "debug_chat_toggle"})
+    time.sleep(0.8)
+    check("再開關一次 → 聊天室關閉", info("chat-3-closed")["visible"] is False)
+
+    # ---- 主動展開：前景不變 ----
+    rss1 = None
+    show_ms, paint_ms = [], []
+    kept = shown = 0
+    for i in range(rounds):
+        result = EXPAND_RESULTS[i % len(EXPAND_RESULTS)]
+        bus.publish({"type": "executing", "command": result["command"]})
+        bus.publish(result)
+        time.sleep(0.7)
+        c = info(f"chat-auto-{i}")
+        shown += bool(c["visible"] and c["page"]["hidden"] is False and c["lastOpen"]["auto"] is True)
+        kept += frontmost_app() == before and not c["focused"]
+        show_ms.append(c["lastOpen"]["showMs"])
+        if c["lastOpen"]["paintMs"] is not None:
+            paint_ms.append(c["lastOpen"]["paintMs"])
+        if rss1 is None:
+            rss1 = rss_mb()
+        bus.publish({"type": "debug_chat_toggle"})  # 關掉，下一輪才會再「主動」開
+        time.sleep(0.6)
+    check(f"主動展開 {rounds} 次：聊天室可見 {shown}/{rounds}", shown == rounds)
+    check(f"主動展開 {rounds} 次：前景 App 沒變、聊天室沒拿到焦點 {kept}/{rounds}", kept == rounds)
+    if show_ms:
+        print(f"（R2）收到 result → showInactive：max {max(show_ms):.0f} ms、中位 {sorted(show_ms)[len(show_ms) // 2]:.0f} ms；"
+              f"展開後第一幀畫出：{sorted(paint_ms)[len(paint_ms) // 2]:.0f} ms（中位，{len(paint_ms)} 筆）" if paint_ms else f"（R2）showInactive max {max(show_ms):.0f} ms")
+    if rss1 is not None:
+        print(f"（R3）聊天室第一次開啟前後的 RSS：{rss0:.0f} MB → {rss1:.0f} MB（增量 {rss1 - rss0:+.0f} MB）")
+
+    # ---- 內容完整 ----
+    bus.publish({"type": "executing", "command": "看一下畫面"})
+    bus.publish(EXPAND_RESULTS[0])
+    time.sleep(0.9)
+    c = info("chat-4-content")
+    check("長回覆（約 270 字）完整顯示在聊天室", LONG_REPLY in c["page"]["text"])
+    check("步驟區塊摺疊在回覆下面", c["page"]["details"] >= 1)
+    check("角色泡泡只放提示、不重複長內容", EXPAND_NOTICE in json.dumps(info("chat-4b-bubble", "role")["state"]["snap"]["bubbles"], ensure_ascii=False))
+
+    # ---- 輸入送出 ----
+    received.clear()
+    bus.publish({"type": "debug_chat_submit", "text": "打開小算盤"})
+    time.sleep(0.8)
+    check("聊天室輸入送出 → 後端收到 command「打開小算盤」", {"type": "command", "text": "打開小算盤"} in received)
+    c = info("chat-5-typed")
+    check("送出的指令出現在聊天室（打字來源）", "打開小算盤" in c["page"]["text"] and any(e["source"] == "typed" for e in c["chat"]["entries"] if e["role"] == "user"))
+    bus.publish({"type": "debug_chat_toggle"})
+    time.sleep(0.6)
+
+    # ---- 自動收回／互動後不收 ----
+    bus.publish(EXPAND_RESULTS[1])
+    time.sleep(0.8)
+    check("主動展開後開著", info("chat-6-auto-open")["visible"])
+    time.sleep(AUTO_CLOSE_S + 1)
+    check(f"沒有互動 → 約 {AUTO_CLOSE_S:.0f} 秒後自動收回", info("chat-7-auto-closed")["visible"] is False)
+    bus.publish(EXPAND_RESULTS[1])
+    time.sleep(0.8)
+    bus.publish({"type": "debug_chat_interact"})
+    time.sleep(AUTO_CLOSE_S + 1)
+    check("有互動 → 超過時間仍開著", info("chat-8-interacted")["visible"] is True)
+    bus.publish({"type": "debug_chat_toggle"})
+    time.sleep(0.6)
+    check("最後關閉", info("chat-9-final")["visible"] is False)
+    return all(results)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hold", action="store_true", help="播完後保持執行")
@@ -191,6 +313,7 @@ def main() -> int:
     ap.add_argument("--focus-test", type=int, metavar="N", help="輸入框開關 N 次，檢查前景 App 沒被搶走")
     ap.add_argument("--interact-test", action="store_true", help="注入點擊與打字，檢查 UI 送回後端的訊息")
     ap.add_argument("--choices-test", action="store_true", help="推送搜尋結果清單，檢查顯示、點選與關閉")
+    ap.add_argument("--chat-test", nargs="?", type=int, const=10, metavar="N", help="聊天室：快捷泡泡、主動展開 N 次（預設 10）、自動收回、輸入送出")
     args = ap.parse_args()
 
     if not args.no_launch:
@@ -218,7 +341,7 @@ def main() -> int:
                 time.sleep(0.2)
         else:
             ui = ui_service(bus.url, bus.health_url)
-            capture_dir = args.capture or (tempfile.mkdtemp(prefix="ui_demo_") if args.focus_test or args.interact_test or args.choices_test else None)
+            capture_dir = args.capture or (tempfile.mkdtemp(prefix="ui_demo_") if args.focus_test or args.interact_test or args.choices_test or args.chat_test else None)
             if capture_dir:
                 args.capture = capture_dir
                 ui.env = {**ui.env, "MAC_AI_UI_CAPTURE_DIR": capture_dir}
@@ -238,6 +361,9 @@ def main() -> int:
         if args.interact_test:
             time.sleep(2)
             return 0 if interact_test(bus, received, Path(args.capture)) else 1
+        if args.chat_test:
+            time.sleep(2)
+            return 0 if chat_test(bus, received, Path(args.capture), args.chat_test) else 1
         if args.choices_test:
             time.sleep(2)
             return 0 if choices_test(bus, received, Path(args.capture)) else 1

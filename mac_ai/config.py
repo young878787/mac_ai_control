@@ -133,6 +133,8 @@ UI_BUS_HOST = "127.0.0.1"  # 只綁本機
 UI_BUS_PORT = 8766
 UI_QUEUE_MAX = 256  # 每個 UI 連線最多積壓幾則事件，滿了丟最舊的（UI 不讀也不會拖住語音）
 UI_COMMAND_MAX_CHARS = 200  # 從 UI 打字送來的指令最長字數
+EXPAND_MIN_ACTIONS = 2  # 一句話執行了這麼多個動作（chat_reply 不算）就算複雜功能，result 事件帶 expand=complex，聊天室主動展開
+EXPAND_REPLY_CHARS = 20  # 回覆總字數超過這個數（泡泡放不下）也算複雜功能（2026-11-18 使用者定）
 UI_DIR = ROOT / "desktop"
 UI_MODEL_PATH = ROOT / "Rushia_hd" / "runtime-swing" / "RushiaHD.model3.json"
 UI_START_TIMEOUT_S = 30.0  # 等 Electron 連上事件匯流排

@@ -218,6 +218,7 @@ class ExecContext:
     front_loaded: bool = False
     front_host: Optional[str] = None  # 前景瀏覽器目前分頁的 host（None＝還沒讀；見 front_site）
     calls: List[Tuple[str, dict, bool]] = field(default_factory=list)  # 這一句執行過的工具 (名稱, 參數, 成功)；句尾寫進對話記憶
+    ai_reply: bool = False  # 這一句採用了模型寫的回覆（本機 chat call 或雲端文字）；聊天室主動展開的依據（見 pipeline.expand_reason）
 
 
 def front_context(ctx: ExecContext, used: bool = True) -> Optional[context.FrontContext]:
@@ -471,6 +472,7 @@ def chat_reply(ctx: Optional[ExecContext] = None) -> str:
         step["chat"] = meta
     reply = to_traditional(_strip_think(message.get("content") or "")) or "無法理解指令"
     ctx.replies.append(reply)
+    ctx.ai_reply = True
     return f"🤖 AI 回覆：{reply}"
 
 
