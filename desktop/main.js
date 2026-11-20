@@ -218,7 +218,7 @@ function submit(msg) {
 }
 
 // 開發用除錯鉤子：只有設了 MAC_AI_UI_CAPTURE_DIR 才生效（scripts/ui_demo.py --capture），正式執行時後端送來也不理
-const PAGE_STATE = `window.__ui ? ({ snap: window.__ui.snapshot(), poseT: window.__ui.poseT(), motion: window.__ui.activeMotion(),
+const PAGE_STATE = `window.__ui ? ({ snap: window.__ui.snapshot(), poseT: window.__ui.poseT(), motion: window.__ui.activeMotion(), gesture: window.__ui.activeGesture(),
   frames: window.__ui.frames, input: !document.getElementById('input-box').hidden, quick: !document.getElementById('quick').hidden,
   quickBtn: (() => { const b = document.getElementById('quick-chat').getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })(),
   choices: !document.getElementById('choices').hidden, choicesTitle: document.getElementById('choices-title').textContent,
