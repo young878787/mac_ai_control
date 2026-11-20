@@ -17,6 +17,8 @@
   },
   "include": [
     "shared",
-    "dev"
+    "dev",
+    "main",
+    "preload"
   ]
 }

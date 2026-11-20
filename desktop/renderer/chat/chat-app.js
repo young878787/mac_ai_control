@@ -102,3 +102,10 @@ window.chat.onState(applyState);
 window.chat.onLive(applyLive);
 updateSend();
 window.chat.ready();
+
+// 除錯探針（main/debug.js 的 debug_chat_* 用）：唯讀的畫面狀態，以及在輸入框填字並送出（走真正的 submit 路徑）
+window.__chat = {
+  probe: () => ({ hidden: document.body.classList.contains('hidden'), rows: document.querySelectorAll('#log .msg').length,
+    text: log.innerText, details: document.querySelectorAll('details.steps').length, live: live.textContent }),
+  submit: (text) => { box.value = text; box.dispatchEvent(new Event('input')); form.requestSubmit(); },
+};

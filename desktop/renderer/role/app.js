@@ -323,6 +323,19 @@ async function main() {
   window.__ui = { snapshot: () => controller.snapshot(Date.now()), poseT: () => poseT, activeMotion: () => activeMotion,
     activeGesture: () => activeGesture, topY, modelH: MODEL_H, frames: 0, alphaAt, drawables: raw.drawables.count };
 
+  // 除錯探針（唯讀，main/debug.js 的 debug_capture 讀它；DOM 選擇器留在畫面這邊，主程序不用知道 id）
+  window.__ui.probe = () => {
+    const center = (el) => { const b = el.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    return { snap: window.__ui.snapshot(), poseT: window.__ui.poseT(), motion: window.__ui.activeMotion(), gesture: window.__ui.activeGesture(),
+      frames: window.__ui.frames, input: !$('input-box').hidden, quick: !$('quick').hidden, quickBtn: center($('quick-chat')),
+      choices: !$('choices').hidden, choicesTitle: $('choices-title').textContent,
+      choiceRows: [...document.querySelectorAll('#choices-list li')].map(li => { const r = li.getBoundingClientRect(), b = li.querySelector('button').getBoundingClientRect();
+        return { text: li.textContent, x: r.x + 40, y: r.y + r.height / 2, bx: b.x + b.width / 2, by: b.y + b.height / 2 }; }),
+      inputFocused: document.activeElement === $('input'), alphaHead: window.__ui.alphaAt(180, window.__ui.topY() + 80),
+      alphaCorner: window.__ui.alphaAt(2, 2), perf: window.__ui.perf(), drawables: window.__ui.drawables };
+  };
+  window.__ui.submitText = (text) => { $('input').value = text; $('input-box').requestSubmit(); };   // 在輸入框填字並送出（走真正的 submit 路徑）
+
   for (let i = 0; i < 120; i++) { raw.parameters.values.set(defaults); physics.evaluate(core, 1 / 60); }  // 讓頭髮物理先穩定
   startMotion('Idle'); startExpression('neutral');
   // 動作軌跡（ui_motion 用）：start 開始記錄；stop 回傳 { cols, motions, rows, marks, cursor, halfRate, truncated } 並清空，沒在記錄回傳 null

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "mac_ai_control 的桌面角色介面（Electron＋Live2D）",
-  "main": "main.js",
+  "main": "main/index.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test",
