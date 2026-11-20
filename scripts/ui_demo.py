@@ -2,7 +2,7 @@
 
     python scripts/ui_demo.py                  啟動 Electron 並播放一輪（播完結束）
     python scripts/ui_demo.py --hold           播完後保持執行，可手動操作（打字、點擊、右鍵），Ctrl+C 結束
-    python scripts/ui_demo.py --capture DIR    每個狀態把視窗存成 DIR/<名稱>.png（開發驗證用）
+    python scripts/ui_demo.py --capture DIR    每個狀態把視窗存成 DIR/<名稱>.png＋.json，並逐張比對演出（動作、表情、手勢）印出 PASS／FAIL
     python scripts/ui_demo.py --no-launch      只開事件匯流排，Electron 自己用 npm start 啟動（會印出需要的環境變數）
     python scripts/ui_demo.py --focus-test N   輸入框開關 N 次，確認每次前景 App 都沒被搶走（取代人工的 E5 前半段）
     python scripts/ui_demo.py --interact-test  注入點擊與打字，確認 UI 會把 wake／command 送回後端（走完整條 Electron → 後端的路）
@@ -35,6 +35,24 @@ REPLY_RESULT = {"type": "result", "command": "今天天氣如何", "ok": True, "
                 "replies": ["今天台北多雲，氣溫約 24 度，晚上可能有短暫陣雨。"]}
 
 
+# 每個截圖點應有的演出（docs/桌面角色模型升級（fullrig03）：實作計畫.md §5.2）：動作、臉部表情、手勢、是否出場
+EXPECTED = {
+    "02-appear": ("Surprised", "surprised", "none", True),
+    "04-executing": ("Curious", "neutral", "none", True),
+    "05-success": ("Nod", "happy", "none", True),
+    "06-failure": ("Shake", "pout", "none", True),
+    "07-reply": ("Talk", "happy", "none", True),
+    "08-think": ("Curious", "neutral", "chin_rest", True),
+    "09-fail-again": ("Shake", "pout_left", "none", True),
+    "10-sleepy": (None, "sleepy", "chin_rest", True),
+    "11-retreat": ("Idle", None, "none", False),
+    "12-click-head": ("Surprised", "star_eyes", "arm_r_up", True),
+    "13-click-body": ("Happy", "happy", "arm_l_up", True),
+}
+# 視窗座標：潛伏時的頭部（模型頂端 y＝560−420×0.3）、出場時的身體（模型頂端 y＝560−420）
+PEEK_HEAD_XY, BODY_XY = (180, 474), (180, 380)
+
+
 def play(bus: UiBus, wait, capture) -> None:
     pub = bus.publish
     wait(1.5, "peek")
@@ -64,11 +82,42 @@ def play(bus: UiBus, wait, capture) -> None:
     pub(REPLY_RESULT)
     wait(1.2, "reply")
     capture("07-reply")
+    pub({"type": "executing", "command": "打開不存在的程式"})
+    wait(3.0, "long execution")
+    capture("08-think")
+    pub(FAIL_RESULT)
+    wait(0.6, "failure")
+    pub({"type": "executing", "command": "打開不存在的程式"})
+    wait(0.3, "executing")
+    pub(FAIL_RESULT)
+    wait(1.0, "failure again")
+    capture("09-fail-again")
     pub({"type": "session", "remaining_s": 0})
     wait(0.8, "session ended")
-    capture("08-sleepy")
+    capture("10-sleepy")
     wait(2.5, "retreat")
-    capture("09-retreat")
+    capture("11-retreat")
+    pub({"type": "debug_click", "x": PEEK_HEAD_XY[0], "y": PEEK_HEAD_XY[1]})  # debug_click 只有 --capture 時才有效
+    wait(0.8, "click head")
+    capture("12-click-head")
+    wait(1.5, "gesture done")
+    pub({"type": "debug_click", "x": BODY_XY[0], "y": BODY_XY[1]})
+    wait(0.6, "click body")
+    capture("13-click-body")
+
+
+def check_capture(capture_dir: Path) -> bool:
+    """逐張比對 EXPECTED（R2）；None 表示那一欄不檢查"""
+    ok = True
+    for name, (motion, expression, gesture, out) in EXPECTED.items():
+        s = json.loads((capture_dir / f"{name}.json").read_text())["state"]
+        got = (s["motion"], s["snap"]["expression"], s["gesture"], s["poseT"] > 0.5)
+        want = (motion, expression, gesture, out)
+        passed = all(w is None or g == w for g, w in zip(got, want)) and s["snap"]["gesture"] == s["gesture"]
+        ok &= passed
+        print(f"{'PASS' if passed else 'FAIL'}  {name}：動作 {got[0]}、表情 {got[1]}、手勢 {got[2]}、出場 {got[3]}"
+              + ("" if passed else f"（應為 {want}）"))
+    return ok
 
 
 def frontmost_app() -> str:
@@ -371,6 +420,8 @@ def main() -> int:
             time.sleep(2)
             return 0 if focus_test(bus, args.focus_test, Path(args.capture)) else 1
         play(bus, wait, capture)
+        if args.capture and not check_capture(Path(args.capture)):
+            return 1
         if args.hold:
             print("播放完畢；保持執行中（Ctrl+C 結束）。可打字、點擊角色、按右鍵。")
             while True:
