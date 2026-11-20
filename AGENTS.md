@@ -33,7 +33,7 @@ python build_vocab.py                     # 改 vocab/lexicon.json 後重產 stt
 python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥克風預覽桌面角色；--chat-test 驗聊天室（會短暫出現視窗）
 ```
 
-基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 67 pass（2026-11-18 加聊天室後實測 pytest 1725 通過、5 skipped）。新增行為要新增測試。
+基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 換 fullrig03 模型、加手勢、幀率閘門與渲染包裝後實測 101 pass；pytest 1725 通過、5 skipped）。新增行為要新增測試。
 
 ## 3. 架構與資料流
 
