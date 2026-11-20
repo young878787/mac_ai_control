@@ -1,6 +1,8 @@
 /** Fixed 60 Hz adapter for this model's independent, full-weight hair outputs.
  * The pinned CubismPhysics solver is unchanged. Rendering interpolates its last
  * two fixed-step outputs, intentionally adding one physics tick of latency.
+ * evaluate() returns the largest per-step output change of this call (null when
+ * no fixed step ran), which the frame loop uses to tell when the hair has settled.
  */
 export function createFixedPhysics(solver, core, physicsJson) {
   const STEP = 1 / 60;
@@ -43,9 +45,10 @@ export function createFixedPhysics(solver, core, physicsJson) {
   function evaluate(model, deltaSeconds) {
     if (model !== core) throw new Error('Physics clock belongs to a different Core model');
     if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) throw new Error('Invalid physics delta seconds');
-    if (deltaSeconds === 0) return;
+    if (deltaSeconds === 0) return null;
     if (deltaSeconds > 0.25) throw new Error('Clamp suspended render frames before advancing the physics clock');
     const renderValues = Float32Array.from(raw.values);
+    let maxDelta = null;
     remainder += deltaSeconds;
     diagnostics.frames++;
     diagnostics.elapsedSeconds += deltaSeconds;
@@ -65,6 +68,7 @@ export function createFixedPhysics(solver, core, physicsJson) {
         for (let i = 0; i < outputIndices.length; i++) {
           currentOutput[i] = raw.values[outputIndices[i]];
           if (!Number.isFinite(currentOutput[i])) throw new Error('Nonfinite fixed-step physics output');
+          maxDelta = Math.max(maxDelta ?? 0, Math.abs(currentOutput[i] - previousOutput[i]));
         }
         remainder = Math.max(0, remainder - STEP);
         diagnostics.simulationSteps++;
@@ -77,6 +81,7 @@ export function createFixedPhysics(solver, core, physicsJson) {
     for (let i = 0; i < outputIndices.length; i++) {
       raw.values[outputIndices[i]] = previousOutput[i] * (1 - alpha) + currentOutput[i] * alpha;
     }
+    return maxDelta;
   }
 
   initialize();
