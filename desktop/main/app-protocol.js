@@ -11,6 +11,7 @@ export function appRoutes(root, modelPath) {
     roots: [
       ['/renderer/', path.join(root, 'renderer')],
       ['/domain/', path.join(root, 'domain')],
+      ['/rig/', path.join(root, 'rig')],
       ['/shared/', path.join(root, 'shared')],
       ['/vendor/', path.join(root, 'vendor')],
       ['/model/', modelPath ? path.dirname(modelPath) : path.join(root, 'no-model')],

@@ -1,11 +1,18 @@
 // 桌面角色的狀態機：後端事件＋時間 → 要做的演出（動作、表情、進退場、泡泡）。
 // 純邏輯：不碰 DOM、pixi、Electron；時間一律由呼叫端傳入（毫秒），方便用 node --test 驗證。
 
+import { CHOICES_MAX, EXPAND_REASONS } from '../shared/contract.js';
+
+// 演出一律用語意名稱（驚訝、點頭…），不知道是哪個模型；語意名稱對應到模型裡的動作／表情／手勢名稱是 rig/ 的事。
+// 新增語意名稱要同步在 rig/ 的 profile 補對應（rig/check.js 的 checkRig 會檢查）。
 export const MOTIONS = Object.freeze({
-  idle: 'Idle', surprised: 'Surprised', curious: 'Curious', nod: 'Nod', shake: 'Shake', happy: 'Happy', talk: 'Talk',
-});  // Talk 只是說話的樣子（沒有聲音、不對嘴）；不用 Blink：它的頭身曲線全是 0，會把 Idle 的姿勢歸零，Idle 本身就會眨眼
+  idle: 'idle', surprised: 'surprised', curious: 'curious', nod: 'nod', shake: 'shake', happy: 'happy', talk: 'talk',
+});  // talk 只是說話的樣子（沒有聲音、不對嘴）；不用 Blink：它的頭身曲線全是 0，會把 Idle 的姿勢歸零，Idle 本身就會眨眼
+export const EXPRESSIONS = Object.freeze({
+  neutral: 'neutral', happy: 'happy', pout: 'pout', sleepy: 'sleepy', surprised: 'surprised', starEyes: 'starEyes', poutLeft: 'poutLeft',
+});
 // 手勢層（手臂切換）：和臉部表情分開的第二個表情佇列，三個互斥；none＝收回手臂
-export const GESTURES = Object.freeze({ armLeftUp: 'arm_l_up', armRightUp: 'arm_r_up', chinRest: 'chin_rest', none: 'none' });
+export const GESTURES = Object.freeze({ armLeftUp: 'armLeftUp', armRightUp: 'armRightUp', chinRest: 'chinRest', none: 'none' });
 
 export const EXPRESSION_MS = 2000;       // 臉部表情（happy／pout／surprised…）維持時間
 export const GESTURE_MS = 1500;          // 揮手、舉手維持時間
@@ -26,8 +33,7 @@ export const PARTIAL_BUBBLE_MS = 4000;   // partial 泡泡的保險期限：沒�
 export const PENDING_BUBBLE_MS = 30000;
 export const QUICK_MS = 5000;            // 點角色彈出的快捷泡泡，沒有操作這麼久就收起來
 export const EXPAND_NOTICE = '詳細內容在對話視窗';   // 後端要求聊天室展開（result.expand）時，角色泡泡只放這句，內容在聊天室
-const EXPAND_REASONS = ['screen', 'chat', 'complex'];
-export const CHOICES_MAX = 5;            // 搜尋結果清單最多顯示幾列（與後端 FIND_RESULTS_MAX 一致）
+export { CHOICES_MAX };
 
 export function bubbleLifetime(text) {
   return Math.min(BUBBLE_MAX_MS, Math.max(BUBBLE_MIN_MS, BUBBLE_MIN_MS + BUBBLE_PER_CHAR_MS * [...text].length));
@@ -62,7 +68,7 @@ export function createController() {
     mode: 'idle',            // idle／listening／executing／success／failure
     paused: false,
     session: { active: false, endsAt: 0, lengthMs: 60000 },
-    expression: { name: 'neutral', until: 0 },
+    expression: { name: EXPRESSIONS.neutral, until: 0 },
     gesture: { name: GESTURES.none, until: 0 },   // until＝0：直到被別的事件收回
     thinkAt: null,           // 執行中：到這個時間還沒結果就托腮
     talkUntil: null,         // 說話動作播到這個時間回到 Idle
@@ -76,6 +82,11 @@ export function createController() {
     nextBubbleId: 1,
   };
 
+  /**
+   * @param {object[]} effects
+   * @param {number} now
+   * @param {{ id?: string, kind: string, text: string, ms: number }} spec
+   */
   function bubble(effects, now, { id, kind, text, ms }) {
     const existing = id && s.bubbles.find(b => b.id === id);
     if (existing) {
@@ -99,11 +110,16 @@ export function createController() {
     effects.push({ type: 'gesture', name });
   }
   /** 播放動作；說話動作以外的動作會取消說話的結束時間（否則之後會把新動作切回 Idle） */
-  function playMotion(effects, group, now, talkMs = 0) {
-    s.talkUntil = group === MOTIONS.talk ? now + talkMs : null;
-    effects.push({ type: 'motion', group });
+  function playMotion(effects, name, now, talkMs = 0) {
+    s.talkUntil = name === MOTIONS.talk ? now + talkMs : null;
+    effects.push({ type: 'motion', name });
   }
-  /** greet：'voice'＝語音喚醒／會話開始（驚訝）；'click'＝點頭部（星星眼＋揮手）；false＝不打招呼 */
+  /**
+   * greet：'voice'＝語音喚醒／會話開始（驚訝）；'click'＝點頭部（星星眼＋揮手）；false＝不打招呼
+   * @param {object[]} effects
+   * @param {number} now
+   * @param {{ greet?: 'voice' | 'click' | false }} [opts]
+   */
   function appear(effects, now, { greet = 'voice' } = {}) {
     s.lastActivityAt = now;
     s.retreatAt = null;
@@ -113,10 +129,10 @@ export function createController() {
     if (greet) {
       playMotion(effects, MOTIONS.surprised, now);
       if (greet === 'click') {
-        setExpression(effects, 'star_eyes', now, EXPRESSION_MS);
+        setExpression(effects, EXPRESSIONS.starEyes, now, EXPRESSION_MS);
         setGesture(effects, GESTURES.armRightUp, now, GESTURE_MS);
       } else {
-        setExpression(effects, 'surprised', now, EXPRESSION_MS);
+        setExpression(effects, EXPRESSIONS.surprised, now, EXPRESSION_MS);
       }
     }
   }
@@ -147,7 +163,7 @@ export function createController() {
     s.failStreak = 0;
     removeBubble('partial');
     if (s.pose === 'out') {
-      setExpression(effects, 'sleepy', now, SLEEPY_MS);
+      setExpression(effects, EXPRESSIONS.sleepy, now, SLEEPY_MS);
       setGesture(effects, GESTURES.chinRest, now, SLEEPY_MS);
       s.retreatAt = now + SLEEPY_MS;
     }
@@ -200,12 +216,12 @@ export function createController() {
         } else {
           playMotion(effects, MOTIONS.nod, now);
         }
-        setExpression(effects, 'happy', now, EXPRESSION_MS);
+        setExpression(effects, EXPRESSIONS.happy, now, EXPRESSION_MS);
       } else {
         s.mode = 'failure';
         s.failStreak++;
         playMotion(effects, MOTIONS.shake, now);
-        setExpression(effects, s.failStreak >= 2 ? 'pout_left' : 'pout', now, EXPRESSION_MS);
+        setExpression(effects, s.failStreak >= 2 ? EXPRESSIONS.poutLeft : EXPRESSIONS.pout, now, EXPRESSION_MS);
       }
       const list = ev.choices && !ev.choices.closed ? cleanChoices(ev.choices) : null;
       if (list) {                                            // 有清單：清單本身就是輸出，不另外跳泡泡（會被清單蓋住）
@@ -239,8 +255,8 @@ export function createController() {
     tick(now) {
       const effects = [];
       if (s.expression.until && now >= s.expression.until) {
-        s.expression = { name: 'neutral', until: 0 };
-        effects.push({ type: 'expression', name: 'neutral' });
+        s.expression = { name: EXPRESSIONS.neutral, until: 0 };
+        effects.push({ type: 'expression', name: EXPRESSIONS.neutral });
         if (s.mode === 'success' || s.mode === 'failure') s.mode = 'idle';
       }
       if (s.gesture.until && now >= s.gesture.until) setGesture(effects, GESTURES.none, now);
@@ -271,7 +287,7 @@ export function createController() {
         effects.push({ type: 'send', message: { type: 'wake' } });
       } else {
         playMotion(effects, MOTIONS.happy, now);
-        setExpression(effects, 'happy', now, EXPRESSION_MS);
+        setExpression(effects, EXPRESSIONS.happy, now, EXPRESSION_MS);
         setGesture(effects, GESTURES.armLeftUp, now, GESTURE_MS);
       }
       s.quick = s.quick ? null : { until: now + QUICK_MS, hover: false };   // 點一下彈出快捷泡泡，再點一下收起

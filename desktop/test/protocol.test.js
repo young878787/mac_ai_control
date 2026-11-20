@@ -55,6 +55,8 @@ test('真實設定：畫面需要的檔案可以讀', () => {
     ['app://ui/domain/character.js', '/srv/desktop/domain/character.js'],
     ['app://ui/domain/frame-gate.js', '/srv/desktop/domain/frame-gate.js'],
     ['app://ui/shared/contract.js', '/srv/desktop/shared/contract.js'],
+    ['app://ui/rig/fullrig03.js', '/srv/desktop/rig/fullrig03.js'],
+    ['app://ui/rig/check.js', '/srv/desktop/rig/check.js'],
     ['app://ui/vendor/live2dcubismcore.min.js', '/srv/desktop/vendor/live2dcubismcore.min.js'],
     ['app://ui/model/Rushia.model3.json', '/models/rushia/Rushia.model3.json'],
     ['app://ui/lib/pixi.min.js', '/srv/desktop/node_modules/pixi.js/dist/browser/pixi.min.js'],
@@ -67,7 +69,7 @@ test('真實設定：main、preload、dev、node_modules 與其他單檔讀不�
     'app://ui/main/index.js', 'app://ui/main/app-protocol.js', 'app://ui/preload/role.cjs', 'app://ui/preload/chat.cjs',
     'app://ui/dev/motion-metrics.js', 'app://ui/node_modules/electron/package.json', 'app://ui/package.json', 'app://ui/test/state.test.js',
     'app://ui/lib/other.js', 'app://ui/domain', 'app://ui/domainx/a.js', 'app://ui/state.js',
-    'app://ui/domain/../main/index.js', 'app://ui/domain/%2e%2e/main/index.js', 'app://ui/shared/..%2fmain%2findex.js', 'app://ui/renderer/..%2fpreload%2frole.cjs',
+    'app://ui/rig/../main/index.js', 'app://ui/domain/../main/index.js', 'app://ui/domain/%2e%2e/main/index.js', 'app://ui/shared/..%2fmain%2findex.js', 'app://ui/renderer/..%2fpreload%2frole.cjs',
   ]) assert.equal(rr(url), null, url);
 });
 

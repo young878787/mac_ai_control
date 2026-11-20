@@ -1,19 +1,21 @@
 // 畫面程序：載入 Live2D 模型、依狀態機演出、處理點擊穿透／拖曳／輸入。
-import { createController, PEEK_RATIO } from '../../domain/character.js';
+import { createController, EXPRESSIONS, GESTURES, MOTIONS, PEEK_RATIO } from '../../domain/character.js';
 import { createFixedPhysics } from '../engine/physics-clock.js';
 import { createFrameGate } from '../../domain/frame-gate.js';
+import { checkRig } from '../../rig/check.js';
+import rig from '../../rig/fullrig03.js';
 import { installDrawableColors } from '../engine/compat/drawable-colors.js';
 import { installRenderBuffers, installStateCache, nextRenderFrame } from '../engine/compat/render-buffers.js';
 import { createInterpolator } from '../engine/vertex-interp.js';
 import { createBubbles, createChoices, createInputBox, createQuick } from './widgets.js';
 
-const MODEL_H = 420;                              // 出場時模型高度（px）
-const REGION = { x: 380, y: 0, w: 1280, h: 2048 };  // 模型座標中的「全身」範圍（與預覽相同）
-const HEAD_FRACTION = 0.30;                       // 模型頂端往下這個比例內算「頭部」
-const NEEDED_MOTIONS = ['Idle', 'Surprised', 'Curious', 'Nod', 'Shake', 'Happy', 'Talk'];  // 不載入 Blink（會把 Idle 的姿勢歸零）
-const NEEDED_EXPRESSIONS = ['neutral', 'happy', 'pout', 'sleepy'];
-const OPTIONAL_EXPRESSIONS = ['surprised', 'star_eyes', 'pout_left'];  // 缺了只警告，狀態機要求時不演
-const GESTURE_EXPRESSIONS = ['arm_l_up', 'arm_r_up', 'chin_rest'];    // 手勢層（手臂切換參數），和臉部表情分開排隊
+const { height: MODEL_H, region: REGION, headFraction: HEAD_FRACTION } = rig.layout;   // 出場高度（px）、模型座標中的「全身」範圍、算「頭部」的比例
+// 狀態機只說語意名稱（domain/character.js）；rig/ 的 profile 把它對應到模型裡的名稱。除錯介面（__ui、動作軌跡）仍回報模型裡的名稱
+const NEEDED_MOTIONS = Object.values(rig.motions);
+const IDLE = rig.motions[MOTIONS.idle];
+const NEEDED_EXPRESSIONS = Object.values(rig.expressions);
+const OPTIONAL_EXPRESSIONS = Object.values(rig.optional);   // 缺了只警告，狀態機要求時不演
+const GESTURE_EXPRESSIONS = Object.values(rig.gestures);    // 手勢層（手臂切換參數），和臉部表情分開排隊
 const ALPHA_HIT = 25;                             // 游標下像素 alpha ≥ 這個值（約 10%）算點到角色
 const DRAG_PX = 4;
 // 幀率（計畫書 §6.2）：要畫就逐 vsync 畫（60 fps）；潛伏時頭髮物理收尾就停格（0 fps），停格期間只用計時器更新狀態機與泡泡
@@ -68,17 +70,14 @@ async function main() {
   const base = modelURL.slice(0, modelURL.lastIndexOf('/') + 1);
   const settings = await readJSON(modelURL);
   const physicsJSON = await readJSON(base + settings.FileReferences.Physics);
-  const motions = {}, expressions = {};
-  for (const name of NEEDED_MOTIONS) {
-    const item = (settings.FileReferences.Motions || {})[name]?.[0];
-    if (!item) throw new Error(`模型缺少動作：${name}`);
-    motions[name] = await readJSON(base + item.File);
-  }
+  // profile 涵蓋度與模型內容：缺必要的動作／表情就拋錯，缺選用表情與手勢只警告（rig/check.js）
+  const vocab = { motions: Object.values(MOTIONS), expressions: Object.values(EXPRESSIONS), gestures: Object.values(GESTURES).filter(g => g !== GESTURES.none) };
+  for (const w of checkRig(rig, settings, vocab).warnings) console.warn(`[ui] ${w}`);
+  const motions = {}, expressions = {};   // 以模型裡的名稱為 key
+  for (const name of NEEDED_MOTIONS) motions[name] = await readJSON(base + settings.FileReferences.Motions[name][0].File);
   for (const name of [...NEEDED_EXPRESSIONS, ...OPTIONAL_EXPRESSIONS, ...GESTURE_EXPRESSIONS]) {
     const item = (settings.FileReferences.Expressions || []).find(e => e.Name === name);
-    if (!item && NEEDED_EXPRESSIONS.includes(name)) throw new Error(`模型缺少表情：${name}`);
-    if (!item) { console.warn(`[ui] 模型沒有表情 ${name}，這個演出會略過`); continue; }
-    expressions[name] = await readJSON(base + item.File);
+    if (item) expressions[name] = await readJSON(base + item.File);
   }
 
   const app = new PIXI.Application({ view: $('stage'), width: W, height: H, autoStart: false, backgroundAlpha: 0, antialias: true,
@@ -99,8 +98,7 @@ async function main() {
   const defaults = Float32Array.from(raw.parameters.defaultValues);
   const ids = Array.from(raw.parameters.ids);
   const idx = (id) => ids.indexOf(id);
-  const P = { angleX: idx('ParamAngleX'), angleY: idx('ParamAngleY'), angleZ: idx('ParamAngleZ'), bodyZ: idx('ParamBodyAngleZ'),
-    eyeX: idx('ParamEyeBallX'), eyeY: idx('ParamEyeBallY'), eyeOpen: idx('ParamEyeLOpen') };
+  const P = Object.fromEntries(Object.entries(rig.params).map(([key, id]) => [key, idx(id)]));
   const physics = createFixedPhysics(PIXI.live2d.CubismPhysics.create(physicsJSON), core, physicsJSON);
   const motionQueue = new PIXI.live2d.CubismMotionManager();
   const expressionQueue = new PIXI.live2d.CubismMotionQueueManager();
@@ -112,12 +110,12 @@ async function main() {
     Parameters: gestureIds.map(id => ({ Id: id, Value: defaults[ids.indexOf(id)], Blend: 'Overwrite' })) };
   const eyeBlinkIds = settings.Groups?.find(g => g.Name === 'EyeBlink')?.Ids || [];
   const lipSyncIds = settings.Groups?.find(g => g.Name === 'LipSync')?.Ids || [];
-  let time = 0, activeMotion = 'Idle', activeGesture = 'none';
+  let time = 0, activeMotion = IDLE, activeGesture = GESTURES.none;   // 兩者都是模型裡的名稱（除錯介面回報用）
   let trace = null;                                 // 動作軌跡（量測用）：motionTrace('start') 之後每個計算幀記錄頭、眼參數，bus 訊息與游標移動一併記下；沒開始就不記錄
   const traceMs = (at) => Math.round((at - trace.t0) * 10) / 10;
 
-  function startMotion(name) {
-    const json = motions[name];
+  function startMotion(semantic) {
+    const name = rig.motions[semantic], json = motions[name];
     if (!json) return;
     const motion = PIXI.live2d.CubismMotion.create(json);
     motion.setIsLoop(!!json.Meta.Loop); motion.setIsLoopFadeIn(false);
@@ -125,13 +123,15 @@ async function main() {
     motionQueue.startMotionPriority(motion, false, 3);
     activeMotion = name;
   }
-  function startExpression(name) {
-    if (!expressions[name]) return;
-    expressionQueue.startMotion(PIXI.live2d.CubismExpressionMotion.create(expressions[name]), false, time);
+  function startExpression(semantic) {
+    const json = expressions[rig.expressions[semantic] ?? rig.optional[semantic]];
+    if (!json) return;
+    expressionQueue.startMotion(PIXI.live2d.CubismExpressionMotion.create(json), false, time);
   }
-  function startGesture(name) {
+  function startGesture(semantic) {
+    const name = semantic === GESTURES.none ? 'none' : rig.gestures[semantic];
     const json = name === 'none' ? gestureNone : expressions[name];
-    if (!json || !GESTURE_EXPRESSIONS.concat('none').includes(name)) return;
+    if (!json) return;
     gestureQueue.startMotion(PIXI.live2d.CubismExpressionMotion.create(json), false, time);
     activeGesture = name;
   }
@@ -187,7 +187,7 @@ async function main() {
   function applyEffects(effects) {
     for (const e of effects) {
       if (e.type === 'pose') { poseOut = e.pose === 'out'; setPose(e.pose, e.ms); }
-      else if (e.type === 'motion') startMotion(e.group);
+      else if (e.type === 'motion') startMotion(e.name);
       else if (e.type === 'expression') startExpression(e.name);
       else if (e.type === 'gesture') startGesture(e.name);
       else if (e.type === 'send') desktop.send(e.message);
@@ -293,7 +293,7 @@ async function main() {
     app.render();
     const t4 = performance.now();
     partMs.compute += t3 - t1; partMs.render += t4 - t3; partMs.n++;
-    if (motionQueue.isFinished() && activeMotion !== 'Idle') startMotion('Idle');
+    if (motionQueue.isFinished() && activeMotion !== IDLE) startMotion(MOTIONS.idle);
     updateUi(snap);
     return delta;
   }
@@ -320,9 +320,10 @@ async function main() {
   }
 
   // 內部狀態給自動化驗證用（只讀）
-  window.__ui = { snapshot: () => controller.snapshot(Date.now()), poseT: () => poseT, activeMotion: () => activeMotion,
+  const toRig = (snap) => ({ ...snap, expression: rig.expressions[snap.expression] ?? rig.optional[snap.expression] ?? snap.expression,
+    gesture: rig.gestures[snap.gesture] ?? snap.gesture });   // 除錯介面回報模型裡的名稱（ui_demo／ui_motion 的比對用）
+  window.__ui = { snapshot: () => toRig(controller.snapshot(Date.now())), poseT: () => poseT, activeMotion: () => activeMotion,
     activeGesture: () => activeGesture, topY, modelH: MODEL_H, frames: 0, alphaAt, drawables: raw.drawables.count };
-
   // 除錯探針（唯讀，main/debug.js 的 debug_capture 讀它；DOM 選擇器留在畫面這邊，主程序不用知道 id）
   window.__ui.probe = () => {
     const center = (el) => { const b = el.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
@@ -337,7 +338,7 @@ async function main() {
   window.__ui.submitText = (text) => { $('input').value = text; $('input-box').requestSubmit(); };   // 在輸入框填字並送出（走真正的 submit 路徑）
 
   for (let i = 0; i < 120; i++) { raw.parameters.values.set(defaults); physics.evaluate(core, 1 / 60); }  // 讓頭髮物理先穩定
-  startMotion('Idle'); startExpression('neutral');
+  startMotion(MOTIONS.idle); startExpression(EXPRESSIONS.neutral);
   // 動作軌跡（ui_motion 用）：start 開始記錄；stop 回傳 { cols, motions, rows, marks, cursor, halfRate, truncated } 並清空，沒在記錄回傳 null
   window.__ui.motionTrace = (cmd) => {
     if (cmd === 'start') { trace = { t0: performance.now(), rows: [], marks: [], cursor: { px: 0, moves: 0, at: [] }, truncated: false }; return true; }
@@ -392,7 +393,7 @@ async function main() {
     frameStats.push({ at: now, dt: interval, ms: performance.now() - now, trans: animating, resume, delta, out: poseOut });
     if (frameStats.length > 8000) frameStats.shift();
     window.__ui.frames++;
-    if (gate.afterFrame(performance.now(), { out: poseOut, moving: !!trans || activeMotion !== 'Idle', delta })) { request(); return; }
+    if (gate.afterFrame(performance.now(), { out: poseOut, moving: !!trans || activeMotion !== IDLE, delta })) { request(); return; }
     prev = null;                                      // 停格：動作時間不推進，醒來從這裡接續
     if (!frozenTimer && !rafPending) frozenTimer = setInterval(frozenTick, FROZEN_TICK_MS);
   }

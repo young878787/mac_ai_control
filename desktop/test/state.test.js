@@ -8,7 +8,7 @@ import {
 } from '../domain/character.js';
 
 const T0 = 1_000_000;
-const motions = fx => fx.filter(e => e.type === 'motion').map(e => e.group);
+const motions = fx => fx.filter(e => e.type === 'motion').map(e => e.name);
 const exprs = fx => fx.filter(e => e.type === 'expression').map(e => e.name);
 const poses = fx => fx.filter(e => e.type === 'pose').map(e => e.pose);
 const gestures = fx => fx.filter(e => e.type === 'gesture').map(e => e.name);
@@ -316,7 +316,7 @@ test('隨機事件序列：Talk 只在有文字回覆的成功之後、動作／
   let seed = 12345;
   const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
   const allowedMotions = new Set(Object.values(MOTIONS));
-  const allowedExpr = new Set(['neutral', 'happy', 'pout', 'sleepy', 'surprised', 'star_eyes', 'pout_left']);
+  const allowedExpr = new Set(['neutral', 'happy', 'pout', 'sleepy', 'surprised', 'starEyes', 'poutLeft']);
   const allowedGestures = new Set(Object.values(GESTURES));
   const kinds = [
     () => ({ type: 'partial', text: '字'.repeat(1 + Math.floor(rnd() * 30)), wake: rnd() < 0.4 }),
@@ -335,8 +335,8 @@ test('隨機事件序列：Talk 只在有文字回覆的成功之後、動作／
       const fx = ev ? c.handle(ev, now) : c.tick(now);
       for (const e of fx) {
         if (e.type === 'motion') {
-          assert.ok(allowedMotions.has(e.group), e.group);
-          if (e.group === MOTIONS.talk) assert.ok(ev && ev.type === 'result' && ev.ok && ev.replies.length, 'Talk 只能由有回覆的成功觸發');
+          assert.ok(allowedMotions.has(e.name), e.name);
+          if (e.name === MOTIONS.talk) assert.ok(ev && ev.type === 'result' && ev.ok && ev.replies.length, 'Talk 只能由有回覆的成功觸發');
         }
         if (e.type === 'expression') assert.ok(allowedExpr.has(e.name), e.name);
         if (e.type === 'gesture') assert.ok(allowedGestures.has(e.name), e.name);
@@ -357,7 +357,7 @@ test('不使用 Blink（它會把 Idle 的姿勢歸零）', () => {
 test('點頭部 → Surprised＋star_eyes＋揮手（arm_r_up），1.5 秒後收回手勢、2 秒後表情復原', () => {
   const c = createController();
   const fx = c.click('head', T0);
-  assert.deepEqual(motions(fx), [MOTIONS.surprised]); assert.deepEqual(exprs(fx), ['star_eyes']);
+  assert.deepEqual(motions(fx), [MOTIONS.surprised]); assert.deepEqual(exprs(fx), ['starEyes']);
   assert.deepEqual(gestures(fx), [GESTURES.armRightUp]);
   assert.equal(c.snapshot(T0).gesture, GESTURES.armRightUp);
   assert.deepEqual(gestures(c.tick(T0 + GESTURE_MS - 1)), []);
@@ -431,8 +431,8 @@ test('連續失敗：第 1 次 pout，第 2 次起 pout_left；成功後歸零',
   const c = createController();
   const fail = ok({ ok: false, steps: [{ kind: 'fast', text: 'x', status: 'exec_failed', logs: ['❌ 失敗'] }] });
   assert.deepEqual(exprs(c.handle(fail, T0)), ['pout']);
-  assert.deepEqual(exprs(c.handle(fail, T0 + 1000)), ['pout_left']);
-  assert.deepEqual(exprs(c.handle(fail, T0 + 2000)), ['pout_left']);
+  assert.deepEqual(exprs(c.handle(fail, T0 + 1000)), ['poutLeft']);
+  assert.deepEqual(exprs(c.handle(fail, T0 + 2000)), ['poutLeft']);
   c.handle(ok(), T0 + 3000);
   assert.deepEqual(exprs(c.handle(fail, T0 + 4000)), ['pout']);
 });
