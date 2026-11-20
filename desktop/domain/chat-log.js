@@ -2,11 +2,12 @@
 // 純邏輯：不碰 DOM、Electron；時間一律由呼叫端傳入（毫秒），方便用 node --test 驗證。
 // 紀錄只放記憶體，重開 App 就清空（不寫硬碟）。後端內容一律不信任：只留顯示需要的欄位並限制長度。
 
+import { EXPAND_REASONS } from '../shared/contract.js';
+
 export const CHAT_MAX = 200;                // 紀錄上限（筆）
 export const AUTO_CLOSE_MS = 20000;         // 主動展開後沒有互動，這麼久自動收回
 export const PARTIAL_MS = 4000;             // 聆聽中的即時文字沒有後續時的保險期限（同角色泡泡）
 export const PENDING_MS = 60000;            // 處理中的「…」沒等到結果時的保險期限
-export const EXPAND_REASONS = Object.freeze(['screen', 'chat', 'complex']);
 const TEXT_MAX = 4000, STEPS_MAX = 20, LOGS_MAX = 30, LINE_MAX = 2000, ANNOUNCED_MAX = 20;
 
 const clip = (v, n) => String(v ?? '').slice(0, n);

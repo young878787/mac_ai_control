@@ -5,7 +5,7 @@ import {
   createController, summarize, bubbleLifetime, MOTIONS, GESTURES, EXPRESSION_MS, SLEEPY_MS, IDLE_RETREAT_MS,
   BUBBLE_MAX, BUBBLE_MIN_MS, BUBBLE_MAX_MS, QUICK_MS, EXPAND_NOTICE, APPEAR_MS, RETREAT_MS, CHOICES_MAX,
   GESTURE_MS, THINK_MS, TALK_MIN_MS, TALK_MAX_MS, TALK_PER_CHAR_MS,
-} from '../state.js';
+} from '../domain/character.js';
 
 const T0 = 1_000_000;
 const motions = fx => fx.filter(e => e.type === 'motion').map(e => e.group);

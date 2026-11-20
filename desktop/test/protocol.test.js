@@ -6,14 +6,14 @@ import { resolveAppFile } from '../protocol.js';
 
 const HERE = '/srv/desktop';
 const ROOTS = [['/renderer/', `${HERE}/renderer`], ['/vendor/', `${HERE}/vendor`], ['/model/', '/models/rushia']];
-const LIBS = { '/state.js': `${HERE}/state.js`, '/lib/pixi.min.js': `${HERE}/node_modules/pixi.js/dist/browser/pixi.min.js` };
+const LIBS = { '/domain/character.js': `${HERE}/domain/character.js`, '/lib/pixi.min.js': `${HERE}/node_modules/pixi.js/dist/browser/pixi.min.js` };
 const r = (url) => resolveAppFile(url, ROOTS, LIBS);
 
 test('白名單內的檔案', () => {
   assert.equal(r('app://ui/renderer/index.html'), `${HERE}/renderer/index.html`);
   assert.equal(r('app://ui/vendor/live2dcubismcore.min.js'), `${HERE}/vendor/live2dcubismcore.min.js`);
   assert.equal(r('app://ui/model/RushiaHD.4096/texture_00.png'), '/models/rushia/RushiaHD.4096/texture_00.png');
-  assert.equal(r('app://ui/state.js'), LIBS['/state.js']);
+  assert.equal(r('app://ui/domain/character.js'), LIBS['/domain/character.js']);
   assert.equal(r('app://ui/lib/pixi.min.js'), LIBS['/lib/pixi.min.js']);
 });
 

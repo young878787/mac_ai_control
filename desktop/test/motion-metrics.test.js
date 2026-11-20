@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeIdle, analyzeListening, blinkStarts, columns, cursorSpans, gazeShifts, headSpeeds, judgeIdle, judgeListening, listeningWindows, loopRepeat } from '../motion-metrics.js';
+import { analyzeIdle, analyzeListening, blinkStarts, columns, cursorSpans, gazeShifts, headSpeeds, judgeIdle, judgeListening, listeningWindows, loopRepeat } from '../dev/motion-metrics.js';
 
 const COLS = ['t', 'angleX', 'angleY', 'angleZ', 'eyeX', 'eyeY', 'eyeOpen', 'motion'];
 const smooth = (u) => { const c = Math.min(1, Math.max(0, u)); return 3 * c * c - 2 * c * c * c; };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { installRenderBuffers, installStateCache, nextRenderFrame } from '../renderer/render-buffers.js';
+import { installRenderBuffers, installStateCache, nextRenderFrame } from '../renderer/engine/compat/render-buffers.js';
 
 // 假的 WebGL 與假的 pixi-live2d-display 繪製：只記錄呼叫，驗證省略規則與「包裝函式只裝一次」
 const PROGRAM = { program: 1 }, LOCATION = { location: 1 };

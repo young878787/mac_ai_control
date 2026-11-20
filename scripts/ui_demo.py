@@ -24,8 +24,8 @@ from mac_ai import config  # noqa: E402
 from mac_ai.services import ServiceError, check_ui_ready, stop_all, ui_service  # noqa: E402
 from mac_ai.ui_bus import UiBus  # noqa: E402
 
-AUTO_CLOSE_S = 20.0  # 要和 desktop/chat.js 的 AUTO_CLOSE_MS 一致
-EXPAND_NOTICE = "詳細內容在對話視窗"  # 要和 desktop/state.js 的 EXPAND_NOTICE 一致
+AUTO_CLOSE_S = 20.0  # 要和 desktop/domain/chat-log.js 的 AUTO_CLOSE_MS 一致
+EXPAND_NOTICE = "詳細內容在對話視窗"  # 要和 desktop/domain/character.js 的 EXPAND_NOTICE 一致
 
 OK_RESULT = {"type": "result", "command": "打開小算盤", "ok": True, "total_ms": 12.0, "replies": [],
              "steps": [{"kind": "fast", "text": "打開小算盤", "status": "ok", "logs": ["✅ 已開啟 小算盤"]}]}

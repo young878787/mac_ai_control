@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createFrameGate, TAIL_MS } from '../renderer/frame-rate.js';
+import { createFrameGate, TAIL_MS } from '../domain/frame-gate.js';
 
 const OPT = { eps: 0.01, holdMs: 500, maxMs: 4000 };
 const F = 1000 / 60;

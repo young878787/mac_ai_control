@@ -1,11 +1,11 @@
 // 畫面程序：載入 Live2D 模型、依狀態機演出、處理點擊穿透／拖曳／輸入。
-import { createController, PEEK_RATIO } from '../state.js';
-import { createFixedPhysics } from './physics-clock.js';
-import { createFrameGate } from './frame-rate.js';
-import { installDrawableColors } from './drawable-colors.js';
-import { installRenderBuffers, installStateCache, nextRenderFrame } from './render-buffers.js';
-import { createInterpolator } from './vertex-interp.js';
-import { createBubbles, createChoices, createInputBox, createQuick } from './ui.js';
+import { createController, PEEK_RATIO } from '../../domain/character.js';
+import { createFixedPhysics } from '../engine/physics-clock.js';
+import { createFrameGate } from '../../domain/frame-gate.js';
+import { installDrawableColors } from '../engine/compat/drawable-colors.js';
+import { installRenderBuffers, installStateCache, nextRenderFrame } from '../engine/compat/render-buffers.js';
+import { createInterpolator } from '../engine/vertex-interp.js';
+import { createBubbles, createChoices, createInputBox, createQuick } from './widgets.js';
 
 const MODEL_H = 420;                              // 出場時模型高度（px）
 const REGION = { x: 380, y: 0, w: 1280, h: 2048 };  // 模型座標中的「全身」範圍（與預覽相同）
@@ -23,7 +23,7 @@ const MIN_FRAME_MS = 12;                          // 120 Hz 螢幕上 rAF 會到
 const SETTLE = { eps: 0.05, holdMs: 500, maxMs: 3000 };
 const FROZEN_TICK_MS = 250;                       // 停格期間狀態機與泡泡的更新間隔
 const RENDER_OPT = { buffers: true, state: true, halfRate: true };              // 渲染優化開關（計畫書 §6.3，A/B 實測後保留的項目）；有問題時改 false 回到原本的繪製
-const TRACE_COLS = ['t', 'angleX', 'angleY', 'angleZ', 'eyeX', 'eyeY', 'eyeOpen', 'motion'];   // 動作軌跡的欄位（量測用，見 motion-metrics.js）；motion＝NEEDED_MOTIONS 的索引
+const TRACE_COLS = ['t', 'angleX', 'angleY', 'angleZ', 'eyeX', 'eyeY', 'eyeOpen', 'motion'];   // 動作軌跡的欄位（量測用，見 dev/motion-metrics.js）；motion＝NEEDED_MOTIONS 的索引
 const TRACE_MAX = 50000;                          // 軌跡最多記幾列（30 Hz 計算約 28 分鐘），超過就停止記錄並標 truncated
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));

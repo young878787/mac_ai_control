@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInterpolator } from '../renderer/vertex-interp.js';
+import { createInterpolator } from '../renderer/engine/vertex-interp.js';
 
 test('計算幀畫中點、中間幀畫最新值', () => {
   const a = new Float32Array([0, 0]), b = new Float32Array([1]);

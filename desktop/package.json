@@ -7,13 +7,16 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test"
+    "test": "node --test",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "pixi-live2d-display": "0.4.0",
     "pixi.js": "6.5.10"
   },
   "devDependencies": {
-    "electron": "45.2.3"
+    "@types/node": "24.19.2",
+    "electron": "45.2.3",
+    "typescript": "7.0.2"
   }
 }

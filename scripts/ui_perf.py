@@ -28,8 +28,8 @@ from ui_demo import FAIL_RESULT, OK_RESULT, REPLY_RESULT  # noqa: E402
 # CPU 是整台電腦 %（B5）：峰值 5.0＝8 核 M1 的單核 40%；潛伏停格 0.125＝單核 1%
 LIMITS = {"peak_cpu": 5.0, "frozen_cpu": 0.125, "rss_mb": 700.0, "interval_median": (16.2, 17.2), "interval_p95_ms": 18.0,
           "drop_ratio": 0.005, "js_p95_ms": 8.0}
-SETTLE_MAX_S = 3.0          # 要和 desktop/renderer/app.js 的 SETTLE.maxMs 一致
-SLEEPY_S, RETREAT_S = 1.5, 0.8   # 要和 desktop/state.js 的 SLEEPY_MS、RETREAT_MS 一致
+SETTLE_MAX_S = 3.0          # 要和 desktop/renderer/role/app.js 的 SETTLE.maxMs 一致
+SLEEPY_S, RETREAT_S = 1.5, 0.8   # 要和 desktop/domain/character.js 的 SLEEPY_MS、RETREAT_MS 一致
 HEAD = (180, 182)           # 出場時頭部、身體的視窗座標（模型頂端 y＝560−420）
 BODY = (180, 380)
 

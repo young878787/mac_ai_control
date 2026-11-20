@@ -6,7 +6,7 @@
 階段：
   閒置：出場後什麼都不送，記錄 --minutes 分鐘（R2：頭部靜止佔比、最長靜止、視線正中、掃視、眨眼）。
   聆聽：--rounds 輪，每輪 8 秒內每秒送一次 partial（模擬持續說話）再送 heard（ignored），輪與輪之間閒置 10 秒（R3：L1、L2、L4、L5；L3 待 P3）。
-指標由 desktop/motion-metrics.js 計算（和 desktop/test 的模擬測試同一份定義）。
+指標由 desktop/dev/motion-metrics.js 計算（和 desktop/test 的模擬測試同一份定義）。
 通過標準見 docs/桌面角色擬人化（注視與聆聽）：實作計畫.md §7.1、§7.2。"""
 import argparse
 import json
@@ -33,7 +33,7 @@ def analyze(kind: str, trace_file: Path) -> dict:
     node = shutil.which("node")
     if node is None:
         raise ServiceError("找不到 node（指標計算需要，和 cd desktop && node --test 相同）")
-    out = subprocess.run([node, str(config.UI_DIR / "motion-metrics.js"), kind, str(trace_file)], capture_output=True, text=True, timeout=120)
+    out = subprocess.run([node, str(config.UI_DIR / "dev" / "motion-metrics.js"), kind, str(trace_file)], capture_output=True, text=True, timeout=120)
     if out.returncode != 0:
         raise ServiceError(f"指標計算失敗：{out.stderr.strip()}")
     return json.loads(out.stdout)

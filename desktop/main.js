@@ -4,7 +4,7 @@ import { app, BrowserWindow, Menu, globalShortcut, ipcMain, protocol, screen } f
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createChat } from './chat.js';
+import { createChat } from './domain/chat-log.js';
 import { resolveAppFile } from './protocol.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -25,10 +25,9 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 // ---------- 自訂協定：只開放這幾個根目錄與兩個函式庫檔 ----------
-const ROOTS = [['/renderer/', path.join(HERE, 'renderer')], ['/vendor/', path.join(HERE, 'vendor')],
+const ROOTS = [['/renderer/', path.join(HERE, 'renderer')], ['/domain/', path.join(HERE, 'domain')], ['/vendor/', path.join(HERE, 'vendor')],
   ['/model/', MODEL_PATH ? path.dirname(MODEL_PATH) : path.join(HERE, 'no-model')]];
 const LIB_FILES = {
-  '/state.js': path.join(HERE, 'state.js'),
   '/lib/pixi.min.js': path.join(HERE, 'node_modules', 'pixi.js', 'dist', 'browser', 'pixi.min.js'),
   '/lib/cubism4.min.js': path.join(HERE, 'node_modules', 'pixi-live2d-display', 'dist', 'cubism4.min.js'),
 };
@@ -80,7 +79,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: WIN_W, height: WIN_H, show: false, transparent: true, frame: false, hasShadow: false, resizable: false,
     skipTaskbar: true, type: 'panel', backgroundColor: '#00000000', enableLargerThanScreen: true,
-    webPreferences: { preload: path.join(HERE, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true,
+    webPreferences: { preload: path.join(HERE, 'preload', 'role.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true,
       backgroundThrottling: false },
   });
   win.setAlwaysOnTop(true, 'screen-saver');
@@ -88,7 +87,7 @@ function createWindow() {
   win.setIgnoreMouseEvents(true, { forward: true });
   placeWindow();
   forwardConsole(win.webContents, 'renderer');
-  win.loadURL('app://ui/renderer/index.html');
+  win.loadURL('app://ui/renderer/role/index.html');
 }
 function forwardConsole(wc, name) {
   wc.on('console-message', (event) => {
@@ -100,7 +99,7 @@ function forwardConsole(wc, name) {
 }
 
 // ---------- 聊天室視窗 ----------
-// 紀錄與開關的邏輯在 chat.js（純邏輯）；這裡只負責視窗：先建好並隱藏，要開的時候用 showInactive（不搶焦點，前景 App 不變）。
+// 紀錄與開關的邏輯在 domain/chat-log.js（純邏輯）；這裡只負責視窗：先建好並隱藏，要開的時候用 showInactive（不搶焦點，前景 App 不變）。
 // 展開／收合動畫由畫面內容的 CSS 做（視窗本身不動）
 const chat = createChat();
 let chatWin = null, chatReady = false, chatShown = false, chatHideTimer = null;
@@ -116,13 +115,13 @@ function createChatWindow() {
   chatWin = new BrowserWindow({
     width, height, minWidth: CHAT_MIN_W, minHeight: CHAT_MIN_H, show: false, transparent: true, frame: false, hasShadow: true, resizable: true,
     fullscreenable: false, skipTaskbar: true, type: 'panel', backgroundColor: '#00000000',
-    webPreferences: { preload: path.join(HERE, 'chat-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: { preload: path.join(HERE, 'preload', 'chat.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   chatWin.setAlwaysOnTop(true, 'floating');
   chatWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   chatWin.on('resized', () => { const [w, h] = chatWin.getSize(); saveSettings({ chatSize: [w, h] }); });
   forwardConsole(chatWin.webContents, 'chat');
-  chatWin.loadURL('app://ui/renderer/chat.html');
+  chatWin.loadURL('app://ui/renderer/chat/chat.html');
 }
 const chatAlive = () => !!chatWin && !chatWin.isDestroyed();
 /** 貼在角色視窗旁邊（左邊優先，放不下改右邊），下緣對齊工作區底部；回傳在哪一側（動畫從靠角色的那角長出來） */

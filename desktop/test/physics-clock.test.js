@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createFixedPhysics } from '../renderer/physics-clock.js';
+import { createFixedPhysics } from '../renderer/engine/physics-clock.js';
 
 const STEP = 1 / 60;
 const PHYSICS = { PhysicsSettings: [{ Input: [{ Source: { Id: 'In' } }], Output: [{ Destination: { Id: 'Out' }, Weight: 100 }] }] };

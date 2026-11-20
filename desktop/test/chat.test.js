@@ -1,7 +1,7 @@
 // 聊天室紀錄與開關狀態機測試：node --test test/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChat, bodyOf, CHAT_MAX, AUTO_CLOSE_MS, PARTIAL_MS, PENDING_MS } from '../chat.js';
+import { createChat, bodyOf, CHAT_MAX, AUTO_CLOSE_MS, PARTIAL_MS, PENDING_MS } from '../domain/chat-log.js';
 
 const T0 = 1_000_000;
 const types = fx => fx.map(e => e.type);
