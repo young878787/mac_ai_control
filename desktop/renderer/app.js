@@ -23,6 +23,8 @@ const MIN_FRAME_MS = 12;                          // 120 Hz 螢幕上 rAF 會到
 const SETTLE = { eps: 0.05, holdMs: 500, maxMs: 3000 };
 const FROZEN_TICK_MS = 250;                       // 停格期間狀態機與泡泡的更新間隔
 const RENDER_OPT = { buffers: true, state: true, halfRate: true };              // 渲染優化開關（計畫書 §6.3，A/B 實測後保留的項目）；有問題時改 false 回到原本的繪製
+const TRACE_COLS = ['t', 'angleX', 'angleY', 'angleZ', 'eyeX', 'eyeY', 'eyeOpen', 'motion'];   // 動作軌跡的欄位（量測用，見 motion-metrics.js）；motion＝NEEDED_MOTIONS 的索引
+const TRACE_MAX = 50000;                          // 軌跡最多記幾列（30 Hz 計算約 28 分鐘），超過就停止記錄並標 truncated
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const easeOutBack = (k) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2); };
@@ -98,7 +100,7 @@ async function main() {
   const ids = Array.from(raw.parameters.ids);
   const idx = (id) => ids.indexOf(id);
   const P = { angleX: idx('ParamAngleX'), angleY: idx('ParamAngleY'), angleZ: idx('ParamAngleZ'), bodyZ: idx('ParamBodyAngleZ'),
-    eyeX: idx('ParamEyeBallX'), eyeY: idx('ParamEyeBallY') };
+    eyeX: idx('ParamEyeBallX'), eyeY: idx('ParamEyeBallY'), eyeOpen: idx('ParamEyeLOpen') };
   const physics = createFixedPhysics(PIXI.live2d.CubismPhysics.create(physicsJSON), core, physicsJSON);
   const motionQueue = new PIXI.live2d.CubismMotionManager();
   const expressionQueue = new PIXI.live2d.CubismMotionQueueManager();
@@ -111,6 +113,8 @@ async function main() {
   const eyeBlinkIds = settings.Groups?.find(g => g.Name === 'EyeBlink')?.Ids || [];
   const lipSyncIds = settings.Groups?.find(g => g.Name === 'LipSync')?.Ids || [];
   let time = 0, activeMotion = 'Idle', activeGesture = 'none';
+  let trace = null;                                 // 動作軌跡（量測用）：motionTrace('start') 之後每個計算幀記錄頭、眼參數，bus 訊息與游標移動一併記下；沒開始就不記錄
+  const traceMs = (at) => Math.round((at - trace.t0) * 10) / 10;
 
   function startMotion(name) {
     const json = motions[name];
@@ -152,7 +156,10 @@ async function main() {
 
   // ---------- 視線 ----------
   let cursor = null, gx = 0, gy = 0;
-  desktop.onCursor((p) => { cursor = p; });
+  desktop.onCursor((p) => {
+    if (trace && cursor) { const d = Math.hypot(p.x - cursor.x, p.y - cursor.y); if (d >= 1) { trace.cursor.px += d; trace.cursor.moves++; if (trace.cursor.at.length < TRACE_MAX) trace.cursor.at.push(traceMs(performance.now())); } }
+    cursor = p;
+  });
 
   // ---------- 狀態機與介面 ----------
   const controller = createController();
@@ -188,6 +195,7 @@ async function main() {
     if (effects.length) wake();
   }
   desktop.onBus((msg) => {
+    if (trace) trace.marks.push({ t: traceMs(performance.now()), type: msg.type, status: msg.status, wake: msg.wake, remaining_s: msg.remaining_s });
     if (msg.type === 'partial' && input.isOpen()) input.setHint(msg.text);
     if (msg.type === 'heard' && input.isOpen()) input.setHint('');
     applyEffects(controller.handle(msg, Date.now()));
@@ -274,6 +282,7 @@ async function main() {
       add(P.angleX, 30 * gx); add(P.angleY, 20 * gy); add(P.eyeX, gx); add(P.eyeY, gy);
       add(P.angleZ, 6 * lean + 8 * tilt); add(P.bodyZ, 3 * lean + 5 * tilt);
       delta = physics.evaluate(core, cdt);
+      if (trace) recordTrace(now);
       if (interp) interp.restore();
       core.update();
       if (interp) interp.computed();
@@ -287,6 +296,12 @@ async function main() {
     if (motionQueue.isFinished() && activeMotion !== 'Idle') startMotion('Idle');
     updateUi(snap);
     return delta;
+  }
+  // 記錄這個計算幀的最終頭、眼參數（動作、表情、視線都已疊上，Core 更新之前）
+  function recordTrace(now) {
+    if (trace.rows.length >= TRACE_MAX) { trace.truncated = true; return; }
+    const v = raw.parameters.values, r = (n) => Math.round(n * 1e4) / 1e4;
+    trace.rows.push([traceMs(now), r(v[P.angleX]), r(v[P.angleY]), r(v[P.angleZ]), r(v[P.eyeX]), r(v[P.eyeY]), r(v[P.eyeOpen]), NEEDED_MOTIONS.indexOf(activeMotion)]);
   }
   // 泡泡、快捷鍵、選擇清單、會話光環：每幀更新；停格時由計時器更新
   function updateUi(snap) {
@@ -310,6 +325,14 @@ async function main() {
 
   for (let i = 0; i < 120; i++) { raw.parameters.values.set(defaults); physics.evaluate(core, 1 / 60); }  // 讓頭髮物理先穩定
   startMotion('Idle'); startExpression('neutral');
+  // 動作軌跡（ui_motion 用）：start 開始記錄；stop 回傳 { cols, motions, rows, marks, cursor, halfRate, truncated } 並清空，沒在記錄回傳 null
+  window.__ui.motionTrace = (cmd) => {
+    if (cmd === 'start') { trace = { t0: performance.now(), rows: [], marks: [], cursor: { px: 0, moves: 0, at: [] }, truncated: false }; return true; }
+    if (cmd !== 'stop' || !trace) return null;
+    const { rows, marks, cursor: moved, truncated } = trace;
+    trace = null;
+    return { cols: TRACE_COLS, motions: NEEDED_MOTIONS, rows, marks, cursor: moved, halfRate: RENDER_OPT.halfRate, truncated };
+  };
   // 效能量測（ui_perf 用）：每個實際繪製的幀；perf() 回傳上次讀取以來的統計並清空，方便分階段量
   let frameStats = [];
   const resetParts = () => Object.assign(partMs, { compute: 0, render: 0, n: 0 });

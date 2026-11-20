@@ -2,10 +2,10 @@
 
     python scripts/ui_perf.py [--seconds 60]
 
-CPU 用 `ps -o cputime` 每秒取樣一次（CPU 時間差 ÷ 牆鐘時間，單位是「單核 %」；macOS 的 %cpu 是整個生命週期平均，不能取樣），
-報每個階段的平均與每秒峰值，括號內換算成整台電腦（÷ 核心數）。
+CPU 用 `ps -o cputime` 每秒取樣一次（CPU 時間差 ÷ 牆鐘時間；macOS 的 %cpu 是整個生命週期平均，不能取樣），
+取樣值是「單核 %」，報每個階段的平均與每秒峰值，並換算成整台電腦（÷ 核心數）；**CPU 的通過判定用整台電腦 %**。
 階段：潛伏停格 → 出場 60 fps（期間輪流觸發每一種演出）→ 反覆進退場 → 退場後停格、事件喚醒。
-通過標準見 docs/桌面角色模型升級（fullrig03）：實作計畫.md §9.2 R4～R6。"""
+通過標準見 docs/桌面角色擬人化（注視與聆聽）：實作計畫.md §7.2 R4（沿用 docs/桌面角色模型升級（fullrig03）：實作計畫.md §9.2 R4～R6）。"""
 import argparse
 import json
 import os
@@ -25,8 +25,8 @@ from mac_ai.services import check_ui_ready, stop_all, ui_service  # noqa: E402
 from mac_ai.ui_bus import UiBus  # noqa: E402
 from ui_demo import FAIL_RESULT, OK_RESULT, REPLY_RESULT  # noqa: E402
 
-# 單核 %：峰值 40＝8 核 M1 整台電腦的 5%（D1）
-LIMITS = {"peak_cpu": 40.0, "frozen_cpu": 1.0, "rss_mb": 700.0, "interval_median": (16.2, 17.2), "interval_p95_ms": 18.0,
+# CPU 是整台電腦 %（B5）：峰值 5.0＝8 核 M1 的單核 40%；潛伏停格 0.125＝單核 1%
+LIMITS = {"peak_cpu": 5.0, "frozen_cpu": 0.125, "rss_mb": 700.0, "interval_median": (16.2, 17.2), "interval_p95_ms": 18.0,
           "drop_ratio": 0.005, "js_p95_ms": 8.0}
 SETTLE_MAX_S = 3.0          # 要和 desktop/renderer/app.js 的 SETTLE.maxMs 一致
 SLEEPY_S, RETREAT_S = 1.5, 0.8   # 要和 desktop/state.js 的 SLEEPY_MS、RETREAT_MS 一致
@@ -132,7 +132,7 @@ def main() -> int:
         st = state()
         cpu_line("潛伏停格", peek)
         print(f"  期間繪製 {st['perf']['frames']} 幀、停格中 {st['perf']['frozen']}")
-        checks["潛伏停格 CPU 平均"] = (peek.avg <= LIMITS["frozen_cpu"], f"{peek.avg:.2f} ≤ {LIMITS['frozen_cpu']:g}")
+        checks["潛伏停格 CPU 平均（整台）"] = (peek.avg / cores <= LIMITS["frozen_cpu"], f"{peek.avg / cores:.3f}% ≤ {LIMITS['frozen_cpu']:g}%")
 
         # 出場 60 fps：輪流觸發每一種演出（點身體、點頭部、長執行托腮、成功、說話、連續失敗）
         bus.publish({"type": "session", "remaining_s": 3600.0})
@@ -155,7 +155,7 @@ def main() -> int:
         print(f"  {p['frames']} 幀：間隔中位 {p['intervalMedian']:.2f} ms｜p95 {p['intervalP95']:.2f} ms｜掉格（> 25 ms）{p['drops']}（{drop_ratio:.2%}）"
               f"｜每幀 JS p95 {p['renderMsP95']:.2f} ms｜各段平均 {p['parts']}")
         lo, hi = LIMITS["interval_median"]
-        checks["出場 CPU 每秒峰值"] = (out.peak <= LIMITS["peak_cpu"], f"{out.peak:.1f} ≤ {LIMITS['peak_cpu']:g}")
+        checks["出場 CPU 每秒峰值（整台）"] = (out.peak / cores <= LIMITS["peak_cpu"], f"{out.peak / cores:.2f}% ≤ {LIMITS['peak_cpu']:g}%")
         checks["幀間隔中位"] = (lo <= p["intervalMedian"] <= hi, f"{p['intervalMedian']:.2f} 在 {lo}～{hi}")
         checks["幀間隔 p95"] = (p["intervalP95"] <= LIMITS["interval_p95_ms"], f"{p['intervalP95']:.2f} ≤ {LIMITS['interval_p95_ms']:g}")
         checks["掉格比例"] = (drop_ratio <= LIMITS["drop_ratio"], f"{drop_ratio:.2%} ≤ {LIMITS['drop_ratio']:.1%}")
@@ -170,7 +170,7 @@ def main() -> int:
         p = state()["perf"]
         cpu_line("反覆進退場", trans)
         print(f"  動畫幀 {p['animFrames']}：間隔中位 {p['animIntervalMedian']:.2f} ms｜p95 {p['animIntervalP95']:.2f} ms")
-        checks["進退場 CPU 每秒峰值"] = (trans.peak <= LIMITS["peak_cpu"], f"{trans.peak:.1f} ≤ {LIMITS['peak_cpu']:g}")
+        checks["進退場 CPU 每秒峰值（整台）"] = (trans.peak / cores <= LIMITS["peak_cpu"], f"{trans.peak / cores:.2f}% ≤ {LIMITS['peak_cpu']:g}%")
         checks["進退場幀間隔 p95"] = (p["animIntervalP95"] <= LIMITS["interval_p95_ms"], f"{p['animIntervalP95']:.2f} ≤ {LIMITS['interval_p95_ms']:g}")
 
         # 退場 → 停格：會話結束後 sleepy＋退場動畫，再加收尾上限之內要停格，之後幀數不再增加

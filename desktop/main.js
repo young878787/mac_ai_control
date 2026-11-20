@@ -249,6 +249,15 @@ async function debugHook(msg) {
   } else if (msg.type === 'debug_click') {  // 對網頁注入一次左鍵點擊（不經作業系統，所以不需要輔助使用權限）
     for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, x: msg.x, y: msg.y, button: 'left', clickCount: 1 });
   }
+  else if (msg.type === 'debug_trace') {    // 動作軌跡（scripts/ui_motion.py）：start 開始記錄；stop 把記錄存成 <name>.json
+    const safe = String(msg.name || 'trace').replace(/[^\w.-]/g, '_');
+    if (msg.cmd === 'start') await win.webContents.executeJavaScript(`window.__ui.motionTrace('start')`).catch(() => null);
+    else if (msg.cmd === 'stop') {
+      const trace = await win.webContents.executeJavaScript(`window.__ui.motionTrace('stop')`).catch(() => null);
+      fs.mkdirSync(CAPTURE_DIR, { recursive: true });
+      fs.writeFileSync(path.join(CAPTURE_DIR, `${safe}.json`), JSON.stringify(trace));
+    }
+  }
   else if (msg.type === 'debug_capture') {
     const safe = String(msg.name || 'capture').replace(/[^\w.-]/g, '_');
     const img = await win.webContents.capturePage();
