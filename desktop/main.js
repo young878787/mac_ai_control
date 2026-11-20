@@ -139,6 +139,7 @@ function openChat(auto, since) {
   clearTimeout(chatHideTimer);
   const side = placeChat();
   chatShown = true;
+  sentRev = -1; pushChatState();                      // 隱藏期間不推紀錄，展開時一次補上
   if (!chatWin.isVisible()) chatWin.showInactive();   // 不搶焦點：前景 App 會決定 front_action、分頁、看畫面的對象
   lastOpen = { auto, showMs: Date.now() - since, paintMs: null };
   if (chatReady) chatWin.webContents.send('chat-show', { auto, side });   // 還沒載入完的話，ready 時補送
@@ -160,9 +161,9 @@ function runChat(effects, since = Date.now()) {
     else if (e.type === 'chat-close') closeChat();
   }
 }
-/** 紀錄有變才重送整份（上限 200 筆）；只有即時文字變就只送它 */
+/** 紀錄有變才重送整份（上限 200 筆）；只有即時文字變就只送它。聊天室隱藏時不送：它的 renderer 每收到一次就重畫（實測每則結果 20–40 ms CPU） */
 function pushChatState() {
-  if (!chatAlive() || !chatReady) return;
+  if (!chatAlive() || !chatReady || !chatShown) return;
   const snap = chat.snapshot();
   if (snap.rev !== sentRev) {
     sentRev = snap.rev; sentPartial = snap.partial;

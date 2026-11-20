@@ -116,7 +116,7 @@ python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥�
     read_screen → screencapture；雲端路線且 CLOUD_VISION_ENABLED 時看圖走雲端
 → 結果 → result 事件 →（--ui）ui_bus WebSocket :8766 → desktop/main.js（唯一持有連線與 token）
      ├→ 角色視窗（Electron + Live2D＋泡泡；有 expand 時泡泡只放「詳細內容在對話視窗」）
-     └→ chat.js（紀錄只放記憶體、重開清空）→ 聊天室視窗（獨立視窗，平常隱藏；有 expand 時 showInactive 展開、無互動 20 秒收回）
+     └→ chat.js（紀錄只放記憶體、重開清空）→ 聊天室視窗（獨立視窗，平常隱藏、隱藏時不推紀錄，展開前才補送；有 expand 時 showInactive 展開、無互動 20 秒收回）
 ```
 
 ### 3.2 模組職責
