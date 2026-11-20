@@ -26,14 +26,15 @@ pytest -m live -s                         # 需 mlx_vlm.server 已載入模型�
 pytest -m cloud -s                        # 連真的雲端（需 .env 金鑰、約 200 次請求會產生費用，約 3 分鐘）
 pytest -m app -v                          # 真實 App 驗收（Safari／Finder／Terminal／VS Code，佔用螢幕約 2 分鐘）
 python scripts/acceptance.py run [--app] [--live] [--cloud] && python scripts/acceptance.py report   # 存數字並和上次比，變差結束碼 1
-cd desktop && node --test                 # 桌面角色狀態機／路徑白名單
+cd desktop && node --test                 # 桌面角色狀態機／路徑白名單／分層規則／IPC 頻道
+cd desktop && npm run typecheck           # 桌面前端型別檢查（JSDoc＋checkJs）
 python main.py --text 打開小算盤           # 不啟動服務、不檢查喚醒詞，直接跑一句（改路由後的最快實測方式）
 python main.py [--no-stt] [--ui] [--device N]
 python build_vocab.py                     # 改 vocab/lexicon.json 後重產 stt_hints／userdict（main.py 啟動時也會自動跑）
 python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥克風預覽桌面角色；--chat-test 驗聊天室（會短暫出現視窗）
 ```
 
-基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 換 fullrig03 模型、加手勢、幀率閘門與渲染包裝後實測 101 pass；pytest 1725 通過、5 skipped）。新增行為要新增測試。
+基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 前端分層整理 S0～S4 後實測 142 pass；pytest 1730 通過、5 skipped）。新增行為要新增測試。
 
 ## 3. 架構與資料流
 
@@ -114,7 +115,7 @@ python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥�
     LOCAL_TOOLS（open_folder、find_file、pick_choice、context_search、front_action）→ local_actions
     front_action → native.py（視窗／選單／按鈕／App 指令；最後才送按鍵，送前重讀前景 pid）
     read_screen → screencapture；雲端路線且 CLOUD_VISION_ENABLED 時看圖走雲端
-→ 結果 → result 事件 →（--ui）ui_bus WebSocket :8766 → desktop/main.js（唯一持有連線與 token）
+→ 結果 → result 事件 →（--ui）ui_bus WebSocket :8766 → desktop/main/（`bus.js` 唯一持有連線與 token）
      ├→ 角色視窗（Electron + Live2D＋泡泡；有 expand 時泡泡只放「詳細內容在對話視窗」）
      └→ chat.js（紀錄只放記憶體、重開清空）→ 聊天室視窗（獨立視窗，平常隱藏、隱藏時不推紀錄，展開前才補送；有 expand 時 showInactive 展開、無互動 20 秒收回）
 ```
@@ -142,10 +143,29 @@ python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥�
 | `mac_ai/router/tools.py` | `TOOLS_SCHEMA`（LLM 看得到的工具）與 `validate_tool_call`（唯一信任邊界） |
 | `mac_ai/router/actions.py` | 實際執行器（`open -a`、`osascript`、`screencapture`…）、`ExecContext`、`read_screen`、`chat_reply`、`run_tool` |
 | `mac_ai/router/llm_client.py` | `mlx_vlm.server` OpenAI 相容呼叫；連不上即熔斷 30 秒 |
-| `desktop/` | 桌面角色（Electron）：`main.js` 兩個視窗與匯流排連線、`state.js` 角色狀態機、`chat.js` 聊天室紀錄與開關狀態機（純邏輯、時間注入）、`chat-preload.cjs` 聊天室專用預載（只開放必要動作）、`renderer/` 畫面 |
+| `desktop/` | 桌面角色（Electron）。依行程與層次分目錄，規則與依賴方向見 §3.3 |
 | `mac_ai/stt/` | `mic`、`client`（WS＋重連）、`vad`（Silero ONNX）、`endpoint`（純邏輯，時間由外部注入）、`completeness`（句子完整度）、`latency_log` |
 | `vocab/lexicon.json` | **詞庫單一來源**：App、別名、誤聽、動詞、資料夾、檔案類型、喚醒詞 |
 | `archive/` | 舊版單檔實作，**唯讀參考，不要改、不要 import** |
+
+### 3.3 桌面前端（`desktop/`）分層
+
+| 目錄 | 層 | 內容 | 可以 import |
+|---|---|---|---|
+| `shared/` | 資料 | 與後端的合約（訊息型別、上限、expand 原因）；後端是來源 | 無 |
+| `rig/` | 資料 | 這個模型的事實：語意名稱→動作／表情／手勢名稱、參數 ID、版面（`fullrig03.js`）；`check.js` 的 `checkRig` 驗證 profile 涵蓋 domain 的每個語意名稱、必要項目在模型裡；換模型＝新增一份 | 無 |
+| `domain/` | 純邏輯 | 角色狀態機（只說語意名稱）、聊天室紀錄、幀率閘門；時間注入，不碰 DOM／PIXI／Node／Electron | `shared/` |
+| `renderer/engine/` | 渲染 | PIXI／pixi-live2d-display 的修補（`compat/`）、物理時鐘、頂點內插 | `rig/` |
+| `renderer/animation/` | 動畫 | 預留給擬人化計畫：動作佇列、參數疊加，把語意名稱翻成 rig 名稱 | `engine/`、`rig/` |
+| `renderer/role/`、`renderer/chat/` | 畫面 | DOM 與事件接線，唯一能碰 `document` 的層 | 以上全部 |
+| `main/` | main 行程 | 視窗、匯流排連線（唯一持有 token）、IPC、`ui.jsonl`、除錯鉤子 | `domain/`、`shared/` |
+| `preload/` | sandbox | 只做 contextBridge；sandbox 不能共用常數檔，頻道名稱靠測試比對 | 無 |
+| `dev/` | 量測 | 軌跡指標，正式執行不載入 | `domain/`、`shared/`、`rig/` |
+
+- 依賴只能往下。`domain/` 與 `engine/` 互不認識，只透過 effect 物件（資料）和 rig（資料）溝通。規則由 `desktop/test/layers.test.js` 掃原始碼檢查，**新檔先決定屬於哪一層**，放在規則以外的位置會直接失敗。
+- 畫面行程能讀到的檔案只有 `main/app-protocol.js` 的 `appRoutes` 列的（`renderer/`、`domain/`、`shared/`、`rig/`、`vendor/`、`/model/` 與兩個函式庫單檔）；新增目錄給畫面用時，要加進白名單並在 `protocol.test.js` 補案例，`main/`、`preload/`、`dev/` 不得加。
+- 主程序不拼 DOM 選擇器：除錯鉤子讀畫面的 `window.__ui.probe()`／`window.__chat.probe()`。
+- 型別檢查 `npm run typecheck`（JSDoc＋`checkJs`，不開 `strict`，不允許新增 `@ts-ignore`）。
 
 ## 4. 「快」的守則
 
@@ -207,8 +227,9 @@ python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥�
 | 新增站內搜尋網站／常用功能快捷鍵／可開啟的網站 | 只改 `vocab/lexicon.json` 的 `sites`（`search_url` 站內搜尋、`home` 首頁、`aliases` 別名）／`app_shortcuts`（說法要整句完全相同才命中）；`home` 有填的網站，「打開／上／去＋名稱」會由 Fast Path（`_r_site`）開首頁，雲端／本機規劃的開網站呼叫也靠它放行（`slow_path.site_open_home`）；跑 `tests/flow/test_route_context.py`、`tests/unit/test_context.py` 與 `tests/unit/test_completeness.py`，確認新說法不是其他指令的前半句 |
 | 調整範圍判斷 | 只動 `domain.py`（純函式）；要有 Intent 層的測試（`tests/unit/test_domain.py`、`tests/flow/test_route_find.py`） |
 | 調端點偵測參數 | 動 `config.py` 的 `EP_*`／`VAD_*`；用 `scripts/stt_bench.py` A/B 比對再決定 |
-| 改 UI 協定 | `ui_bus.py` 與 `desktop/protocol.js`／`state.js`／`chat.js` 一起改，兩邊測試都要跑；跑 `python scripts/ui_demo.py --chat-test` |
+| 改 UI 協定 | `ui_bus.py`／`config.py` 與 `desktop/shared/contract.js`、`domain/`、`main/` 一起改（`tests/unit/test_ui_contract.py` 會比對合約、`desktop/test/ipc-channels.test.js` 比對 IPC 頻道），兩邊測試都要跑；跑 `python scripts/ui_demo.py --chat-test` |
 | 調聊天室主動展開的條件 | 只動 `config.EXPAND_*` 與 `pipeline.expand_reason`；案例在 `tests/flow/test_route_expand.py` |
+| 換桌面角色的 Live2D 模型／新增動作、表情、手勢的語意名稱 | `desktop/rig/` 新增（或改）一份 profile，把 `config.UI_MODEL_PATH` 指向新模型；語意名稱在 `domain/character.js` 的 `MOTIONS`／`EXPRESSIONS`／`GESTURES`，兩邊要一起改，`desktop/test/rig.test.js` 會檢查涵蓋度；`node --test` 與 `python scripts/ui_demo.py --capture <dir>` 都要跑 |
 
 ## 7. 測試規範
 

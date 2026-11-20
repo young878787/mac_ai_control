@@ -184,13 +184,13 @@ python main.py --ui               # 同時顯示桌面角色（需先完成「�
 
 ```bash
 cd desktop
-npm install                                   # electron、pixi.js、pixi-live2d-display（版本已鎖定）
+npm install                                   # electron、pixi.js、pixi-live2d-display（版本已鎖定）；typescript、@types/node 只用在 npm run typecheck
 ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/install.js   # npm 沒有下載到 Electron 執行檔時補這行
 ```
 
 另外兩樣東西不入版控，需自行準備：
 
-- **Live2D Cubism Core**：到 [Live2D 官網](https://www.live2d.com/en/sdk/download/web/) 下載 Cubism SDK for Web，把 `Core/live2dcubismcore.min.js` 放到 `desktop/vendor/`（專有授權，不可散布）。Core 5.x 與 6.x 都可用；6.x 會由 `desktop/renderer/app.js` 的 `bridgeRenderOrders` 補上 pixi-live2d-display 0.4.0 讀不到的繪製順序。
+- **Live2D Cubism Core**：到 [Live2D 官網](https://www.live2d.com/en/sdk/download/web/) 下載 Cubism SDK for Web，把 `Core/live2dcubismcore.min.js` 放到 `desktop/vendor/`（專有授權，不可散布）。Core 5.x 與 6.x 都可用；6.x 會由 `desktop/renderer/role/app.js` 的 `bridgeRenderOrders` 補上 pixi-live2d-display 0.4.0 讀不到的繪製順序。
 - **模型**：`Rushia_hd/runtime-fullrig03/RushiaHD.model3.json`（路徑在 `mac_ai/config.py` 的 `UI_MODEL_PATH`）。
 
 `python main.py --ui` 啟動時會檢查以上三樣，缺什麼就印出怎麼補。
@@ -247,7 +247,7 @@ python scripts/record_human.py                 # 錄真人測試語料（清單�
 | `logs/runtime/latency.jsonl` | 每句話的收音→定稿計時，`utt_id`＝這句 final 的編號（`e2e_ms`＝說完→定稿、`endpoint_ms`＝說完→決定收尾、`finalize_ms`＝送 flush→定稿；`e2e_ms` 為 null＝本端 VAD 沒偵測到說話） | `stt/client.py` |
 | `logs/runtime/commands.jsonl` | 每個指令的路由與執行結果（Slow 步驟另有 `route`＝cloud／local、`cloud`＝model／status／total_ms／token 數，不含回應內容與金鑰）：語音指令帶 `utt_id`（對應 latency 同一句）與 `queue_ms`（進佇列到開始執行的等待；UI 打字、清單點選沒有這兩欄）；各步 `kind`／`status`／`ms`／`intent`／`logs`、`stages`；家目錄以 `~` 表示，不含搜尋清單。`--text` 不寫 | `assistant.py` |
 | `logs/runtime/normalize.jsonl` | STT 原文→正規化結果（只記詞庫造成的改動，用來回收誤聽詞） | `router/normalize.py` |
-| `logs/runtime/ui.jsonl` | 桌面角色每則訊息一行：`bus_ms`（後端→Electron）、`apply_ms`（→畫面套用） | `desktop/main.js` |
+| `logs/runtime/ui.jsonl` | 桌面角色每則訊息一行：`bus_ms`（後端→Electron）、`apply_ms`（→畫面套用） | `desktop/main/telemetry.js` |
 | `logs/services/*.log` | 子服務（`mlx_vlm`／`stt`／`ui`）的 stdout，每次啟動覆寫 | `services.py` |
 | `logs/bench/*.jsonl` | `stt_bench.py run` 的輸出，檔名＝`日期_語料_模式[_標籤][_only-類別][_參數]`；最後一行 `meta` 記錄實際生效參數與 git commit | `scripts/stt_bench.py` |
 | `logs/_legacy/` | 整理前的舊格式紀錄（唯讀備查，程式不會寫） | — |
@@ -270,7 +270,8 @@ pytest -m unit      # 只跑單元層（約 1.4 秒，改程式時的快速回�
 pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
 pytest -m cloud -s  # 連真的雲端模型（需 .env 金鑰，約 200 次請求會產生費用）：規劃正確率／延遲、否定句、誠實、看圖、代名詞動作
 pytest -m app -v    # 真實 App 驗收：在 Safari、Finder、Terminal、VS Code 上實際執行並讀回狀態（會佔用螢幕約 2 分鐘）
-cd desktop && node --test   # 桌面角色的狀態機、聊天室紀錄與路徑白名單測試
+cd desktop && node --test   # 桌面角色的狀態機、聊天室紀錄、路徑白名單、分層規則與 IPC 頻道測試
+cd desktop && npm run typecheck   # 桌面前端的型別檢查（JSDoc＋checkJs，不開 strict）
 python scripts/acceptance.py run [--app] [--live] [--cloud]   # 跑測試並把數字存到 logs/bench/acceptance_*.json
 python scripts/acceptance.py report                 # 和上一次比較，變差（新增失敗、矯正率下降、延遲 +20% 且 +20 ms；雲端：各類規劃正確率或代名詞正確數下降、規劃 p50 +30% 且 +300 ms）時結束碼 1
 python scripts/acceptance.py list                   # 歷次結果
@@ -289,7 +290,7 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
 | `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站 |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
-| `desktop/` | 桌面角色（Electron）：`main.js` 視窗與連線、`state.js` 角色狀態機、`chat.js` 聊天室紀錄與開關、`renderer/` 畫面（角色＋Live2D、聊天室） |
+| `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 AGENTS.md §3.3 |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |
 | `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
