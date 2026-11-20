@@ -2,10 +2,17 @@
 // 純邏輯：不碰 DOM、pixi、Electron；時間一律由呼叫端傳入（毫秒），方便用 node --test 驗證。
 
 export const MOTIONS = Object.freeze({
-  idle: 'Idle', surprised: 'Surprised', curious: 'Curious', nod: 'Nod', shake: 'Shake', happy: 'Happy',
-});  // 刻意沒有 Talk：不做嘴型
+  idle: 'Idle', surprised: 'Surprised', curious: 'Curious', nod: 'Nod', shake: 'Shake', happy: 'Happy', talk: 'Talk',
+});  // Talk 只是說話的樣子（沒有聲音、不對嘴）；不用 Blink：它的頭身曲線全是 0，會把 Idle 的姿勢歸零，Idle 本身就會眨眼
+// 手勢層（手臂切換）：和臉部表情分開的第二個表情佇列，三個互斥；none＝收回手臂
+export const GESTURES = Object.freeze({ armLeftUp: 'arm_l_up', armRightUp: 'arm_r_up', chinRest: 'chin_rest', none: 'none' });
 
-export const EXPRESSION_MS = 2000;       // happy／pout 維持時間
+export const EXPRESSION_MS = 2000;       // 臉部表情（happy／pout／surprised…）維持時間
+export const GESTURE_MS = 1500;          // 揮手、舉手維持時間
+export const THINK_MS = 2500;            // 執行超過這麼久還沒有結果就托腮
+export const TALK_MIN_MS = 1500;         // 有文字回覆時的說話動作長度：依字數，限制在這個範圍
+export const TALK_MAX_MS = 4000;
+export const TALK_PER_CHAR_MS = 120;
 export const SLEEPY_MS = 1500;           // 會話結束的睏倦表情，之後退場
 export const IDLE_RETREAT_MS = 15000;    // 非會話觸發（打字、點擊）時，最後一個事件後這麼久退場
 export const APPEAR_MS = 600;            // 出場動畫
@@ -56,6 +63,10 @@ export function createController() {
     paused: false,
     session: { active: false, endsAt: 0, lengthMs: 60000 },
     expression: { name: 'neutral', until: 0 },
+    gesture: { name: GESTURES.none, until: 0 },   // until＝0：直到被別的事件收回
+    thinkAt: null,           // 執行中：到這個時間還沒結果就托腮
+    talkUntil: null,         // 說話動作播到這個時間回到 Idle
+    failStreak: 0,           // 連續失敗次數（成功、會話結束、退場時歸零）
     lastActivityAt: 0,
     retreatAt: null,
     inputOpen: false,
@@ -82,22 +93,42 @@ export function createController() {
     s.expression = { name, until: ms ? now + ms : 0 };
     effects.push({ type: 'expression', name });
   }
-  function appear(effects, now, { greet = true } = {}) {
+  function setGesture(effects, name, now, ms = 0) {
+    if (name === GESTURES.none && s.gesture.name === GESTURES.none) return;
+    s.gesture = { name, until: ms ? now + ms : 0 };
+    effects.push({ type: 'gesture', name });
+  }
+  /** 播放動作；說話動作以外的動作會取消說話的結束時間（否則之後會把新動作切回 Idle） */
+  function playMotion(effects, group, now, talkMs = 0) {
+    s.talkUntil = group === MOTIONS.talk ? now + talkMs : null;
+    effects.push({ type: 'motion', group });
+  }
+  /** greet：'voice'＝語音喚醒／會話開始（驚訝）；'click'＝點頭部（星星眼＋揮手）；false＝不打招呼 */
+  function appear(effects, now, { greet = 'voice' } = {}) {
     s.lastActivityAt = now;
     s.retreatAt = null;
     if (s.pose === 'out') return;
     s.pose = 'out';
     effects.push({ type: 'pose', pose: 'out', ms: APPEAR_MS });
     if (greet) {
-      effects.push({ type: 'motion', group: MOTIONS.surprised });
-      setExpression(effects, 'happy', now, EXPRESSION_MS);
+      playMotion(effects, MOTIONS.surprised, now);
+      if (greet === 'click') {
+        setExpression(effects, 'star_eyes', now, EXPRESSION_MS);
+        setGesture(effects, GESTURES.armRightUp, now, GESTURE_MS);
+      } else {
+        setExpression(effects, 'surprised', now, EXPRESSION_MS);
+      }
     }
   }
-  function retreat(effects) {
+  function retreat(effects, now) {
     if (s.pose !== 'out') return;
     s.pose = 'peek';
     s.mode = 'idle';
-    effects.push({ type: 'pose', pose: 'peek', ms: RETREAT_MS }, { type: 'motion', group: MOTIONS.idle });
+    s.thinkAt = null;
+    s.failStreak = 0;
+    effects.push({ type: 'pose', pose: 'peek', ms: RETREAT_MS });
+    playMotion(effects, MOTIONS.idle, now);
+    setGesture(effects, GESTURES.none, now);
   }
   function setSession(effects, remainingS, now) {
     const was = s.session.active;
@@ -113,9 +144,11 @@ export function createController() {
   function endSession(effects, now) {
     s.session.active = false;
     s.mode = 'idle';
+    s.failStreak = 0;
     removeBubble('partial');
     if (s.pose === 'out') {
       setExpression(effects, 'sleepy', now, SLEEPY_MS);
+      setGesture(effects, GESTURES.chinRest, now, SLEEPY_MS);
       s.retreatAt = now + SLEEPY_MS;
     }
   }
@@ -148,21 +181,31 @@ export function createController() {
     executing(ev, now, effects) {
       appear(effects, now, { greet: false });
       s.mode = 'executing';
-      effects.push({ type: 'motion', group: MOTIONS.curious });
+      s.thinkAt = now + THINK_MS;
+      playMotion(effects, MOTIONS.curious, now);
       bubble(effects, now, { id: 'pending', kind: 'pending', text: '…', ms: PENDING_BUBBLE_MS });
     },
     result(ev, now, effects) {
       appear(effects, now, { greet: false });
       removeBubble('pending');
       const text = summarize(ev);
+      s.thinkAt = null;
+      setGesture(effects, GESTURES.none, now);
       if (ev.ok) {
         s.mode = 'success';
-        effects.push({ type: 'motion', group: MOTIONS.nod });
+        s.failStreak = 0;
+        const replyChars = (ev.replies || []).reduce((n, r) => n + [...String(r).trim()].length, 0);
+        if (replyChars) {                                     // 有文字回覆：說話（沒有聲音）
+          playMotion(effects, MOTIONS.talk, now, Math.min(TALK_MAX_MS, Math.max(TALK_MIN_MS, replyChars * TALK_PER_CHAR_MS)));
+        } else {
+          playMotion(effects, MOTIONS.nod, now);
+        }
         setExpression(effects, 'happy', now, EXPRESSION_MS);
       } else {
         s.mode = 'failure';
-        effects.push({ type: 'motion', group: MOTIONS.shake });
-        setExpression(effects, 'pout', now, EXPRESSION_MS);
+        s.failStreak++;
+        playMotion(effects, MOTIONS.shake, now);
+        setExpression(effects, s.failStreak >= 2 ? 'pout_left' : 'pout', now, EXPRESSION_MS);
       }
       const list = ev.choices && !ev.choices.closed ? cleanChoices(ev.choices) : null;
       if (list) {                                            // 有清單：清單本身就是輸出，不另外跳泡泡（會被清單蓋住）
@@ -200,14 +243,20 @@ export function createController() {
         effects.push({ type: 'expression', name: 'neutral' });
         if (s.mode === 'success' || s.mode === 'failure') s.mode = 'idle';
       }
+      if (s.gesture.until && now >= s.gesture.until) setGesture(effects, GESTURES.none, now);
+      if (s.thinkAt !== null && now >= s.thinkAt) {
+        s.thinkAt = null;
+        if (s.mode === 'executing') setGesture(effects, GESTURES.chinRest, now);   // 直到結果出來
+      }
+      if (s.talkUntil !== null && now >= s.talkUntil) playMotion(effects, MOTIONS.idle, now);
       if (s.session.active && now >= s.session.endsAt) endSession(effects, now);
       if (s.retreatAt !== null && now >= s.retreatAt) {
         s.retreatAt = null;
-        if (!s.inputOpen && !s.choices) retreat(effects);
+        if (!s.inputOpen && !s.choices) retreat(effects, now);
         else s.lastActivityAt = now;                       // 輸入框／清單開著：關掉之後再從頭算 15 秒
       } else if (s.pose === 'out' && !s.session.active && s.retreatAt === null && !s.inputOpen && !s.choices &&
                  now - s.lastActivityAt >= IDLE_RETREAT_MS) {
-        retreat(effects);
+        retreat(effects, now);
       }
       if (s.choices && now >= s.choices.endsAt) { s.choices = null; s.lastActivityAt = now; }
       if (s.quick && !s.quick.hover && now >= s.quick.until) s.quick = null;
@@ -217,12 +266,13 @@ export function createController() {
     /** 使用者操作（點擊、輸入框、紀錄面板、泡泡懸停） */
     click(region, now) {
       const effects = [];
-      appear(effects, now, { greet: region === 'head' });
+      appear(effects, now, { greet: region === 'head' ? 'click' : false });
       if (region === 'head') {
         effects.push({ type: 'send', message: { type: 'wake' } });
       } else {
-        effects.push({ type: 'motion', group: MOTIONS.happy });
+        playMotion(effects, MOTIONS.happy, now);
         setExpression(effects, 'happy', now, EXPRESSION_MS);
+        setGesture(effects, GESTURES.armLeftUp, now, GESTURE_MS);
       }
       s.quick = s.quick ? null : { until: now + QUICK_MS, hover: false };   // 點一下彈出快捷泡泡，再點一下收起
       return effects;
@@ -267,7 +317,7 @@ export function createController() {
     },
     snapshot(now = 0) {
       return {
-        pose: s.pose, mode: s.mode, paused: s.paused, expression: s.expression.name,
+        pose: s.pose, mode: s.mode, paused: s.paused, expression: s.expression.name, gesture: s.gesture.name,
         session: {
           active: s.session.active,
           remainingMs: s.session.active ? Math.max(0, s.session.endsAt - now) : 0,
@@ -277,7 +327,6 @@ export function createController() {
         choices: s.choices && { listId: s.choices.listId, query: s.choices.query, total: s.choices.total,
           defaultAction: s.choices.defaultAction, items: s.choices.items.map(i => ({ ...i })), remainingMs: Math.max(0, s.choices.endsAt - now) },
         quick: !!s.quick,
-        fps: s.pose === 'out' ? 30 : 15,
       };
     },
   };

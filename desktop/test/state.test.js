@@ -2,31 +2,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createController, summarize, bubbleLifetime, MOTIONS, EXPRESSION_MS, SLEEPY_MS, IDLE_RETREAT_MS,
+  createController, summarize, bubbleLifetime, MOTIONS, GESTURES, EXPRESSION_MS, SLEEPY_MS, IDLE_RETREAT_MS,
   BUBBLE_MAX, BUBBLE_MIN_MS, BUBBLE_MAX_MS, QUICK_MS, EXPAND_NOTICE, APPEAR_MS, RETREAT_MS, CHOICES_MAX,
+  GESTURE_MS, THINK_MS, TALK_MIN_MS, TALK_MAX_MS, TALK_PER_CHAR_MS,
 } from '../state.js';
 
 const T0 = 1_000_000;
 const motions = fx => fx.filter(e => e.type === 'motion').map(e => e.group);
 const exprs = fx => fx.filter(e => e.type === 'expression').map(e => e.name);
 const poses = fx => fx.filter(e => e.type === 'pose').map(e => e.pose);
+const gestures = fx => fx.filter(e => e.type === 'gesture').map(e => e.name);
 const ok = (over = {}) => ({ type: 'result', command: 'x', ok: true, steps: [{ kind: 'fast', text: 'x', status: 'ok', logs: ['✅ 已開啟 小算盤'] }], replies: [], total_ms: 5, ...over });
 
 // ---------- 初始與出場 ----------
 test('初始：潛伏、待機、沒有泡泡', () => {
   const s = createController().snapshot(T0);
   assert.equal(s.pose, 'peek'); assert.equal(s.mode, 'idle'); assert.equal(s.expression, 'neutral');
-  assert.deepEqual(s.bubbles, []); assert.equal(s.session.active, false); assert.equal(s.fps, 15);
+  assert.deepEqual(s.bubbles, []); assert.equal(s.session.active, false); assert.equal(s.gesture, GESTURES.none);
 });
 
-test('partial 帶喚醒詞 → 出場＋驚訝＋happy，只在出場那一刻演一次', () => {
+test('partial 帶喚醒詞 → 出場＋Surprised＋surprised 表情，只在出場那一刻演一次', () => {
   const c = createController();
   const fx = c.handle({ type: 'partial', text: '露西婭', wake: true }, T0);
-  assert.deepEqual(poses(fx), ['out']); assert.deepEqual(motions(fx), [MOTIONS.surprised]); assert.deepEqual(exprs(fx), ['happy']);
+  assert.deepEqual(poses(fx), ['out']); assert.deepEqual(motions(fx), [MOTIONS.surprised]); assert.deepEqual(exprs(fx), ['surprised']);
+  assert.deepEqual(gestures(fx), []);
   assert.equal(fx.find(e => e.type === 'pose').ms, APPEAR_MS);
   const again = c.handle({ type: 'partial', text: '露西婭打開', wake: true }, T0 + 200);
   assert.deepEqual(again, []);
-  assert.equal(c.snapshot(T0).fps, 30);
 });
 
 test('沒喚醒、不在會話中的 partial／heard(ignored)：不反應、不出泡泡', () => {
@@ -309,12 +311,13 @@ test('summarize：回覆優先；失敗取錯誤行；沒有內容用預設字�
   assert.equal(summarize({ ok: true, replies: [], steps: [{ logs: ['1', '2', '3'] }] }), '2\n3');
 });
 
-// ---------- 不做嘴型：任何情況都不會選到 Talk ----------
-test('隨機事件序列：不會選到 Talk、動作與表情都在白名單、泡泡數量與壽命合法', () => {
+// ---------- 隨機事件序列 ----------
+test('隨機事件序列：Talk 只在有文字回覆的成功之後、動作／表情／手勢都在白名單、泡泡數量與壽命合法', () => {
   let seed = 12345;
   const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
   const allowedMotions = new Set(Object.values(MOTIONS));
-  const allowedExpr = new Set(['neutral', 'happy', 'pout', 'sleepy']);
+  const allowedExpr = new Set(['neutral', 'happy', 'pout', 'sleepy', 'surprised', 'star_eyes', 'pout_left']);
+  const allowedGestures = new Set(Object.values(GESTURES));
   const kinds = [
     () => ({ type: 'partial', text: '字'.repeat(1 + Math.floor(rnd() * 30)), wake: rnd() < 0.4 }),
     () => ({ type: 'heard', text: 'x', status: ['command', 'armed', 'ignored'][Math.floor(rnd() * 3)], command: 'x' }),
@@ -328,10 +331,15 @@ test('隨機事件序列：不會選到 Talk、動作與表情都在白名單、
     let now = T0;
     for (let i = 0; i < 200; i++) {
       now += Math.floor(rnd() * 8000);
-      const fx = rnd() < 0.3 ? c.tick(now) : c.handle(kinds[Math.floor(rnd() * kinds.length)](), now);
+      const ev = rnd() < 0.3 ? null : kinds[Math.floor(rnd() * kinds.length)]();
+      const fx = ev ? c.handle(ev, now) : c.tick(now);
       for (const e of fx) {
-        if (e.type === 'motion') { assert.notEqual(e.group, 'Talk'); assert.ok(allowedMotions.has(e.group), e.group); }
+        if (e.type === 'motion') {
+          assert.ok(allowedMotions.has(e.group), e.group);
+          if (e.group === MOTIONS.talk) assert.ok(ev && ev.type === 'result' && ev.ok && ev.replies.length, 'Talk 只能由有回覆的成功觸發');
+        }
         if (e.type === 'expression') assert.ok(allowedExpr.has(e.name), e.name);
+        if (e.type === 'gesture') assert.ok(allowedGestures.has(e.name), e.name);
       }
       const s = c.snapshot(now);
       assert.ok(s.bubbles.length <= BUBBLE_MAX);
@@ -341,8 +349,128 @@ test('隨機事件序列：不會選到 Talk、動作與表情都在白名單、
   }
 });
 
-test('Talk 不在 MOTIONS 白名單', () => {
-  assert.ok(!Object.values(MOTIONS).includes('Talk'));
+test('不使用 Blink（它會把 Idle 的姿勢歸零）', () => {
+  assert.ok(!Object.values(MOTIONS).includes('Blink'));
+});
+
+// ---------- 新表情、手勢、說話（fullrig03，計畫書 §5.2） ----------
+test('點頭部 → Surprised＋star_eyes＋揮手（arm_r_up），1.5 秒後收回手勢、2 秒後表情復原', () => {
+  const c = createController();
+  const fx = c.click('head', T0);
+  assert.deepEqual(motions(fx), [MOTIONS.surprised]); assert.deepEqual(exprs(fx), ['star_eyes']);
+  assert.deepEqual(gestures(fx), [GESTURES.armRightUp]);
+  assert.equal(c.snapshot(T0).gesture, GESTURES.armRightUp);
+  assert.deepEqual(gestures(c.tick(T0 + GESTURE_MS - 1)), []);
+  assert.deepEqual(gestures(c.tick(T0 + GESTURE_MS)), [GESTURES.none]);
+  assert.deepEqual(exprs(c.tick(T0 + EXPRESSION_MS)), ['neutral']);
+});
+
+test('點身體 → Happy＋happy＋舉左手（arm_l_up）', () => {
+  const c = createController();
+  const fx = c.click('body', T0);
+  assert.deepEqual(motions(fx), [MOTIONS.happy]); assert.deepEqual(exprs(fx), ['happy']);
+  assert.deepEqual(gestures(fx), [GESTURES.armLeftUp]);
+  assert.deepEqual(gestures(c.tick(T0 + GESTURE_MS)), [GESTURES.none]);
+});
+
+test('手勢互斥：舉手中換成另一個手勢時，同一時間只會有一個', () => {
+  const c = createController();
+  c.click('body', T0);                                          // arm_l_up
+  c.handle({ type: 'session', remaining_s: 1 }, T0 + 100);
+  const end = c.tick(T0 + 1100);                                // 會話結束 → 托腮，取代舉手
+  assert.deepEqual(gestures(end), [GESTURES.chinRest]);
+  assert.equal(c.snapshot(T0 + 1100).gesture, GESTURES.chinRest);
+});
+
+test('執行超過 THINK_MS 才托腮；結果出來就收回', () => {
+  const c = createController();
+  c.handle({ type: 'executing', command: 'x' }, T0);
+  assert.deepEqual(gestures(c.tick(T0 + THINK_MS - 1)), []);
+  assert.deepEqual(gestures(c.tick(T0 + THINK_MS)), [GESTURES.chinRest]);
+  assert.deepEqual(gestures(c.tick(T0 + THINK_MS + 10_000)), []);   // 直到結果，不會自己收
+  const fx = c.handle(ok(), T0 + THINK_MS + 10_100);
+  assert.deepEqual(gestures(fx), [GESTURES.none]);
+});
+
+test('結果在 THINK_MS 之前出來：之後不會再托腮', () => {
+  const c = createController();
+  c.handle({ type: 'executing', command: 'x' }, T0);
+  const fx = c.handle(ok(), T0 + 500);
+  assert.deepEqual(gestures(fx), []);                          // 沒有手勢可收
+  assert.deepEqual(gestures(c.tick(T0 + THINK_MS + 1)), []);
+});
+
+test('成功且有文字回覆 → Talk（依字數，限制在最短／最長之間）＋happy，播完回到 Idle', () => {
+  const c = createController();
+  const fx = c.handle(ok({ replies: ['今天晴天'] }), T0);      // 4 字 → 480 ms，低於最短
+  assert.deepEqual(motions(fx), [MOTIONS.talk]); assert.deepEqual(exprs(fx), ['happy']);
+  assert.deepEqual(motions(c.tick(T0 + TALK_MIN_MS - 1)), []);
+  assert.deepEqual(motions(c.tick(T0 + TALK_MIN_MS)), [MOTIONS.idle]);
+  const long = createController();
+  long.handle(ok({ replies: ['字'.repeat(200)] }), T0);
+  assert.deepEqual(motions(long.tick(T0 + TALK_MAX_MS - 1)), []);
+  assert.deepEqual(motions(long.tick(T0 + TALK_MAX_MS)), [MOTIONS.idle]);
+  const mid = createController();
+  mid.handle(ok({ replies: ['字'.repeat(20)] }), T0);          // 20 字 → 2400 ms
+  assert.deepEqual(motions(mid.tick(T0 + 20 * TALK_PER_CHAR_MS)), [MOTIONS.idle]);
+});
+
+test('成功沒有回覆 → Nod；只有空白的回覆也算沒有', () => {
+  const c = createController();
+  assert.deepEqual(motions(c.handle(ok({ replies: ['  '] }), T0)), [MOTIONS.nod]);
+});
+
+test('說話中被新動作打斷：說話時間到也不會把新動作切回 Idle', () => {
+  const c = createController();
+  c.handle(ok({ replies: ['字'.repeat(30)] }), T0);
+  c.handle({ type: 'executing', command: 'y' }, T0 + 500);     // Curious 取代 Talk
+  assert.deepEqual(motions(c.tick(T0 + TALK_MAX_MS)), []);
+});
+
+test('連續失敗：第 1 次 pout，第 2 次起 pout_left；成功後歸零', () => {
+  const c = createController();
+  const fail = ok({ ok: false, steps: [{ kind: 'fast', text: 'x', status: 'exec_failed', logs: ['❌ 失敗'] }] });
+  assert.deepEqual(exprs(c.handle(fail, T0)), ['pout']);
+  assert.deepEqual(exprs(c.handle(fail, T0 + 1000)), ['pout_left']);
+  assert.deepEqual(exprs(c.handle(fail, T0 + 2000)), ['pout_left']);
+  c.handle(ok(), T0 + 3000);
+  assert.deepEqual(exprs(c.handle(fail, T0 + 4000)), ['pout']);
+});
+
+test('連續失敗計數在會話結束與退場時歸零', () => {
+  const fail = ok({ ok: false, steps: [{ kind: 'fast', text: 'x', status: 'exec_failed', logs: ['❌ 失敗'] }] });
+  const c = createController();
+  c.handle({ type: 'session', remaining_s: 10 }, T0);
+  c.handle(fail, T0 + 1000);
+  c.tick(T0 + 10_000);                                          // 會話結束
+  c.handle({ type: 'session', remaining_s: 10 }, T0 + 10_100);
+  assert.deepEqual(exprs(c.handle(fail, T0 + 10_200)), ['pout']);
+  const d = createController();
+  d.userCommand('x', T0);
+  d.handle(fail, T0 + 100);
+  d.tick(T0 + 100 + IDLE_RETREAT_MS);                           // 退場
+  d.userCommand('x', T0 + 30_000);
+  assert.deepEqual(exprs(d.handle(fail, T0 + 30_100)), ['pout']);
+});
+
+test('會話結束 → sleepy＋托腮 1.5 秒，退場後手勢是 none', () => {
+  const c = createController();
+  c.handle({ type: 'session', remaining_s: 1 }, T0);
+  const end = c.tick(T0 + 1000);
+  assert.deepEqual(exprs(end), ['sleepy']); assert.deepEqual(gestures(end), [GESTURES.chinRest]);
+  const leave = c.tick(T0 + 1000 + SLEEPY_MS);
+  assert.deepEqual(poses(leave), ['peek']); assert.deepEqual(gestures(leave), [GESTURES.none]);
+  assert.equal(c.snapshot(T0 + 1000 + SLEEPY_MS).gesture, GESTURES.none);
+});
+
+test('托腮思考中閒置退場：退場時一併收回手勢', () => {
+  const c = createController();
+  c.userCommand('x', T0);
+  c.handle({ type: 'executing', command: 'x' }, T0);
+  c.tick(T0 + THINK_MS);                                        // 托腮
+  const leave = c.tick(T0 + IDLE_RETREAT_MS);
+  assert.deepEqual(poses(leave), ['peek']); assert.deepEqual(gestures(leave), [GESTURES.none]);
+  assert.deepEqual(motions(leave), [MOTIONS.idle]);
 });
 
 // ---------- 搜尋結果清單 ----------
