@@ -54,7 +54,7 @@ def health_server():
                 pass
 
         srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        threading.Thread(target=srv.serve_forever, args=(0.02,), daemon=True).start()  # 收尾不等預設 0.5 s 輪詢
         servers.append(srv)
         return f"http://127.0.0.1:{srv.server_address[1]}/health"
 

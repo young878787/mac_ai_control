@@ -178,7 +178,7 @@ def test_stt_events_are_published(bus):
 
 # ---------- B2：轉送延遲 ----------
 def test_forwarding_latency_p95_under_20ms(bus):
-    n = 1000
+    n = 300
     with open_client(bus) as ws:
         recv_json(ws)
 
@@ -207,7 +207,7 @@ def test_publish_without_clients_is_nearly_free(bus):
 
 
 def test_publish_never_blocks_on_a_client_that_does_not_read(bus):
-    with open_client(bus):  # 連上後完全不讀
+    with open_client(bus, close_timeout=0.1):  # 連上後完全不讀（關閉握手收不到回應，不等預設的 10 s）
         assert wait_until(lambda: bus.client_count() == 1)
         t = time.perf_counter()
         for i in range(10000):

@@ -19,6 +19,7 @@ from mac_ai.ui_bus import UiBus
 from mac_ai.wake import WakeGate, split_wake
 
 _CLEAR_LINE = "\r\033[K"
+WORKER_POLL_S = 0.2  # 指令執行緒等佇列時每隔多久檢查一次 stop（測試調小，避免停止時空等）
 _FAILED_STEP_STATUS = ("exec_failed", "llm_unavailable", "llm_error")
 _LOGGED_STEP_KEYS = ("kind", "text", "status", "ms", "llm_ms", "intent", "match", "route", "cloud", "cloud_fallback",
                      "vision_cloud", "memory_turns")  # 寫進 commands.jsonl 的 step 欄位
@@ -179,7 +180,7 @@ def command_worker(commands: "queue.Queue[object]", execute: Callable[[str], obj
     command_log = command_log or _ignore
     while not stop.is_set():
         try:
-            item = commands.get(timeout=0.2)
+            item = commands.get(timeout=WORKER_POLL_S)
         except queue.Empty:
             continue
         is_choice = isinstance(item, dict)

@@ -22,6 +22,8 @@ class SttClient:
     on_event 收到 macos-stt 的事件（partial／utterance／final／session_restarted／error），
     以及本客戶端自己產生的 connected／disconnected"""
 
+    RECV_POLL_S = 0.5  # 等事件時每隔多久檢查一次 stop（測試調小，避免停止時空等）
+
     def __init__(self, audio, on_event: Callable[[dict], None], url: str = config.STT_WS_URL,
                  lang: str = config.STT_LANG, hints: Sequence[str] = (),
                  reconnect_min_s: float = config.STT_RECONNECT_MIN_S,
@@ -85,7 +87,7 @@ class SttClient:
             try:
                 while not stop.is_set() and not done.is_set():
                     try:
-                        raw = ws.recv(timeout=0.5)
+                        raw = ws.recv(timeout=self.RECV_POLL_S)
                     except TimeoutError:
                         continue
                     event = json.loads(raw)
