@@ -49,6 +49,12 @@ EXPECTED = {
     "12-click-head": ("Surprised", "star_eyes", "arm_r_up", True),
     "13-click-body": ("Happy", "happy", "arm_l_up", True),
 }
+# 每個截圖點注意力導演的情境（docs/桌面角色擬人化（注視與聆聽）：實作計畫.md §7.2 R1）；沒列的不檢查
+ATTENTION = {
+    "01-peek": "peek", "02-appear": "listening", "03-listening": "listening", "04-executing": "thinking",
+    "05-success": "responding", "07-reply": "responding", "08-think": "thinking", "11-retreat": "peek",
+    "12-click-head": "click",
+}
 # 視窗座標：潛伏時的頭部（模型頂端 y＝560−420×0.3）、出場時的身體（模型頂端 y＝560−420）
 PEEK_HEAD_XY, BODY_XY = (180, 474), (180, 380)
 
@@ -98,7 +104,7 @@ def play(bus: UiBus, wait, capture) -> None:
     wait(2.5, "retreat")
     capture("11-retreat")
     pub({"type": "debug_click", "x": PEEK_HEAD_XY[0], "y": PEEK_HEAD_XY[1]})  # debug_click 只有 --capture 時才有效
-    wait(0.8, "click head")
+    wait(0.5, "click head")  # 點擊情境只維持 0.8～1.2 秒（擬人化計畫 §5），在那之前截圖
     capture("12-click-head")
     wait(1.5, "gesture done")
     pub({"type": "debug_click", "x": BODY_XY[0], "y": BODY_XY[1]})
@@ -107,8 +113,12 @@ def play(bus: UiBus, wait, capture) -> None:
 
 
 def check_capture(capture_dir: Path) -> bool:
-    """逐張比對 EXPECTED（R2）；None 表示那一欄不檢查"""
+    """逐張比對 EXPECTED（R2）與 ATTENTION（擬人化 R1）；None 表示那一欄不檢查"""
     ok = True
+    for name, want in ATTENTION.items():
+        got = json.loads((capture_dir / f"{name}.json").read_text())["state"].get("attention")
+        ok &= got == want
+        print(f"{'PASS' if got == want else 'FAIL'}  {name}：情境 {got}" + ("" if got == want else f"（應為 {want}）"))
     for name, (motion, expression, gesture, out) in EXPECTED.items():
         s = json.loads((capture_dir / f"{name}.json").read_text())["state"]
         got = (s["motion"], s["snap"]["expression"], s["gesture"], s["poseT"] > 0.5)

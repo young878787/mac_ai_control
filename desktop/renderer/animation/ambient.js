@@ -21,7 +21,7 @@ const ONSET_LAG_MS = { head: 80, body: 200 };
 const SACCADE_MS = { base: 35, perUnit: 50, min: 40, max: 80 };
 // 注視期間的微掃視：短促的小跳動，間隔 0.35～1.5 秒；Y 行程較小所以縮幅（參考專案）
 export const FIXATION_JITTER = 0.14;
-const FIXATION = { minRadius: 0.05, yScale: 0.7, moveMs: 35, gapMs: [350, 1500] };
+const FIXATION = { minRadius: 0.05, yScale: 0.7, moveMs: 35, gapMs: [350, 1500], maxTurn: TAU / 3 };
 // 頭部移動分兩種：出發（起步快、衝過目標約 5% 再緩緩回來）與歸位（往中性：起步慢、只微彈約 3%）。
 // 過衝是明確的兩段軌跡，所以大小與移動時間無關；身體不過衝，頭比身體明顯（參考專案）
 const HEAD_MODES = {
@@ -38,10 +38,10 @@ const BREATH_LIFT = { headY: 0.06, bodyY: 0.08 };
 const BREATH_GAIN = 0.6;
 // 漂移強度跟隨呼叫端 swayGain 的彈簧頻率（rad/s）：聆聽時降到 0.35，約 0.5 秒內平順過渡
 const SWAY_GAIN_OMEGA = 6;
-// 確定性漂移：同一個 seed 得到同一條連續曲線，沒有週期。多層帶限雜訊（Hz, 相對權重）；頭身各軸的峰值幅度為正規化值（參考專案）
+// 確定性漂移：同一個 seed 得到同一條連續曲線，沒有週期。多層帶限雜訊（Hz, 相對權重）；頭身各軸的峰值幅度為正規化值（參考 0.12～0.15，模擬 200 次十分鐘閒置後放大約 1.3 倍：最長連續靜止 ≤ 2 s）
 const SWAY_LAYERS = [[0.23, 1], [0.55, 0.8], [1.05, 0.4]];
 const SWAY_WEIGHT = SWAY_LAYERS.reduce((sum, [, weight]) => sum + weight, 0);
-const SWAY_AMPLITUDE = { headX: 0.13, headY: 0.15, headZ: 0.13, bodyX: 0.14, bodyY: 0.12, bodyZ: 0.13 };
+const SWAY_AMPLITUDE = { headX: 0.17, headY: 0.195, headZ: 0.17, bodyX: 0.18, bodyY: 0.155, bodyZ: 0.17 };
 // 身體的漂移以此延遲傳給頭部對應的軸，頭比身體慢半拍（參考專案）
 const BODY_TO_HEAD = { gain: 0.35, lagSec: 0.18 };
 // 歪頭時臉跟著轉：把頭 Z 的曲線值耦合到 X（同向轉臉）與 Y（歪向任一側都略抬）；符號與幅度純屬手感（參考專案）
@@ -146,13 +146,14 @@ function isPlan(plan) {
  * @param {number} seed 決定整條漂移與微掃視曲線；同一個 seed 逐幀相同
  */
 export function createAmbient(seed = DEFAULT_SEED) {
-  let random, sequence, moveMs, target, poses, gazes, fixation, fixationAtMs, driftSec;
+  let random, sequence, moveMs, target, poses, gazes, fixation, fixationAngle, fixationAtMs, driftSec;
   let bodyGain, gazeGain, enableGain, swayGainState, wasEnabled, lastNowMs, hasUpdated;
 
   /** 微掃視的起點偏移：半徑同之後的微掃視，所以視線從第一刻起就不會剛好在 (0, 0) */
   function fixationOffset() {
     const angle = random() * TAU;
     const radius = FIXATION.minRadius + random() * (FIXATION_JITTER - FIXATION.minRadius);
+    fixationAngle = angle;
     return { gazeX: Math.cos(angle) * radius, gazeY: Math.sin(angle) * radius * FIXATION.yScale };
   }
 
@@ -224,7 +225,9 @@ export function createAmbient(seed = DEFAULT_SEED) {
   function advanceFixation(nowMs) {
     if (fixationAtMs === null || nowMs < fixationAtMs) return;
     const startedAt = fixationAtMs;
-    const angle = random() * TAU;
+    // 新角度限制在上一個的 ±120° 內（均勻抽一次，不拒絕重抽）：微掃視的直線路徑不會穿過原點，視線不會剛好掃過正中
+    const angle = fixationAngle + (random() * 2 - 1) * FIXATION.maxTurn;
+    fixationAngle = angle;
     const radius = FIXATION.minRadius + random() * (FIXATION_JITTER - FIXATION.minRadius);
     const to = { gazeX: Math.cos(angle) * radius, gazeY: Math.sin(angle) * radius * FIXATION.yScale };
     for (const axis of GAZE_AXES) {

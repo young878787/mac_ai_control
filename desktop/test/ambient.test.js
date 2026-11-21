@@ -220,6 +220,22 @@ test('微掃視：視線在閒置時持續小幅跳動，幅度不超過 FIXATIO
   for (const r of rows) assert.ok(Math.hypot(r.gazeX, r.gazeY / 0.7) <= 0.14 + 1e-9);
 });
 
+test('微掃視：連續 2000 次，路徑上每個取樣點離 fixation 原點都 ≥ 0.017（新角度限制在上一個 ±120° 內，直線不穿過原點）', () => {
+  // 目標全 0 時輸出的 gaze 就是 fixation；兩端半徑 ≥ 0.05（Y 縮 0.7 後 ≥ 0.035）、夾角 ≤ 120°，線段離原點的下限約 0.0175
+  const a = createAmbient(31);
+  let jumps = 0, last = null, moving = false, nearest = Infinity;
+  for (let k = 0; jumps < 2000; k++) {
+    const g = a.update(k === 0 ? 0 : 0.002, k * 2, {});
+    if (k * 2 > 3000) nearest = Math.min(nearest, Math.hypot(g.gazeX, g.gazeY));
+    const step = last ? Math.hypot(g.gazeX - last.gazeX, g.gazeY - last.gazeY) : 0;
+    if (step > 1e-5 && !moving && k * 2 > 3000) jumps++;   // 靜止 → 移動算一次微掃視（35 ms 走完）
+    moving = step > 1e-5;
+    last = g;
+    if (k > 4e6) assert.fail('微掃視次數不足');
+  }
+  assert.ok(nearest >= 0.017, `最近 ${nearest}`);
+});
+
 // ---- 亂數 ----
 
 test('同一個 seed 逐幀相同（含 apply），不同 seed 不同', () => {

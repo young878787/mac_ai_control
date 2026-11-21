@@ -32,9 +32,10 @@ python main.py --text 打開小算盤           # 不啟動服務、不檢查喚
 python main.py [--no-stt] [--ui] [--device N]
 python build_vocab.py                     # 改 vocab/lexicon.json 後重產 stt_hints／userdict（main.py 啟動時也會自動跑）
 python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥克風預覽桌面角色；--chat-test 驗聊天室（會短暫出現視窗）
+python scripts/ui_motion.py [--skip-idle|--skip-listen]   # 桌面角色動作軌跡指標（擬人化 R2 閒置 10 分鐘／R3 聆聽 10 輪；量測期間不要動滑鼠）
 ```
 
-基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 前端分層整理 S0～S4 後實測 142 pass；pytest 1730 通過、5 skipped）。新增行為要新增測試。
+基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 前端分層整理 S0～S4 後實測 142 pass；2026-11-21 擬人化 P1～P4 後 266 pass，其中 `motion-sim.test.js` 是 T2／T3 模擬指標；pytest 1730 通過、5 skipped）。新增行為要新增測試。
 
 ## 3. 架構與資料流
 
@@ -154,9 +155,9 @@ python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥�
 |---|---|---|---|
 | `shared/` | 資料 | 與後端的合約（訊息型別、上限、expand 原因）；後端是來源 | 無 |
 | `rig/` | 資料 | 這個模型的事實：語意名稱→動作／表情／手勢名稱、參數 ID、版面（`fullrig03.js`）；`check.js` 的 `checkRig` 驗證 profile 涵蓋 domain 的每個語意名稱、必要項目在模型裡；換模型＝新增一份 | 無 |
-| `domain/` | 純邏輯 | 角色狀態機（只說語意名稱）、聊天室紀錄、幀率閘門；時間注入，不碰 DOM／PIXI／Node／Electron | `shared/` |
+| `domain/` | 純邏輯 | 角色狀態機（只說語意名稱）、注意力導演 `attention.js`（情境→注視計畫，亂數注入）、聊天室紀錄、幀率閘門；時間注入，不碰 DOM／PIXI／Node／Electron | `shared/` |
 | `renderer/engine/` | 渲染 | PIXI／pixi-live2d-display 的修補（`compat/`）、物理時鐘、頂點內插 | `rig/` |
-| `renderer/animation/` | 動畫 | 預留給擬人化計畫：動作佇列、參數疊加，把語意名稱翻成 rig 名稱 | `engine/`、`rig/` |
+| `renderer/animation/` | 動畫 | 程序層（擬人化）：`mixer`（彈簧、角度上限）、`ambient`（頭身曲線、掃視、漂移）、`face`（眨眼、眼皮與眉毛事件）、`procedural`（依參數所有權寫參數陣列）；純邏輯、亂數與時間注入，不 import `domain/`（導演的計畫由 `app.js` 轉交） | `engine/`、`rig/` |
 | `renderer/role/`、`renderer/chat/` | 畫面 | DOM 與事件接線，唯一能碰 `document` 的層 | 以上全部 |
 | `main/` | main 行程 | 視窗、匯流排連線（唯一持有 token）、IPC、`ui.jsonl`、除錯鉤子 | `domain/`、`shared/` |
 | `preload/` | sandbox | 只做 contextBridge；sandbox 不能共用常數檔，頻道名稱靠測試比對 | 無 |
@@ -229,6 +230,7 @@ python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥�
 | 調端點偵測參數 | 動 `config.py` 的 `EP_*`／`VAD_*`；用 `scripts/stt_bench.py` A/B 比對再決定 |
 | 改 UI 協定 | `ui_bus.py`／`config.py` 與 `desktop/shared/contract.js`、`domain/`、`main/` 一起改（`tests/unit/test_ui_contract.py` 會比對合約、`desktop/test/ipc-channels.test.js` 比對 IPC 頻道），兩邊測試都要跑；跑 `python scripts/ui_demo.py --chat-test` |
 | 調聊天室主動展開的條件 | 只動 `config.EXPAND_*` 與 `pipeline.expand_reason`；案例在 `tests/flow/test_route_expand.py` |
+| 調桌面角色的注視／聆聽演出（擬人化） | 常數在 `desktop/renderer/animation/{ambient,face,mixer}.js` 與 `desktop/domain/attention.js`（來源與理由見擬人化計畫書 §5、§12.3）；參數所有權在 `procedural.js`；跑 `node --test`（`motion-sim.test.js` 是 T2／T3 模擬指標）、`python scripts/ui_demo.py --capture <dir>`（含情境比對）與 `python scripts/ui_motion.py`；指標定義與門檻在 `dev/motion-metrics.js`，不得為了過關放寬 |
 | 換桌面角色的 Live2D 模型／新增動作、表情、手勢的語意名稱 | `desktop/rig/` 新增（或改）一份 profile，把 `config.UI_MODEL_PATH` 指向新模型；語意名稱在 `domain/character.js` 的 `MOTIONS`／`EXPRESSIONS`／`GESTURES`，兩邊要一起改，`desktop/test/rig.test.js` 會檢查涵蓋度；`node --test` 與 `python scripts/ui_demo.py --capture <dir>` 都要跑 |
 
 ## 7. 測試規範
