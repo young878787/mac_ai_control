@@ -22,7 +22,10 @@ _MENU_MOD_BITS = {"shift": 1, "option": 2, "control": 4}
 _KEY_FLAGS = {"command": 0x100000, "shift": 0x20000, "control": 0x40000, "option": 0x80000}
 _TITLE_SUFFIX_RE = re.compile(r"\s*\[[^\]]*\]$|…$")  # VS Code 把快捷鍵寫在標題後面（『縮小 [⇧⌘ㄦ]』）
 
+_MEDIA_KEYS = {"play": 16, "next": 17, "previous": 18}  # NX_KEYTYPE_PLAY／NEXT／PREVIOUS；音量等其他鍵不開放（0019）
+
 _lib: Optional[tuple] = None
+_media_lib: Optional[tuple] = None
 _names: Dict[str, int] = {}
 _menu_cache: Dict[tuple, int] = {}  # (pid, 規格) → 選單項目（保留參考）；用之前會重新確認還有效
 
@@ -278,6 +281,69 @@ def press_button(pid: int, pattern: str) -> str:
         _free(btn, app)
         return "ok" if ok else "error"
     except (OSError, AttributeError, ValueError, re.error):
+        return "error"
+
+
+def press_button_in_window(pid: int, pattern: str) -> str:
+    """按『該 App 最近使用的視窗』（AXFocusedWindow → AXMainWindow）裡說明文字符合 pattern 的按鈕。
+    pid 是目標 App 的，不必是最前面的 App：AX 對背景 App 的視窗一樣讀得到、按得動，不搶前景、不啟動 App
+    （Safari 的 AXWindows 是空的，只能走這兩個屬性，與 press_button 同一套視窗取法）。
+    狀態 ok／missing（沒有視窗或找不到按鈕）／error 與 press_button 相同；pattern 以 re.search 比對，
+    取 AXDescription，沒有才取 AXTitle"""
+    return press_button(pid, pattern)
+
+
+def _media_load() -> tuple:
+    """媒體鍵用的 objc runtime（延遲載入：import 時不載入 AppKit）"""
+    global _media_lib
+    if _media_lib is None:
+        objc = ctypes.CDLL(ctypes.util.find_library("objc"))
+        ctypes.CDLL("/System/Library/Frameworks/AppKit.framework/AppKit")
+        objc.objc_getClass.restype, objc.objc_getClass.argtypes = c_void_p, [c_char_p]
+        objc.sel_registerName.restype, objc.sel_registerName.argtypes = c_void_p, [c_char_p]
+        _media_lib = (objc, _load()[1])
+    return _media_lib
+
+
+class _NSPoint(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+def _media_event(code: int, down: bool) -> Optional[int]:
+    """建立媒體鍵的 CGEvent（只建立，不送出）；失敗回傳 None。NSEvent 沒有 autorelease pool 可釋放，
+    每次約洩漏一個小物件，頻率是使用者手動下指令，可忽略"""
+    objc, _ = _media_load()
+    msg = ctypes.CFUNCTYPE(c_void_p, c_void_p, c_void_p, ctypes.c_ulong, _NSPoint, ctypes.c_ulong, ctypes.c_double,
+                           c_long, c_void_p, ctypes.c_int16, c_long, c_long)(("objc_msgSend", objc))
+    ns = msg(objc.objc_getClass(b"NSEvent"),
+             objc.sel_registerName(b"otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"),
+             14, _NSPoint(0, 0), 0xA00 if down else 0xB00, 0.0, 0, None, 8,  # NSEventTypeSystemDefined、subtype 8＝媒體鍵
+             (code << 16) | ((0xA if down else 0xB) << 8), -1)
+    if not ns:
+        return None
+    return ctypes.CFUNCTYPE(c_void_p, c_void_p, c_void_p)(("objc_msgSend", objc))(ns, objc.sel_registerName(b"CGEvent"))
+
+
+def _post_cg_event(ev: int) -> None:
+    """真正把事件送進系統（測試換成假的；離線測試不得真的送出）"""
+    _load()[1].CGEventPost(0, ev)  # kCGHIDEventTap
+
+
+def post_media_key(key: str) -> str:
+    """送一次系統媒體鍵（按下＋放開）。只允許 "play"（播放／暫停）、"next"、"previous"；
+    其他值（音量鍵、整數、None…）一律回傳 error，而且不建立也不送出任何事件。
+    媒體鍵由系統交給『現在的播放中 App』，不一定是你預期的那個；呼叫端要把它當最後手段"""
+    code = _MEDIA_KEYS.get(key) if isinstance(key, str) else None
+    if code is None:
+        return "error"
+    try:
+        for down in (True, False):
+            ev = _media_event(code, down)
+            if not ev:
+                return "error"
+            _post_cg_event(ev)
+        return "ok"
+    except (OSError, AttributeError, ValueError, ctypes.ArgumentError):
         return "error"
 
 

@@ -158,6 +158,98 @@ def browser_tab(action: str, browser: Optional[str] = None) -> str:
     return f"✅ {target}：{_TAB_DONE_TEXT[action]}" if ok else f"❌ 分頁操作失敗：{target}（{err}）"
 
 
+# ---------- 點歌：開啟／重複使用 YouTube 合輯分頁（計畫 §4.2 第 7 點）----------
+# 一支 osascript 在所有視窗找「YouTube 合輯分頁」（網址含 youtube.com/watch 與 list=RD）並當場改網址、切成該視窗的目前分頁；
+# 找不到回 none，由呼叫端另外開新分頁。網址一律當 argv 傳（不拼進腳本）。Safari 沒在執行時直接回 none（不會把它開起來）。
+# 0 個分頁的幽靈視窗（P0-8：關窗後 windows 清單還留一個）：URL of every tab 對它回空字串，不是 list，包成單一元素後略過
+MUSIC_TAB_TIMEOUT_S = 3.0  # 找分頁改網址（實測 p50 約 0.2 s）與 open 的逾時
+_MUSIC_WATCH_URL = "https://www.youtube.com/watch?v={id}&list=RD{id}"
+_SAFARI_MUSIC_TAB_SCRIPT = (
+    "on run argv\n"
+    "set theUrl to item 1 of argv\n"
+    'if application "Safari" is running then\n'
+    "try\n"
+    'tell application "Safari"\n'
+    "set allUrls to URL of every tab of every window\n"
+    "repeat with i from 1 to count of allUrls\n"
+    "set u to item i of allUrls\n"
+    "if class of u is not list then set u to {u}\n"
+    "repeat with j from 1 to count of u\n"
+    "set s to item j of u\n"
+    "if s is not missing value then\n"
+    'if s contains "youtube.com/watch" and s contains "list=RD" then\n'
+    "set URL of tab j of window i to theUrl\n"
+    "set current tab of window i to tab j of window i\n"
+    'return "reused"\n'
+    "end if\n"
+    "end if\n"
+    "end repeat\n"
+    "end repeat\n"
+    "end tell\n"
+    "end try\n"
+    "end if\n"
+    'return "none"\n'
+    "end run"
+)
+_CHROME_MUSIC_TAB_SCRIPT = (
+    "on run argv\n"
+    "set theUrl to item 1 of argv\n"
+    'if application "Google Chrome" is running then\n'
+    "try\n"
+    'tell application "Google Chrome"\n'
+    "repeat with w in windows\n"
+    "repeat with i from 1 to count of tabs of w\n"
+    "set s to URL of tab i of w\n"
+    'if s contains "youtube.com/watch" and s contains "list=RD" then\n'
+    "set URL of tab i of w to theUrl\n"
+    "set active tab index of w to i\n"
+    'return "reused"\n'
+    "end if\n"
+    "end repeat\n"
+    "end repeat\n"
+    "end tell\n"
+    "end try\n"
+    "end if\n"
+    'return "none"\n'
+    "end run"
+)
+_MUSIC_TAB_SCRIPTS = {"Safari": _SAFARI_MUSIC_TAB_SCRIPT, "Google Chrome": _CHROME_MUSIC_TAB_SCRIPT}
+
+
+def music_watch_url(video_id: str) -> Optional[str]:
+    """YouTube 合輯網址；video_id 不是合法的 11 字元編號回 None（外部輸入不可信，不能進 osascript 或 open 的參數）"""
+    from mac_ai.router.youtube_client import valid_video_id  # 函式內 import：youtube_client 載入時不需要 actions
+    return _MUSIC_WATCH_URL.format(id=video_id) if valid_video_id(video_id) else None
+
+
+def music_browser() -> str:
+    """點歌用的瀏覽器：TAB_BROWSERS 裡第一個正在執行的（pgrep，不會啟動任何 App）；都沒開就用 Safari（要播放，啟動它是預期行為）"""
+    for name in TAB_BROWSERS:
+        if _run(["pgrep", "-x", name], config.CONTEXT_TIMEOUT_S)[0]:
+            return name
+    return TAB_BROWSERS[0]
+
+
+def open_music_video(video_id: str) -> Tuple[bool, str, str]:
+    """開啟點歌的影片 → (成功?, 做法 reuse／new 或失敗原因, 瀏覽器)。
+    一支 osascript 找＋改網址（回 reused）；沒有音樂分頁、osascript 失敗或逾時就用 open -a 開新分頁（Safari 沒開時也會被啟動）"""
+    url = music_watch_url(video_id)
+    if url is None:
+        return False, "影片編號格式不合法", ""
+    browser = music_browser()
+    ok, out = _run(["osascript", "-e", _MUSIC_TAB_SCRIPTS[browser], url], MUSIC_TAB_TIMEOUT_S)
+    if ok and out.strip() == "reused":
+        return True, "reuse", browser
+    ok, err = _run(["open", "-a", browser, url], MUSIC_TAB_TIMEOUT_S)
+    return (True, "new", browser) if ok else (False, err, browser)
+
+
+def open_search_page(url: str) -> Tuple[bool, str]:
+    """退回用：在點歌用的瀏覽器開 YouTube 搜尋結果頁（網址由 youtube_client.search_url 組出）→ (成功?, 失敗原因)"""
+    ok, err = _run(["open", "-a", music_browser(), url], MUSIC_TAB_TIMEOUT_S)
+    return ok, "" if ok else err
+
+
 def system_power_action(action: str) -> str:
     """控制深色模式、睡眠或鎖定螢幕"""
     if action == "toggle_dark_mode":

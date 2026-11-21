@@ -93,6 +93,19 @@
     "prefix": ["嗯", "呃", "欸", "啊", "喂", "那個", "那你", "就是", "請", "幫我", "麻煩你", "麻煩", "給我", "可以", "能不能", "你", "幫忙", "我要", "我想要", "我想", "我需要", "來", "先"],
     "suffix": ["吧", "啦", "喔", "哦", "呢", "囉", "啊", "好嗎", "好不好", "可以嗎", "謝謝", "一下下", "一下", "看看", "就好", "就行"]
   },
+  "music": {
+    "prefix": ["嗯", "呃", "請", "幫我", "麻煩你", "麻煩"],
+    "listen": ["想要聽", "想聽", "要聽"],
+    "play": ["播放"],
+    "put": ["放"],
+    "bring": ["來"],
+    "quantity": ["一首", "首", "一點", "點"],
+    "play_control": ["速度", "清單", "列表", "設定", "鍵", "器", "紀錄", "記錄", "次數", "模式", "音量", "進度"],
+    "inner_command": ["幫我", "打開", "開啟", "啟動", "關掉", "關閉"],
+    "generic": ["歌", "歌曲", "音樂", "點歌"],
+    "lead_clean": ["這首歌", "一首", "首"],
+    "tail_clean": ["的歌", "這首歌", "一下", "給我聽", "吧", "好了"]
+  },
   "terms": ["深色模式", "暗黑模式", "夜間模式", "靜音", "鎖定螢幕", "螢幕亮度"],
   "sites": [
     {"name": "Google", "hosts": ["google.com", "google.com.tw"], "search_url": "https://www.google.com/search?q={q}", "home": "https://www.google.com", "aliases": ["谷歌", "估狗"]},
@@ -123,8 +136,24 @@
      "bindings": [{"when": {"kind": "browser"}, "code": 121, "mods": []}]},
     {"id": "scroll_up", "label": "往上捲", "scope": "瀏覽器", "phrases": ["往上捲", "往上滑", "向上捲", "向上滑", "往上捲動", "往上拉", "上滑", "往上翻", "滑上去", "捲上去"],
      "bindings": [{"when": {"kind": "browser"}, "code": 116, "mods": []}]},
-    {"id": "play_pause", "label": "播放／暫停", "scope": "YouTube、Music、Spotify", "phrases": ["播放", "暫停", "繼續播放", "暫停播放", "播放暫停", "暫停影片"],
-     "bindings": [{"when": {"site": "YouTube"}, "button": "^(?:播放|暫停|Play|Pause)\\s*(?:\\(k\\)|鍵盤快速鍵\\s*k|keyboard shortcut k)$"}, {"when": {"apps": ["Music", "Spotify"]}, "script": "playpause"}]},
+    {"id": "play_pause", "label": "播放／暫停", "scope": "YouTube、Music、Spotify", "phrases": ["播放", "暫停", "繼續", "繼續播放", "暫停播放", "播放暫停", "暫停影片"],
+     "directions": {"pause": ["暫停", "暫停播放", "暫停影片"], "resume": ["繼續", "繼續播放"]},
+     "bindings": [
+       {"when": {"site": "YouTube"}, "button": "^(?:播放|暫停|Play|Pause)\\s*(?:\\(k\\)|鍵盤快速鍵\\s*k|keyboard shortcut k)$",
+        "by_direction": {
+          "pause": {"button": "^暫停 \\(k\\)$|^Pause \\(k\\)$", "done_when": "播放.*k$|^Play \\(k\\)$"},
+          "resume": {"button": "播放.*k$|^Play \\(k\\)$", "done_when": "^暫停 \\(k\\)$|^Pause \\(k\\)$"}}},
+       {"when": {"apps": ["Music", "Spotify"]}, "script": "playpause", "by_direction": {"pause": {"script": "pause"}, "resume": {"script": "play"}}}],
+     "background": {
+       "pause": {"label": "暫停", "button": "^暫停 \\(k\\)$|^Pause \\(k\\)$", "done_when": "播放.*k$|^Play \\(k\\)$", "key": "play"},
+       "resume": {"label": "繼續播放", "button": "播放.*k$|^Play \\(k\\)$", "done_when": "^暫停 \\(k\\)$|^Pause \\(k\\)$", "key": "play"},
+       "default": {"label": "播放／暫停", "button": "^暫停 \\(k\\)$|^Pause \\(k\\)$|播放.*k$|^Play \\(k\\)$", "key": "play"}}},
+    {"id": "next_track", "label": "下一首", "scope": "YouTube、Music、Spotify", "phrases": ["下一首", "下一首歌", "下首歌", "切下一首", "切到下一首", "跳下一首", "下一曲"],
+     "bindings": [{"when": {"site": "YouTube"}, "button": "\\(SHIFT\\+n\\)$"}, {"when": {"apps": ["Music", "Spotify"]}, "script": "next track"}],
+     "background": {"default": {"label": "下一首", "button": "\\(SHIFT\\+n\\)$", "key": "next"}}},
+    {"id": "prev_track", "label": "上一首", "scope": "YouTube、Music、Spotify", "phrases": ["上一首", "上一首歌", "上首歌", "切上一首", "切到上一首", "回上一首", "上一曲"],
+     "bindings": [{"when": {"site": "YouTube"}, "button": "\\(SHIFT\\+p\\)$"}, {"when": {"apps": ["Music", "Spotify"]}, "script": "previous track"}],
+     "background": {"default": {"label": "上一首", "button": "\\(SHIFT\\+p\\)$", "key": "previous"}}},
     {"id": "editor_terminal", "label": "切換內建終端機面板", "scope": "編輯器", "phrases": ["開終端機", "打開終端機", "開啟終端機", "叫出終端機", "關終端機", "關掉終端機", "關閉終端機", "開終端機面板", "打開終端機面板", "關掉終端機面板", "關閉終端機面板", "終端機面板", "開內建終端機", "打開內建終端機", "關掉內建終端機"],
      "bindings": [{"when": {"kind": "editor"}, "path": [["檢視", "View"], ["終端", "終端機", "Terminal"]]}]},
     {"id": "editor_sidebar", "label": "切換側邊欄", "scope": "編輯器", "phrases": ["側邊欄", "開側邊欄", "打開側邊欄", "開啟側邊欄", "關側邊欄", "關掉側邊欄", "關閉側邊欄", "切換側邊欄", "收起側邊欄"],

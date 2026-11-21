@@ -223,3 +223,37 @@ def test_send_bundling_sends_fewer_messages_but_flush_still_follows_all_speech_a
     sent_before_flush = sum(len(f) for f in server.frames[:server.flush_at_frame[0]])
     assert sent_before_flush >= 8 * len(WINDOW)  # 說話的 8 窗都已送出，flush 才到
     assert len(server.frames) <= 21  # 60 窗每 3 窗一則（20 則），不是每窗一則
+
+
+def test_t8_music_terms_correction_and_maintenance_do_not_touch_stt_hints(server_factory, running, tmp_path):
+    """計畫 §7.1 T8：跑完拼音矯正與一次定時整理，SttClient 送出的 hints 仍和 vocab/stt_hints.txt 逐條相同、沒有被要求重連"""
+    from mac_ai import db
+    from mac_ai.router import music_prefs as mp
+
+    hints_file = config.STT_HINTS_PATH
+    file_bytes = hints_file.read_bytes()
+    hints = hints_file.read_text(encoding="utf-8").splitlines()  # 和 main.py 讀的方式相同
+    assert hints
+
+    path = tmp_path / "m.sqlite3"
+    assert db.ensure_schema(path).ok
+    conn = db.connect(path)
+    server = server_factory()
+    audio, got = FakeAudio([FRAME] * 40, pace=0.01), []
+    running(SttClient(audio, got.append, url=server.url, hints=hints))
+    assert wait_until(lambda: len(server.frames) >= 1)
+
+    now = 1_800_000_000.0
+    for i, (title, artist) in enumerate([("稻香", "周杰倫"), ("晴天", "周杰倫"), ("光年之外", "鄧紫棋")] * 3):
+        mp.upsert_video(conn, f"vid{i:08d}", title, artist, None, now)
+        mp.learn_play(conn, query=title, source="ytm", title=title, channel=artist, artists=[artist], now=now + i,
+                      video_id=f"vid{i:08d}")
+    assert [mp.correct(conn, q, now + 100) for q in ("到香", "周杰論的情天", "光念之外")] == ["稻香", "周杰倫的晴天", "光年之外"]
+    mp.maintain(conn, now + 7 * 86400)
+    conn.close()
+
+    assert wait_until(lambda: len(server.frames) == 40)
+    assert server.connections == 1 and len(server.configs) == 1          # 沒有被要求重連
+    assert server.configs[0]["hints"] == hints                           # 逐條相同
+    assert [e["type"] for e in got if e["type"] in ("connected", "disconnected")] == ["connected"]
+    assert hints_file.read_bytes() == file_bytes                         # 提示詞檔案也沒有被寫過

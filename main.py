@@ -14,12 +14,17 @@ from typing import List, Optional
 
 import build_vocab
 from mac_ai import config
-from mac_ai.assistant import run_voice_loop
-from mac_ai.router import LEXICON, catalog, cloud_client, process_choice, process_voice_command, warmup_llm
+from mac_ai.assistant import MusicMaintenance, run_voice_loop
+from mac_ai.router import (
+    LEXICON, catalog, cloud_client, local_actions, music_prefs, process_choice, process_voice_command, warmup_llm,
+    youtube_client,
+)
 from mac_ai.services import ServiceError, check_ui_ready, llm_service, stop_all, stt_service, ui_service
 from mac_ai.stt.mic import MicSource
 from mac_ai.ui_bus import UiBus
 from mac_ai.wake import WakeGate
+
+MUSIC_DB_WAIT_S = 30.0  # --text 一次性模式等資料庫準備好的上限（冷啟動 import alembic 實測最久約 5 秒）
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -50,6 +55,19 @@ def watch_ui(ui, stop: threading.Event) -> None:
         if not ui.alive() and not stop.is_set():
             print("\n⚠️ 桌面角色介面已結束，語音助手繼續執行（Ctrl+C 結束）")
             return
+
+
+def announce_music_db(music_db) -> None:
+    """偏好資料庫在背景準備好之後，把 ensure_schema 的 ⚠️ 提示（升級失敗、損毀改名）印給使用者看（不阻塞啟動）"""
+    music_db.wait_ready()
+    if music_db.message:
+        print(music_db.message)
+
+
+def music_maintenance(music_db) -> MusicMaintenance:
+    """點歌定時整理（啟動時一次、之後每 config.MUSIC_MAINT_INTERVAL_S）；由 run_voice_loop 排進指令佇列"""
+    return MusicMaintenance(music_db, maintain=music_prefs.maintain, fetch_versions=youtube_client.fetch_client_versions,
+                            store_versions=music_prefs.store_client_versions, schedule=music_prefs.MaintenanceSchedule())
 
 
 def run(args: argparse.Namespace) -> int:
@@ -109,7 +127,11 @@ def run(args: argparse.Namespace) -> int:
             wait_forever()
             return 0
 
-        voice_args = {}
+        music_db = local_actions.MUSIC_DB  # 執行時才取（測試會換成暫存目錄）
+        music_db.start()  # 背景準備 schema（不阻塞）；準備好之前點歌照常播放、只是不寫紀錄
+        threading.Thread(target=announce_music_db, args=(music_db,), daemon=True).start()
+        threading.Thread(target=music_prefs.warm, daemon=True).start()  # 先付掉第一次開 ICU 的 42 ms
+        voice_args = {"maintenance": music_maintenance(music_db)}
         if args.ui:
             bus = UiBus(token=secrets.token_urlsafe(32))
             try:
@@ -126,7 +148,7 @@ def run(args: argparse.Namespace) -> int:
                 threading.Thread(target=watch_ui, args=(ui, stop), daemon=True).start()
             except ServiceError as e:
                 report("⚠️", e, "（沒有桌面角色，語音仍可使用）")
-            voice_args = {"gate": WakeGate(enabled=True), "bus": bus}
+            voice_args.update(gate=WakeGate(enabled=True), bus=bus)
 
         catalog.DEFAULT.installed()  # 先掃描已安裝 App（約 50 ms），第一句話的比對才不用等
         mic = MicSource(args.device)
@@ -157,6 +179,11 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     if args.text:
+        music_db = local_actions.MUSIC_DB  # 一次性模式：同步準備好資料庫再執行，點歌的事件才寫得進去（約增加 alembic 的載入時間）
+        music_db.start()
+        music_db.wait_ready(MUSIC_DB_WAIT_S)
+        if music_db.message:
+            print(music_db.message)
         process_voice_command(" ".join(args.text))
         return 0
     previous = signal.signal(signal.SIGTERM, signal.default_int_handler)  # kill 也走 KeyboardInterrupt 的收尾流程

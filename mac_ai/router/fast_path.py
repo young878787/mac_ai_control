@@ -7,7 +7,7 @@ from mac_ai.router import context
 from mac_ai.router.actions import ExecContext, run_tool
 from mac_ai.router.domain import _REALTIME_RE, SCOPE_WORDS, Intent, parse_find, resolve_intent, starts_with_find_verb
 from mac_ai.router.lexicon import (
-    APP_KIND, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_project,
+    APP_KIND, LEXICON, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_project,
 )
 from mac_ai.router.local_actions import plan_actions
 
@@ -22,6 +22,40 @@ _TOPIC_RE = re.compile(rf"^(?P<x>.+?)\s*(?P<v>{_LONG_VERB})$")
 _NEG_RE = re.compile(r"不要|不用|不必|不想|不能|不可以|不行|不需要|別|勿|沒有|先不")
 _NARR_RE = re.compile(rf"昨天|前天|剛剛|剛才|之前|已經|以前|上次|曾經|本來|原本|(?:{_VERB})了")
 _QUESTION_RE = re.compile(r"嗎|什麼|怎麼|為什麼|為何|如何|是不是|有沒有|哪|幾|多少|\?")
+
+# 點歌句型（詞庫 music；規則見 docs/plans/completed/2026-11-21-music-play.md §4.1）：只比對原句，不碰 IO
+_MUSIC = LEXICON["music"]
+_M_PREFIX = rf"(?:(?:{_alt(_MUSIC['prefix'])})\s*)*"
+_M_QTY = _alt(_MUSIC["quantity"])
+_MUSIC_RES = (
+    ("listen", re.compile(rf"^{_M_PREFIX}我?\s*(?:{_alt(_MUSIC['listen'])})\s*(?P<x>.*)$")),
+    ("play", re.compile(rf"^{_M_PREFIX}(?:{_alt(_MUSIC['play'])})\s*(?P<x>.+)$")),
+    ("pick", re.compile(rf"^{_M_PREFIX}(?:{_alt(_MUSIC['put'] + _MUSIC['bring'])})(?:{_M_QTY})\s*(?P<x>.*)$")),
+    ("pick", re.compile(rf"^{_M_PREFIX}(?:{_alt(_MUSIC['put'])})\s*(?P<x>{_alt(_MUSIC['generic'])})$")),  # 『放音樂』
+    ("tail", re.compile(rf"^(?P<x>.+?)的歌來(?:{_M_QTY})$")),  # 『五月天的歌來一首』
+    ("bare", re.compile(r"^聽(?P<x>.+)的歌$")),  # 單獨的『聽 X』不收，一定要『聽 X 的歌』
+)
+_MUSIC_CONTROL = tuple(_MUSIC["play_control"])
+_MUSIC_INNER_RE = re.compile(_alt(_MUSIC["inner_command"]))  # 歌名裡出現另一個指令（『我想聽音樂幫我開 Spotify』）：不收，整句交給分流
+_MUSIC_GENERIC = frozenset(_MUSIC["generic"])
+_MUSIC_LEAD_RE = re.compile(rf"^(?:{_alt(_MUSIC['lead_clean'])})")
+_MUSIC_TAIL_RE = re.compile(rf"(?:{_alt(_MUSIC['tail_clean'])})$")
+_MUSIC_PENDING = frozenset(["", *_MUSIC["quantity"]])
+
+
+def _music_split(text: str) -> Optional[Tuple[str, str]]:
+    for kind, pattern in _MUSIC_RES:
+        m = pattern.match(text)
+        if m:
+            return kind, m["x"].strip()
+    return None
+
+
+def music_pending(text: str) -> bool:
+    """點歌動詞後面還沒說出歌名（『我想聽』『來一首』『放首』『我想聽一首』）：給完整度判斷用，不等於命中點歌規則"""
+    parts = _music_split(text.strip())
+    return parts is not None and parts[0] in ("listen", "pick") and parts[1] in _MUSIC_PENDING
+
 
 # 常用功能說法前後的程度詞（『再往下滑』『多往下滑』『往下滑一點』）：拿掉後整句仍要等於詞庫說法才算
 _DEGREE_PREFIX_RE = re.compile(r"^(?:再多|再|多|繼續|稍微)")
@@ -142,6 +176,12 @@ class FastPathMatcher:
     _neg_bright_re = re.compile(r"^(?:把)?(?:螢幕|畫面)?(?:不要|別)(?:那麼|這麼)(?P<d>亮|暗)(?:了)?$")
     _neg_dark_re = re.compile(rf"^(?:我)?(?:不要|不想要?|別)(?:再)?(?:用)?{_DARK}模式(?:了)?$")
 
+    # 點歌回饋（整句完全相同才收）：換一首／不是這首、我喜歡這首、不要再放這首（含否定詞，在 _r_negated_command 比對）、我最常聽什麼
+    _music_replace_re = re.compile(r"^(?:換一首|不是這首)歌?$")
+    _music_like_re = re.compile(r"^我喜歡這首歌?$")
+    _neg_music_dislike_re = re.compile(r"^(?:不要再放|別再放)這首歌?$")
+    _music_top_re = re.compile(r"^我最常聽(?:什麼歌?|誰)$")
+
     def __init__(self, catalog=None):
         self.catalog = catalog if catalog is not None else catalog_mod.DEFAULT
 
@@ -166,6 +206,8 @@ class FastPathMatcher:
         for pattern in self._read_screen_re:
             if pattern.match(s):
                 return Match([("read_screen", {})])
+        if self._music_top_re.match(s):  # 『我最常聽什麼』含『什麼』：要在問句守門之前判斷，只收這幾句
+            return Match([("music_top", {})])
         # 句首是明確的搜尋動詞：關鍵字裡的疑問詞（『搜尋台北天氣怎麼樣』）是搜尋內容，不是在問助理，所以先於問句守門
         for rule in (self._r_open_search, self._r_search):
             m = rule(s, candidates)
@@ -174,7 +216,8 @@ class FastPathMatcher:
         if _QUESTION_RE.search(s):
             return None
         for rule in (
-            self._r_front, self._r_tab, self._r_project, self._r_volume, self._r_mute,
+            self._r_front, self._r_music_feedback, lambda _s, _c: self._r_music(raw),  # 點歌看原句：canonicalize 會吃掉『我想』『來』等開頭；常用功能的整句說法（播放、暫停）先比對
+            self._r_tab, self._r_project, self._r_volume, self._r_mute,
             self._r_brightness, self._r_dark, self._r_lock, self._r_find, self._r_pick, self._r_site, self._r_app,
             self._r_front_degree,
         ):
@@ -191,6 +234,8 @@ class FastPathMatcher:
             return Match([("adjust_screen_brightness", {"direction": "down" if m["d"] == "亮" else "up", "steps": 3})])
         if self._neg_dark_re.match(s):
             return Match([("system_power_action", {"action": "dark_mode_off"})])
+        if self._neg_music_dislike_re.match(s):
+            return Match([("music_feedback", {"kind": "dislike"})])
         return None
 
     @staticmethod
@@ -278,10 +323,49 @@ class FastPathMatcher:
         if sid is None:
             return None
         args: Dict[str, Any] = {"id": sid}
+        direction = context.SHORTCUT_DIRECTIONS.get(_compact(s))
+        if direction:
+            args["direction"] = direction
         prior = self._r_app(s, candidates)
         if prior is not None:
             args["fallback"] = [list(a) for a in prior.actions]
         return Match([("front_action", args)], prior.confidence if prior else "exact", prior.note if prior else "")
+
+    def _r_music_feedback(self, s: str, candidates: bool) -> Optional[Match]:
+        """『換一首』『不是這首』→ music_replace；『我喜歡這首』→ music_feedback(like)。純比對；『不要再放這首』在 _r_negated_command"""
+        if self._music_replace_re.match(s):
+            return Match([("music_replace", {})])
+        if self._music_like_re.match(s):
+            return Match([("music_feedback", {"kind": "like"})])
+        return None
+
+    @staticmethod
+    def _r_music(text: str) -> Optional[Match]:
+        """『我想聽 X』『播放 X』『放一首 X』『來點 X』『聽 X 的歌』『X 的歌來一首』→ play_media(query)；query 空字串＝常聽的歌。
+        受詞是你／我、疊字『聽聽』、『聽說』、『播放』後接控制詞（播放速度、播放器…）、後面還接另一個指令（『…幫我開 Spotify』）不收。純比對，不讀前景、不做 IO"""
+        parts = _music_split(text)
+        if parts is None:
+            return None
+        kind, x = parts
+        if _MUSIC_INNER_RE.search(x):
+            return None
+        if kind in ("listen", "bare") and x.startswith(("你", "我", "聽")):
+            return None
+        if kind == "listen" and x.startswith("說"):
+            return None
+        if kind == "play" and x.startswith(_MUSIC_CONTROL):
+            return None
+        x = _MUSIC_LEAD_RE.sub("", x, count=1).strip()
+        while True:
+            y = _MUSIC_TAIL_RE.sub("", x).strip()
+            if y == x:
+                break
+            x = y
+        if x in _MUSIC_GENERIC:
+            x = ""
+        if kind == "bare" and not x:
+            return None
+        return Match([("play_media", {"query": x})])
 
     def _r_front_degree(self, s: str, candidates: bool) -> Optional[Match]:
         """常用功能的說法前後多了程度詞（『再往下滑』『往下滑一點』）。放在規則最後：只補原本沒命中的句子"""

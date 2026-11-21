@@ -9,7 +9,7 @@ from functools import lru_cache
 from typing import Optional
 
 from mac_ai import config
-from mac_ai.router.fast_path import FastPathMatcher
+from mac_ai.router.fast_path import FastPathMatcher, music_pending
 from mac_ai.router.normalize import normalize_utterance
 from mac_ai.wake import lexicon_wake_greetings, lexicon_wake_words, split_wake
 
@@ -52,7 +52,7 @@ def classify(text: Optional[str], wake_enabled: bool = config.WAKE_WORD_ENABLED)
         return UNKNOWN
     last = _strip_tail(clauses[-1])
     # 句尾的連接詞會被 split_clauses 當分隔詞吃掉（「打開小算盤然後」→ 只剩「打開小算盤」），所以看原句句尾
-    if _TRAILING_CONNECTOR_RE.search(body) or last in _BARE_VERBS:
+    if _TRAILING_CONNECTOR_RE.search(body) or last in _BARE_VERBS or music_pending(last):  # 點歌：歌名還沒說（『我想聽』『來一首』『放首』）
         return INCOMPLETE
     if all(matcher.match(c) is not None for c in clauses):
         return COMPLETE

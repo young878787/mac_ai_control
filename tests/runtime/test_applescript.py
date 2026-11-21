@@ -7,7 +7,7 @@ import tempfile
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import actions
+from mac_ai.router import actions, local_actions
 from support.real import real_run
 
 
@@ -59,6 +59,29 @@ def test_tab_scripts_compile(browser, action):
 def test_front_and_running_script_compiles():
     with tempfile.TemporaryDirectory() as tmp:
         p = subprocess.run(["osacompile", "-e", actions._FRONT_AND_RUNNING_SCRIPT, "-o", os.path.join(tmp, "x.scpt")],
+                           capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="需要 osacompile")
+def test_safari_tabs_script_compiles():
+    """背景音樂控制讀 Safari 目前分頁與所有分頁網址的腳本：只編譯、不執行（執行會對 Safari 下指令）"""
+    if not _app_installed("Safari"):
+        pytest.skip("沒有安裝 Safari，無法編譯它的 AppleScript")
+    with tempfile.TemporaryDirectory() as tmp:
+        p = subprocess.run(["osacompile", "-e", local_actions._SAFARI_TABS_SCRIPT, "-o", os.path.join(tmp, "x.scpt")],
+                           capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="需要 osacompile")
+@pytest.mark.parametrize("browser", ["Safari", "Google Chrome"])
+def test_music_tab_scripts_compile(browser):
+    """點歌的『找音樂分頁並改網址』腳本（actions._MUSIC_TAB_SCRIPTS）：只編譯、不執行（執行會對瀏覽器下指令）"""
+    if not _app_installed(browser):
+        pytest.skip(f"沒有安裝 {browser}，無法編譯它的 AppleScript")
+    with tempfile.TemporaryDirectory() as tmp:
+        p = subprocess.run(["osacompile", "-e", actions._MUSIC_TAB_SCRIPTS[browser], "-o", os.path.join(tmp, "x.scpt")],
                            capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
 

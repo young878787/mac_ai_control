@@ -26,7 +26,7 @@ CASES = [
     ("打開 YouTube", COMPLETE), ("開油管", COMPLETE), ("上 YouTube", COMPLETE), ("幫我開瀏覽器看 YouTube", COMPLETE), ("開 GitHub 首頁", COMPLETE),
     ("打開 YouTube 然後", INCOMPLETE), ("打開 YouTube，", COMPLETE), ("打開 You", UNKNOWN), ("去 YouTube 看影片", UNKNOWN), ("打開 YouTube Music", UNKNOWN),
     # 半個詞、聽不懂、聊天：交給預設門檻
-    ("打開小", UNKNOWN), ("今天天氣怎麼樣", UNKNOWN), ("我想聽音樂", UNKNOWN), ("你好", UNKNOWN),
+    ("打開小", UNKNOWN), ("今天天氣怎麼樣", UNKNOWN), ("你好", UNKNOWN),
     ("", UNKNOWN), ("   ", UNKNOWN), ("，。", UNKNOWN),
 ]
 
@@ -34,6 +34,27 @@ CASES = [
 @pytest.mark.parametrize("text,expected", CASES)
 def test_classify_without_wake_word(text, expected):
     assert classify(text, wake_enabled=False) == expected
+
+
+# ---------- C3：點歌句。歌名還沒說（動詞後面是空的、句尾是『的』）不完整；其他命中點歌規則的句子完整 ----------
+MUSIC_INCOMPLETE = ["我想聽", "播放", "來一首", "放首", "我想聽周杰倫的", "想聽", "放一首", "來點", "我想聽一首"]
+
+
+@pytest.mark.parametrize("text", MUSIC_INCOMPLETE)
+def test_c3_music_without_a_title_is_incomplete(text):
+    assert classify(text, wake_enabled=False) == INCOMPLETE
+
+
+def test_c3_every_matched_music_sentence_is_complete():
+    """語料沿用 tests/flow/test_route_music.py 的 C1；只有動詞、沒有歌名的句子（MUSIC_INCOMPLETE）除外"""
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("route_music_corpus", Path(__file__).parents[1] / "flow" / "test_route_music.py")
+    corpus = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(corpus)
+    sentences = [t for t, _ in corpus.C1_POSITIVE if t not in MUSIC_INCOMPLETE]
+    assert len(sentences) >= 40
+    assert [t for t in sentences if classify(t, wake_enabled=False) != COMPLETE] == []
 
 
 def test_there_are_at_least_30_cases():

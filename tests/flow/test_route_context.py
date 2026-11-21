@@ -179,7 +179,9 @@ ACTION_CASES = [
     ("回到頂端", "Safari", "", ["key 126 command"]),             # 沒有選單項目：送按鍵（⌘ 組合鍵不受輸入法影響）
     ("往下捲", "Safari", "", ["key 121"]),
     ("往上滑", "Safari", "", ["key 116"]),
-    ("暫停", "Safari", YT, [r"button ^(?:播放|暫停|Play|Pause)\s*(?:\(k\)|鍵盤快速鍵\s*k|keyboard shortcut k)$"]),  # 按播放器的按鈕，不送 k（會被注音吃掉）
+    ("暫停", "Safari", YT, [r"button ^暫停 \(k\)$|^Pause \(k\)$"]),  # 按播放器的按鈕，不送 k（會被注音吃掉）；使用者 2026-11-21 決定：暫停只按暫停鈕
+    ("繼續播放", "Safari", YT, [r"button 播放.*k$|^Play \(k\)$"]),
+    ("播放", "Safari", YT, [r"button ^(?:播放|暫停|Play|Pause)\s*(?:\(k\)|鍵盤快速鍵\s*k|keyboard shortcut k)$"]),  # 沒有方向：維持切換
     ("開終端機", VSCODE, "", ["menu 檢視/終端"]),                # 按選單，不送 ⌃`（會被注音吃掉）
     ("幫我打開終端機", VSCODE, "", ["menu 檢視/終端"]),
     ("關掉終端機", VSCODE, "", ["menu 檢視/終端"]),
@@ -201,10 +203,14 @@ def test_front_action_runs_native_operation(monkeypatch, sh, native_calls, front
     assert step["context"]["app"] == front_app and step["context"]["used"] is True and step["context"]["method"]
 
 
-def test_music_play_pause_uses_the_apps_own_command(sh, native_calls, front):
-    front("Music")
-    step = r.process_voice_command("播放")["steps"][0]
-    assert sh == [["osascript", "-e", 'tell application "Music" to playpause']] and native_calls == []
+@pytest.mark.parametrize("text,app,script", [
+    ("播放", "Music", "playpause"), ("播放暫停", "Spotify", "playpause"),  # 沒有方向：切換
+    ("暫停", "Music", "pause"), ("繼續播放", "Music", "play"), ("暫停", "Spotify", "pause"), ("繼續", "Spotify", "play"),  # 使用者 2026-11-21 決定
+])
+def test_music_play_pause_uses_the_apps_own_command(sh, native_calls, front, text, app, script):
+    front(app)
+    step = r.process_voice_command(text)["steps"][0]
+    assert sh == [["osascript", "-e", f'tell application "{app}" to {script}']] and native_calls == []
     assert step["context"]["method"] == "App 指令" and step["status"] == "ok"
 
 
@@ -255,7 +261,6 @@ def test_missing_pid_does_nothing(monkeypatch, sh, native_calls):
     ("上一頁", "Finder", "", "⚠️ 目前最前面的是 Finder，「上一頁」只支援瀏覽器"),
     ("存檔", "Safari", "", "⚠️ 目前最前面的是 Safari，「存檔」只支援編輯器"),
     ("清除畫面", VSCODE, "", f"⚠️ 目前最前面的是 {VSCODE}，「清除畫面」只支援終端機"),
-    ("暫停", "Safari", "example.com", "⚠️ 目前最前面的是 Safari，「播放／暫停」只支援YouTube、Music、Spotify"),
     ("關閉視窗", None, "", "⚠️ 不知道要操作哪個視窗（讀不到最前面的 App），沒有執行「關閉視窗」"),
 ])
 def test_front_action_out_of_scope_does_nothing(monkeypatch, sh, native_calls, front, text, front_app, host, expected):
@@ -335,7 +340,7 @@ def test_every_shortcut_phrase_matches_and_match_is_pure(sh, native_calls, front
     每個綁定都要有底層做法，送按鍵只允許 ⌘ 組合鍵或沒有字元的鍵（不會被輸入法吃掉）"""
     reads = front("Safari", host=FB)
     m = FastPathMatcher()
-    assert len(context.SHORTCUTS) == 17
+    assert len(context.SHORTCUTS) == 19  # 含 next_track、prev_track（音樂播放控制）
     for entry in context.SHORTCUTS.values():
         assert entry["bindings"]
         for b in entry["bindings"]:

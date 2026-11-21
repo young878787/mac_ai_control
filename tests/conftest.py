@@ -1,11 +1,17 @@
+import atexit
+import random
+import shutil
 import subprocess
+import tempfile
+import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
 import mac_ai.router as r
-from mac_ai import config
+from mac_ai import config, db
 from mac_ai.router import cloud_client, context, lexicon, memory, native, normalize
 from support.clock import Clock
 from support.cloud import KEY
@@ -96,13 +102,56 @@ def _isolate_front(request, monkeypatch):
     yield
 
 
+_MUSIC_TEMPLATE: dict = {}
+_MUSIC_TEMPLATE_LOCK = threading.Lock()
+
+
+def _music_template() -> Path:
+    """用真的 ensure_schema（alembic）建一份空的 head 資料庫，整個測試程序只建一次，之後每個測試複製它（不用每次載入 alembic）"""
+    with _MUSIC_TEMPLATE_LOCK:
+        if "path" not in _MUSIC_TEMPLATE:
+            folder = Path(tempfile.mkdtemp(prefix="music_template_"))
+            atexit.register(shutil.rmtree, folder, ignore_errors=True)
+            path = folder / "music.sqlite3"
+            assert db.ensure_schema(path).ok
+            _MUSIC_TEMPLATE["path"] = path
+        return _MUSIC_TEMPLATE["path"]
+
+
+def _copy_template_ensure(path: Path) -> db.EnsureResult:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(_music_template(), path)
+    return db.EnsureResult(True)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_music_db(monkeypatch, tmp_path):
+    """點歌偏好資料庫一律指到暫存目錄，絕對不寫專案的 data/。預設『還沒啟動』（conn() 是 None：照常播放、不寫紀錄）；
+    需要資料庫的測試用 music_db fixture 啟動它。亂數固定種子；時間（local_actions._now）由需要的測試自己 monkeypatch"""
+    from mac_ai.router import local_actions
+    path = tmp_path / "data" / "music.sqlite3"
+    monkeypatch.setattr(local_actions, "MUSIC_DB", db.MusicDb(path, ensure=_copy_template_ensure))
+    monkeypatch.setattr(local_actions, "_rng", random.Random(0))
+    yield
+    local_actions.MUSIC_DB.close()
+
+
+@pytest.fixture
+def music_db():
+    """啟動並等準備好的點歌資料庫（暫存目錄、schema 是複製來的空 head 庫）。回傳 local_actions.MUSIC_DB；conn() 給呼叫端執行緒自己的連線"""
+    from mac_ai.router import local_actions
+    local_actions.MUSIC_DB.start()
+    assert local_actions.MUSIC_DB.wait_ready(30) and local_actions.MUSIC_DB.ready
+    return local_actions.MUSIC_DB
+
+
 FAKE_PID = 4242
 
 
 @pytest.fixture(autouse=True)
 def native_calls(request, monkeypatch):
     """離線測試不得真的對 App 下指令：native 的底層操作一律攔下，記成字串（給測試檢查），預設回傳成功。
-    格式：window close／menu [ command／menu 檢視/終端／button <pattern>／key 121。
+    格式：window close／menu [ command／menu 檢視/終端／button <pattern>／button_in_window <pattern>／mediakey <key>／key 121。
     要模擬失敗時改 native_calls.result（例如 "missing"）。真實 App 測試（-m app）不套用"""
     class Calls(list):
         result = "ok"
@@ -119,6 +168,8 @@ def native_calls(request, monkeypatch):
     monkeypatch.setattr(native, "press_menu", lambda pid, chars="", mods=(), path=None: (
         rec(f"menu {'/'.join(p[0] for p in path)}" if path else f"menu {chars} {'+'.join(mods)}"), ""))
     monkeypatch.setattr(native, "press_button", lambda pid, pattern: rec(f"button {pattern}"))
+    monkeypatch.setattr(native, "press_button_in_window", lambda pid, pattern: rec(f"button_in_window {pattern}"))
+    monkeypatch.setattr(native, "post_media_key", lambda key: rec(f"mediakey {key}"))
     monkeypatch.setattr(native, "post_key", lambda code, mods=(): rec(f"key {code}" + (f" {'+'.join(mods)}" if mods else "")))
     yield calls
 

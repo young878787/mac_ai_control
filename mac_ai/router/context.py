@@ -112,6 +112,8 @@ def read_host(run: Runner, app: str) -> str:
 # ---------- 常用功能（詞庫 app_shortcuts；執行方式見 local_actions.front_action）----------
 SHORTCUTS: Dict[str, dict] = {e["id"]: e for e in LEXICON.get("app_shortcuts", [])}
 SHORTCUT_PHRASES: Dict[str, str] = {_compact(p): e["id"] for e in SHORTCUTS.values() for p in e["phrases"]}
+# 說法本身帶方向的（play_pause 的『暫停』『繼續』）：背景控制時要分得出『暫停』與『繼續』，不能單純切換
+SHORTCUT_DIRECTIONS: Dict[str, str] = {_compact(p): d for e in SHORTCUTS.values() for d, ps in e.get("directions", {}).items() for p in ps}
 
 
 def needs_site(entry: dict) -> bool:
