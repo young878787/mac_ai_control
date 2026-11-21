@@ -43,3 +43,6 @@ desktop/vendor/
 # Live2D 模型（他人角色，僅限個人使用，約 665 MB）
 Rushia_hd/
 Rushia_VRM_standard_pack
+
+# 點歌偏好資料庫（永久保存、含個人聽歌紀錄，不入版控；只限專案根目錄的 data/，含 WAL 與備份檔）
+/data/

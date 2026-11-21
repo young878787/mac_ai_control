@@ -6,7 +6,8 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional, Sequence
 
 from mac_ai import config
 from mac_ai.stt import latency_log
@@ -19,10 +20,11 @@ from mac_ai.ui_bus import UiBus
 from mac_ai.wake import WakeGate, split_wake
 
 _CLEAR_LINE = "\r\033[K"
+MAINT_POLL_S = 60.0  # 點歌定時整理的計時器多久看一次有沒有到期（到期的間隔是 config.MUSIC_MAINT_INTERVAL_S）
 WORKER_POLL_S = 0.2  # 指令執行緒等佇列時每隔多久檢查一次 stop（測試調小，避免停止時空等）
 _FAILED_STEP_STATUS = ("exec_failed", "llm_unavailable", "llm_error")
 _LOGGED_STEP_KEYS = ("kind", "text", "status", "ms", "llm_ms", "intent", "match", "route", "cloud", "cloud_fallback",
-                     "vision_cloud", "memory_turns")  # 寫進 commands.jsonl 的 step 欄位
+                     "vision_cloud", "memory_turns", "music")  # 寫進 commands.jsonl 的 step 欄位
 
 
 def _ignore(event: dict) -> None:
@@ -169,11 +171,89 @@ class CommandRouter:
             self._on_quit()
 
 
+@dataclass
+class QueuedJob:
+    """排進指令佇列、在 command_worker 執行緒上執行的內部工作（例如點歌定時整理）。不是使用者指令：
+    不發 executing／result 事件、不寫 commands.jsonl；出錯只印出錯誤。existing 的字串（指令）與 dict（點選清單）行為不變"""
+    name: str
+    run: Callable[[], None]
+
+
+class MusicMaintenance:
+    """點歌定時整理（計畫 §4.5）：啟動時跑一次，之後每 schedule.interval 一次。計時器執行緒只負責把 QueuedJob 排進指令佇列，
+    資料庫的讀寫（maintain、store_versions）都在 command_worker 上做（唯一的寫入者）；網路（fetch_versions）在一條短命的背景執行緒，
+    抓到結果再排回佇列由 worker 寫入。三個函式由呼叫端注入（main.py），這裡不 import router。
+    maintain(conn, now)；fetch_versions()→{"web","ytm"}；store_versions(conn, d)；schedule：music_prefs.MaintenanceSchedule；clock：秒"""
+
+    def __init__(self, db, *, maintain: Callable[[Any, float], object], fetch_versions: Callable[[], Dict[str, str]],
+                 store_versions: Callable[[Any, Dict[str, str]], object], schedule, clock: Callable[[], float] = time.time,
+                 poll_s: float = MAINT_POLL_S, ready_poll_s: float = 0.5):
+        self.db = db
+        self._maintain, self._fetch, self._store = maintain, fetch_versions, store_versions
+        self.schedule, self.clock = schedule, clock
+        self.poll_s, self.ready_poll_s = poll_s, ready_poll_s
+        self._commands: Optional["queue.Queue[object]"] = None
+        self._lock = threading.Lock()
+        self._pending = False  # 已經排進佇列、還沒做完
+
+    def start(self, commands: "queue.Queue[object]", stop: threading.Event) -> threading.Thread:
+        self._commands = commands
+        t = threading.Thread(target=self._loop, args=(stop,), name="music-maintenance-timer", daemon=True)
+        t.start()
+        return t
+
+    def _loop(self, stop: threading.Event) -> None:
+        while not stop.is_set() and not self.db.wait_ready(self.ready_poll_s):  # 資料庫還在背景準備：準備好就立刻跑第一次
+            pass
+        while not stop.is_set():
+            self.tick()
+            stop.wait(self.poll_s)
+
+    def tick(self) -> bool:
+        """（計時器執行緒）到期、前一個工作做完了、資料庫可用，才排一個整理工作進佇列。回傳有沒有排"""
+        with self._lock:
+            if self._pending or self._commands is None or not self.db.ready or not self.schedule.due(self.clock()):
+                return False
+            self._pending = True
+        self._commands.put(QueuedJob("music-maintenance", self._run_maintenance))
+        return True
+
+    def _run_maintenance(self) -> None:
+        """（command_worker）terms 衰減與刪除；成功才記下這次時間，然後在背景抓 clientVersion"""
+        try:
+            conn = self.db.conn()
+            if conn is None:
+                return
+            now = self.clock()
+            self._maintain(conn, now)
+            with self._lock:
+                self.schedule.mark(now)
+        finally:
+            with self._lock:
+                self._pending = False
+        threading.Thread(target=self._fetch_versions, name="music-client-version", daemon=True).start()
+
+    def _fetch_versions(self) -> None:
+        """（背景執行緒）只做網路，不碰資料庫；結果排回佇列"""
+        try:
+            versions = self._fetch()
+        except Exception:  # noqa: BLE001  讀不到就等下一輪
+            return
+        if versions and self._commands is not None:
+            self._commands.put(QueuedJob("music-client-versions", lambda: self._store_versions(versions)))
+
+    def _store_versions(self, versions: Dict[str, str]) -> None:
+        """（command_worker）"""
+        conn = self.db.conn()
+        if conn is not None:
+            self._store(conn, versions)
+
+
 def command_worker(commands: "queue.Queue[object]", execute: Callable[[str], object], stop: threading.Event,
                    publish: Optional[Callable[[dict], None]] = None,
                    choose: Optional[Callable[[dict], object]] = None,
                    command_log: Optional[Callable[[dict], None]] = None) -> None:
-    """依序執行佇列裡的指令（字串＝語音／打字指令；dict＝UI 點選清單）；單一指令出錯只印出錯誤，不讓整個助手停下。
+    """依序執行佇列裡的指令（字串＝語音／打字指令；dict＝UI 點選清單；QueuedJob＝內部工作）；單一指令出錯只印出錯誤，不讓整個助手停下。
     command_log：每個指令執行完收到一筆 command_record（出錯時是 {command, ok: False, error}）；
     語音指令另帶 utt_id（對應 latency.jsonl 同一句）與 queue_ms（進佇列到開始執行的等待）"""
     publish = publish or _ignore
@@ -182,6 +262,12 @@ def command_worker(commands: "queue.Queue[object]", execute: Callable[[str], obj
         try:
             item = commands.get(timeout=WORKER_POLL_S)
         except queue.Empty:
+            continue
+        if isinstance(item, QueuedJob):  # 內部工作：不發 UI 事件、不寫指令紀錄
+            try:
+                item.run()
+            except Exception:
+                traceback.print_exc()
             continue
         is_choice = isinstance(item, dict)
         command = f"選擇第 {item['n']} 筆" if is_choice else item
@@ -211,7 +297,8 @@ def run_voice_loop(audio, execute: Callable[[str], object], stop: threading.Even
                    say: Callable[[str], None] = print, show_partial: Optional[Callable[[str], None]] = None,
                    reconnect_min_s: float = config.STT_RECONNECT_MIN_S,
                    endpoint_mode: str = config.ENDPOINT_MODE, bus: Optional[UiBus] = None,
-                   choose: Optional[Callable[[dict], object]] = None) -> None:
+                   choose: Optional[Callable[[dict], object]] = None,
+                   maintenance: Optional[MusicMaintenance] = None) -> None:
     """收音 → STT → 喚醒詞 → 執行，直到 stop 被設定。指令在另一條執行緒依序執行，不擋住收音。
     endpoint_mode="client"：本端神經網路 VAD＋語意判斷說完了就要求 server 收尾，並把每句的計時寫進 logs/runtime/latency.jsonl；每個指令的執行結果寫進 logs/runtime/commands.jsonl。
     bus：桌面角色介面的事件匯流排（已啟動）；有的話把狀態事件廣播出去，並處理 UI 送回來的指令"""
@@ -223,6 +310,8 @@ def run_voice_loop(audio, execute: Callable[[str], object], stop: threading.Even
         bus.bind(router.on_ui_message, router.hello_state)
     worker = threading.Thread(target=command_worker, args=(commands, execute, stop, publish, choose, _write_command_log), daemon=True)
     worker.start()
+    if maintenance is not None:  # 點歌定時整理：計時器把工作排進同一個佇列，由 worker 執行
+        maintenance.start(commands, stop)
     try:
         endpoint_args = {}
         if endpoint_mode == "client":

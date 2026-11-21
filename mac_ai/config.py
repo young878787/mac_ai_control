@@ -92,6 +92,19 @@ FILE_SEARCH_TIMEOUT_S = 3.0  # mdfind 逾時
 APP_INDEX_REFRESH_S = 60.0  # 已安裝 App 清單：查不到時，最短隔這麼久才重掃一次
 CONTEXT_TIMEOUT_S = 1.0  # 讀前景 App（lsappinfo，實測約 15 ms）的逾時；逾時視為沒有上下文
 
+# --- 點歌（YouTube）。搜尋用 InnerTube（不用金鑰），都失敗就開搜尋頁
+YT_TIMEOUT_S = 2.0  # InnerTube 兩邊共用的截止時間（實測並行 p50 520 ms、p95 811 ms）
+YT_WEB_SEARCH_URL = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false"
+YT_MUSIC_SEARCH_URL = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
+YT_WEB_HOME_URL = "https://www.youtube.com/"  # 定時整理時從首頁讀新的 clientVersion
+YT_MUSIC_HOME_URL = "https://music.youtube.com/"
+YT_WEB_CLIENT_VERSION = "2.20261119.07.00"  # 預設值；maintenance 表有新值時用新值
+YT_MUSIC_CLIENT_VERSION = "1.20261117.06.00"
+MUSIC_DB_PATH = ROOT / "data" / "music.sqlite3"  # 點歌偏好（永久保存、不入版控，啟動時自動建立）
+MUSIC_CACHE_TTL_S = 30 * 86400.0  # query→videoId 快取多久沒用就重新查（pinned 不過期）
+MUSIC_MAINT_INTERVAL_S = 6 * 3600.0  # 定時整理（terms 衰減與刪除、clientVersion 更新）的間隔
+MUSIC_TERMS_MAX = 500  # 點歌字詞矯正詞表上限
+
 # macos-stt 是獨立子專案（自己的 venv），語音辨識授權必須在它的 .app bundle 內取得，所以用 start.py serve 啟動
 STT_DIR = ROOT / "macos-stt"
 STT_PYTHON = STT_DIR / ".venv" / "bin" / "python"
