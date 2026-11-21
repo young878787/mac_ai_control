@@ -7,6 +7,7 @@ import rig from '../../rig/fullrig03.js';
 import { installDrawableColors } from '../engine/compat/drawable-colors.js';
 import { installRenderBuffers, installStateCache, nextRenderFrame } from '../engine/compat/render-buffers.js';
 import { createInterpolator } from '../engine/vertex-interp.js';
+import { createProcedural, motionBlinks } from '../animation/procedural.js';
 import { createBubbles, createChoices, createInputBox, createQuick } from './widgets.js';
 
 const { height: MODEL_H, region: REGION, headFraction: HEAD_FRACTION } = rig.layout;   // 出場高度（px）、模型座標中的「全身」範圍、算「頭部」的比例
@@ -26,6 +27,7 @@ const SETTLE = { eps: 0.05, holdMs: 500, maxMs: 3000 };
 const FROZEN_TICK_MS = 250;                       // 停格期間狀態機與泡泡的更新間隔
 const RENDER_OPT = { buffers: true, state: true, halfRate: true };              // 渲染優化開關（計畫書 §6.3，A/B 實測後保留的項目）；有問題時改 false 回到原本的繪製
 const TRACE_COLS = ['t', 'angleX', 'angleY', 'angleZ', 'eyeX', 'eyeY', 'eyeOpen', 'motion'];   // 動作軌跡的欄位（量測用，見 dev/motion-metrics.js）；motion＝NEEDED_MOTIONS 的索引
+const PROCEDURAL = true;                          // 程序層（擬人化計畫書 §4）：頭身眼眉由 animation/procedural.js 接手。false＝回到 Idle 全權＋鎖游標的舊做法（A/B 與回退用，計劃書 §10）
 const TRACE_MAX = 50000;                          // 軌跡最多記幾列（30 Hz 計算約 28 分鐘），超過就停止記錄並標 truncated
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -70,16 +72,6 @@ async function main() {
   const base = modelURL.slice(0, modelURL.lastIndexOf('/') + 1);
   const settings = await readJSON(modelURL);
   const physicsJSON = await readJSON(base + settings.FileReferences.Physics);
-  // profile 涵蓋度與模型內容：缺必要的動作／表情就拋錯，缺選用表情與手勢只警告（rig/check.js）
-  const vocab = { motions: Object.values(MOTIONS), expressions: Object.values(EXPRESSIONS), gestures: Object.values(GESTURES).filter(g => g !== GESTURES.none) };
-  for (const w of checkRig(rig, settings, vocab).warnings) console.warn(`[ui] ${w}`);
-  const motions = {}, expressions = {};   // 以模型裡的名稱為 key
-  for (const name of NEEDED_MOTIONS) motions[name] = await readJSON(base + settings.FileReferences.Motions[name][0].File);
-  for (const name of [...NEEDED_EXPRESSIONS, ...OPTIONAL_EXPRESSIONS, ...GESTURE_EXPRESSIONS]) {
-    const item = (settings.FileReferences.Expressions || []).find(e => e.Name === name);
-    if (item) expressions[name] = await readJSON(base + item.File);
-  }
-
   const app = new PIXI.Application({ view: $('stage'), width: W, height: H, autoStart: false, backgroundAlpha: 0, antialias: true,
     autoDensity: true, resolution: Math.min(devicePixelRatio || 1, 2), preserveDrawingBuffer: true });
   // PixiJS 6 的 InteractionManager 掛在 Ticker.system，預設會讓 rAF 永遠以 60 Hz 空轉；繪製由我們自己的幀迴圈負責，這裡全部停掉
@@ -97,8 +89,21 @@ async function main() {
   internal.renderer.setClippingMaskBufferSize(1024);
   const defaults = Float32Array.from(raw.parameters.defaultValues);
   const ids = Array.from(raw.parameters.ids);
+  // profile 涵蓋度與模型內容：缺必要的動作／表情就拋錯，缺選用表情與手勢只警告（rig/check.js）
+  const vocab = { motions: Object.values(MOTIONS), expressions: Object.values(EXPRESSIONS), gestures: Object.values(GESTURES).filter(g => g !== GESTURES.none) };
+  for (const w of checkRig(rig, settings, vocab, ids).warnings) console.warn(`[ui] ${w}`);
+  const motions = {}, expressions = {};   // 以模型裡的名稱為 key
+  for (const name of NEEDED_MOTIONS) motions[name] = await readJSON(base + settings.FileReferences.Motions[name][0].File);
+  for (const name of [...NEEDED_EXPRESSIONS, ...OPTIONAL_EXPRESSIONS, ...GESTURE_EXPRESSIONS]) {
+    const item = (settings.FileReferences.Expressions || []).find(e => e.Name === name);
+    if (item) expressions[name] = await readJSON(base + item.File);
+  }
   const idx = (id) => ids.indexOf(id);
   const P = Object.fromEntries(Object.entries(rig.params).map(([key, id]) => [key, idx(id)]));
+  // 自己會眨眼的語意動作（眼皮曲線最小值 < 0.5，從 motion3.json 算，不寫死名稱）：這些動作播放時程序眨眼暫停
+  const blinkMotions = new Set(Object.entries(rig.motions).filter(([, name]) => motionBlinks(motions[name])).map(([semantic]) => semantic));
+  const procedural = PROCEDURAL ? createProcedural({ index: P, defaults, minimums: raw.parameters.minimumValues, maximums: raw.parameters.maximumValues,
+    seed: (Math.random() * 2 ** 32) >>> 0, blinkMotions }) : null;
   const physics = createFixedPhysics(PIXI.live2d.CubismPhysics.create(physicsJSON), core, physicsJSON);
   const motionQueue = new PIXI.live2d.CubismMotionManager();
   const expressionQueue = new PIXI.live2d.CubismMotionQueueManager();
@@ -111,6 +116,7 @@ async function main() {
   const eyeBlinkIds = settings.Groups?.find(g => g.Name === 'EyeBlink')?.Ids || [];
   const lipSyncIds = settings.Groups?.find(g => g.Name === 'LipSync')?.Ids || [];
   let time = 0, activeMotion = IDLE, activeGesture = GESTURES.none;   // 兩者都是模型裡的名稱（除錯介面回報用）
+  let activeSemantic = MOTIONS.idle;                // 目前播放的動作的語意名稱（程序層用）
   let trace = null;                                 // 動作軌跡（量測用）：motionTrace('start') 之後每個計算幀記錄頭、眼參數，bus 訊息與游標移動一併記下；沒開始就不記錄
   const traceMs = (at) => Math.round((at - trace.t0) * 10) / 10;
 
@@ -121,7 +127,7 @@ async function main() {
     motion.setIsLoop(!!json.Meta.Loop); motion.setIsLoopFadeIn(false);
     motion.setEffectIds(eyeBlinkIds, lipSyncIds);
     motionQueue.startMotionPriority(motion, false, 3);
-    activeMotion = name;
+    activeMotion = name; activeSemantic = semantic;
   }
   function startExpression(semantic) {
     const json = expressions[rig.expressions[semantic] ?? rig.optional[semantic]];
@@ -267,19 +273,23 @@ async function main() {
       computeDt = 0;
       raw.parameters.values.set(defaults);
       motionQueue.updateMotion(core, cdt);
+      // 程序層接手頭身眼眉（§4.3），時鐘用繪製時才前進的虛擬時間；表情與手勢疊在它上面
+      if (procedural) procedural.apply(raw.parameters.values, cdt, time * 1000, { pose: snap.pose, motion: activeSemantic, listening: false, swayGain: 1 });
       expressionQueue.doUpdateMotion(core, time);
       gestureQueue.doUpdateMotion(core, time);
 
-      const headY = topY() + 0.16 * MODEL_H;
-      const wantGaze = snap.pose === 'out' && cursor;
-      const tx = wantGaze ? clamp((cursor.x - W / 2) / 400, -1, 1) : 0;
-      const ty = wantGaze ? clamp((headY - cursor.y) / 400, -1, 1) : 0;
-      const follow = 1 - Math.pow(0.85, cdt * 30);
-      gx += (tx - gx) * follow; gy += (ty - gy) * follow;
       const lean = 1 - clamp(poseT, 0, 1);              // 潛伏時微微歪頭
       const v = raw.parameters.values, mn = raw.parameters.minimumValues, mx = raw.parameters.maximumValues;
       const add = (i, d) => { if (i >= 0) v[i] = clamp(v[i] + d, mn[i], mx[i]); };
-      add(P.angleX, 30 * gx); add(P.angleY, 20 * gy); add(P.eyeX, gx); add(P.eyeY, gy);
+      if (!procedural) {                                // 舊做法：Idle 全權＋游標視線
+        const headY = topY() + 0.16 * MODEL_H;
+        const wantGaze = snap.pose === 'out' && cursor;
+        const tx = wantGaze ? clamp((cursor.x - W / 2) / 400, -1, 1) : 0;
+        const ty = wantGaze ? clamp((headY - cursor.y) / 400, -1, 1) : 0;
+        const follow = 1 - Math.pow(0.85, cdt * 30);
+        gx += (tx - gx) * follow; gy += (ty - gy) * follow;
+        add(P.angleX, 30 * gx); add(P.angleY, 20 * gy); add(P.eyeX, gx); add(P.eyeY, gy);
+      }
       add(P.angleZ, 6 * lean + 8 * tilt); add(P.bodyZ, 3 * lean + 5 * tilt);
       delta = physics.evaluate(core, cdt);
       if (trace) recordTrace(now);
