@@ -19,4 +19,4 @@
 ## 後果
 
 - 新檔要先決定屬於哪一層，放錯位置測試會直接失敗。
-- S5（拆 `app.js`）在結案時沒做，之後要做時另開計畫。
+- S5（拆 `app.js`）在分層計畫結案時沒做，另開 [拆 app.js 計畫](../plans/completed/2026-11-21-desktop-app-split.md) 在 2026-11-21 完成：engine 多了 `stage`／`load-model`／`loop`，animation 多了 `animator`，`renderer/role/` 多了 `pointer`／`probe`；型別檢查範圍納入 `renderer/`（`tsconfig.renderer.json`），型別宣告的取捨見 [0017](0017-renderer-typecheck.md)。

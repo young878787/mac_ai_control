@@ -190,7 +190,7 @@ ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/inst
 
 另外兩樣東西不入版控，需自行準備：
 
-- **Live2D Cubism Core**：到 [Live2D 官網](https://www.live2d.com/en/sdk/download/web/) 下載 Cubism SDK for Web，把 `Core/live2dcubismcore.min.js` 放到 `desktop/vendor/`（專有授權，不可散布）。Core 5.x 與 6.x 都可用；6.x 會由 `desktop/renderer/role/app.js` 的 `bridgeRenderOrders` 補上 pixi-live2d-display 0.4.0 讀不到的繪製順序。
+- **Live2D Cubism Core**：到 [Live2D 官網](https://www.live2d.com/en/sdk/download/web/) 下載 Cubism SDK for Web，把 `Core/live2dcubismcore.min.js` 放到 `desktop/vendor/`（專有授權，不可散布）。Core 5.x 與 6.x 都可用；6.x 會由 `desktop/renderer/engine/compat/render-orders.js` 的 `bridgeRenderOrders` 補上 pixi-live2d-display 0.4.0 讀不到的繪製順序。
 - **模型**：`Rushia_hd/runtime-fullrig03/RushiaHD.model3.json`（路徑在 `mac_ai/config.py` 的 `UI_MODEL_PATH`）。
 
 `python main.py --ui` 啟動時會檢查以上三樣，缺什麼就印出怎麼補。
