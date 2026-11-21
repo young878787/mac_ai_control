@@ -39,6 +39,25 @@ test('少一個選用表情或手勢：只回傳警告，不拋錯', () => {
   assert.ok(warnings.some(w => w.includes('star_eyes')) && warnings.some(w => w.includes('chin_rest')));
 });
 
+/** 依 profile.params 組出「模型有這些參數」的 ID 陣列（再多一個無關的） */
+const paramIds = () => [...Object.values(rig.params), 'ParamArmLA'];
+
+test('給 paramIds：profile.params 的每個 ID 都在模型裡 → 通過', () => {
+  assert.deepEqual(checkRig(rig, model3(), vocab, paramIds()), { warnings: [] });
+});
+
+test('給 paramIds：模型缺一個參數 → 拋錯並指出是哪一個（含程序層用的眉毛、右眼皮、BodyAngleX）', () => {
+  for (const key of ['angleX', 'bodyX', 'eyeROpen', 'browLForm', 'breath']) {
+    const ids = paramIds().filter(id => id !== rig.params[key]);
+    assert.throws(() => checkRig(rig, model3(), vocab, ids), new RegExp(`模型缺少參數：${key}（${rig.params[key]}）`));
+  }
+});
+
+test('沒給 paramIds：不檢查參數（行為和原本相同）', () => {
+  assert.deepEqual(checkRig(rig, model3(), vocab), { warnings: [] });
+  assert.deepEqual(checkRig({ ...rig, params: { ...rig.params, bogus: 'ParamNotInModel' } }, model3(), vocab), { warnings: [] });
+});
+
 test('domain 新增一個 profile 沒有對應的語意名稱：拋錯', () => {
   assert.throws(() => checkRig(rig, model3(), { ...vocab, motions: [...vocab.motions, 'wave'] }), /沒有對應的動作：wave/);
   assert.throws(() => checkRig(rig, model3(), { ...vocab, expressions: [...vocab.expressions, 'angry'] }), /沒有對應的表情：angry/);
@@ -50,6 +69,7 @@ test('profile 本身：語意名稱沒有多餘的、不載入 Blink、版面與
   assert.deepEqual([...Object.keys(rig.expressions), ...Object.keys(rig.optional)].sort(), vocab.expressions.slice().sort());
   assert.deepEqual(Object.keys(rig.gestures).sort(), vocab.gestures.slice().sort());
   assert.ok(!Object.values(rig.motions).includes('Blink'), 'Blink 的頭身曲線全是 0，會把 Idle 的姿勢歸零');
-  for (const k of ['angleX', 'angleY', 'angleZ', 'bodyZ', 'eyeX', 'eyeY', 'eyeOpen']) assert.ok(rig.params[k], k);
+  for (const k of ['angleX', 'angleY', 'angleZ', 'bodyZ', 'eyeX', 'eyeY', 'eyeOpen',
+    'bodyX', 'bodyY', 'eyeROpen', 'browLY', 'browRY', 'browLX', 'browRX', 'browLForm', 'browRForm', 'browLAngle', 'browRAngle', 'breath']) assert.ok(rig.params[k], k);
   assert.ok(rig.layout.height > 0 && rig.layout.headFraction > 0 && rig.layout.region.h > 0);
 });

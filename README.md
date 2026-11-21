@@ -207,7 +207,23 @@ ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/inst
 | 右鍵 | 聊天室／暫停聽指令／結束 |
 | 點搜尋結果清單的一列 | 執行清單的預設動作（顯示或打開）；列尾按鈕執行另一個 |
 
-不用麥克風也能預覽演出：`python scripts/ui_demo.py`（`--hold` 播完後保持執行，可手動操作；`--choices-test` 驗證搜尋結果清單；`--chat-test` 驗證聊天室）。效能量測：`python scripts/ui_perf.py`。
+不用麥克風也能預覽演出：`python scripts/ui_demo.py`（`--hold` 播完後保持執行，可手動操作；`--choices-test` 驗證搜尋結果清單；`--chat-test` 驗證聊天室）。效能量測：`python scripts/ui_perf.py`；動作軌跡指標（無機械感、聆聽專注）：`python scripts/ui_motion.py`（量測期間不要動滑鼠）。
+
+### 注視與聆聽（擬人化）
+
+出場時頭、身體、眼睛、眉毛由程序層接手（`desktop/renderer/animation/`），原生 Idle 動作只保留手臂、肩、呼吸與嘴；反應動作（點頭、搖頭、說話…）播放時程序層把頭身讓給動作，交還時不跳。注意力導演（`desktop/domain/attention.js`）依情境決定看哪裡，優先順序：
+
+| 情境 | 角色的反應 |
+|---|---|
+| 聆聽（聽到喚醒詞或會話中說話） | 立刻正視使用者、動作變小、眨眼變少；收到指令時輕點一下頭 |
+| 打字（輸入框 2 秒內有輸入） | 看輸入框 |
+| 點擊角色 | 看點擊的位置約 1 秒 |
+| 思考（執行中） | 視線往上側移開，在那一帶小幅掃視 |
+| 回應（結果出來、反應動作播放中） | 看使用者；說話開頭先移開視線一下 |
+| 游標（明顯移動） | 眼睛先動、頭跟一點；游標停 1.5～3 秒就失去興趣 |
+| 閒置 | 隨機的劇本（看旁邊、低頭、往上想、換重心、歪頭…），每次都不一樣 |
+
+潛伏時回到中性並停格。要回到舊做法（Idle 全權＋一直看游標），把 `desktop/renderer/role/app.js` 的 `PROCEDURAL` 改成 `false`。設計、常數與實測見 [docs/桌面角色擬人化（注視與聆聽）：實作計畫.md](docs/桌面角色擬人化（注視與聆聽）：實作計畫.md)。
 
 ### 聊天室
 
@@ -290,7 +306,7 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
 | `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站 |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
-| `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 AGENTS.md §3.3 |
+| `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、注意力導演、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`animation/` 程序動畫、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 AGENTS.md §3.3 |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |
 | `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |

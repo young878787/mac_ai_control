@@ -6,6 +6,9 @@ export default {
   optional: { surprised: 'surprised', starEyes: 'star_eyes', poutLeft: 'pout_left' },                                               // 選用：缺了只警告，狀態機要求時不演
   gestures: { armLeftUp: 'arm_l_up', armRightUp: 'arm_r_up', chinRest: 'chin_rest' },                                               // 手勢層（手臂切換參數），和臉部表情分開排隊
   params: { angleX: 'ParamAngleX', angleY: 'ParamAngleY', angleZ: 'ParamAngleZ', bodyZ: 'ParamBodyAngleZ',
-    eyeX: 'ParamEyeBallX', eyeY: 'ParamEyeBallY', eyeOpen: 'ParamEyeLOpen' },
+    eyeX: 'ParamEyeBallX', eyeY: 'ParamEyeBallY', eyeOpen: 'ParamEyeLOpen',
+    bodyX: 'ParamBodyAngleX', bodyY: 'ParamBodyAngleY', eyeROpen: 'ParamEyeROpen',                                                    // 以下是程序層（擬人化）用的參數
+    browLY: 'ParamBrowLY', browRY: 'ParamBrowRY', browLX: 'ParamBrowLX', browRX: 'ParamBrowRX',
+    browLForm: 'ParamBrowLForm', browRForm: 'ParamBrowRForm', browLAngle: 'ParamBrowLAngle', browRAngle: 'ParamBrowRAngle', breath: 'ParamBreath' },
   layout: { region: { x: 380, y: 0, w: 1280, h: 2048 }, height: 420, headFraction: 0.30 },   // region＝模型座標中的「全身」範圍；height＝出場時模型高度（px）；headFraction＝模型頂端往下這個比例內算「頭部」
 };
