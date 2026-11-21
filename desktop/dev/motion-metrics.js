@@ -34,7 +34,9 @@ const percentile = (a, q) => {
 export function columns(trace) {
   for (const name of NEEDED) if (!trace.cols.includes(name)) throw new Error(`軌跡缺少欄位：${name}`);
   const pick = (name) => trace.rows.map(r => r[trace.cols.indexOf(name)]);
-  return { t: pick('t'), x: pick('angleX'), y: pick('angleY'), z: pick('angleZ'), ex: pick('eyeX'), ey: pick('eyeY'), eo: pick('eyeOpen'), motion: pick('motion') };
+  const out = { t: pick('t'), x: pick('angleX'), y: pick('angleY'), z: pick('angleZ'), ex: pick('eyeX'), ey: pick('eyeY'), eo: pick('eyeOpen'), motion: pick('motion') };
+  if (trace.cols.includes('context')) out.context = pick('context');   // P3 才有的選用欄位（注意力導演的情境索引，名稱表在 trace.contexts）
+  return out;
 }
 
 /** 只留 pred(i) 為真的列 */
@@ -211,10 +213,12 @@ export function analyzeListening(trace) {
   const wins = listeningWindows(trace, c.t.length ? c.t[c.t.length - 1] : 0);
   const near = (i) => Math.hypot(c.ex[i], c.ey[i]) <= NEAR_CENTER;
   const arriveMs = wins.map(([a, b]) => { const i = c.t.findIndex((t, k) => t >= a && t < b && near(k)); return i < 0 ? Infinity : c.t[i] - a; });
-  let nearS = 0, totalS = 0, listenSeconds = 0, listenBlinks = 0;
+  let nearS = 0, totalS = 0, listenSeconds = 0, listenBlinks = 0, ctxRows = 0, ctxListening = 0;
+  const listeningIndex = c.context && trace.contexts ? trace.contexts.indexOf('listening') : -1;   // 舊軌跡沒有情境欄，L3 不判
   const listenSpeeds = [];
   for (const [a, b] of wins) {
     for (let i = 1; i < c.t.length; i++) if (c.t[i] >= a + HOLD_FROM_MS && c.t[i] < b) { const dt = stepS(c, i); totalS += dt; if (near(i)) nearS += dt; }
+    if (listeningIndex >= 0) for (let i = 0; i < c.t.length; i++) if (c.t[i] >= a + HOLD_FROM_MS && c.t[i] < b && c.context[i] >= 0) { ctxRows++; if (c.context[i] === listeningIndex) ctxListening++; }   // -1＝程序層關閉，不算
     listenSpeeds.push(...headSpeeds(keepRows(c, i => c.t[i] >= a + HEAD_FROM_MS && c.t[i] < b)));
     const w = keepRows(c, i => c.t[i] >= a && c.t[i] < b);
     listenBlinks += blinkStarts(w).length;
@@ -227,6 +231,7 @@ export function analyzeListening(trace) {
   return {
     rounds: wins.length, arriveMs, arriveWithinLimit: arriveMs.filter(ms => ms <= LISTEN_LIMITS.arriveMs).length,
     holdFraction: totalS ? nearS / totalS : null,
+    contextRows: ctxRows, contextFraction: ctxRows ? ctxListening / ctxRows : null,
     listenHeadSpeedP95: listenP95, idleHeadSpeedP95: idleP95,
     listenBlinkCount: listenBlinks, listenSeconds, idleBlinkCount: idleBlinks, idleSeconds,
     blinkRateRatio: idleRate === null || listenRate === null ? null : (listenRate === 0 ? Infinity : idleRate / listenRate),
@@ -236,6 +241,9 @@ export function analyzeListening(trace) {
 
 export function judgeListening(m) {
   const fmt = (v, d = 2) => (v === null ? '無資料' : Number.isFinite(v) ? v.toFixed(d) : String(v));
+  const hasContext = m.contextFraction !== undefined && m.contextFraction !== null;
+  const l3Pass = hasContext ? m.contextFraction === 1 : null;
+  const l3Detail = hasContext ? `${(m.contextFraction * 100).toFixed(1)}%（${m.contextRows} 列）= 100%` : '軌跡沒有情境欄位（舊軌跡或程序層關閉），無法判定';
   return [
     { name: '量測期間游標沒有移動', pass: m.cursorPx === 0, detail: `移動 ${m.cursorPx} px` },
     { name: '有偵測到聆聽輪次', pass: m.rounds > 0, detail: `${m.rounds} 輪` },
@@ -243,7 +251,7 @@ export function judgeListening(m) {
       detail: `${m.arriveWithinLimit}/${m.rounds} 輪 ≤ ${LISTEN_LIMITS.arriveMs} ms（需 ≥ ${LISTEN_LIMITS.arriveRounds * 100}%）；各輪 ${m.arriveMs.map(v => fmt(v, 0)).join('、')} ms` },
     { name: 'L2 持續正視：進入 0.3 秒後視線在正中 0.15 內的時間', pass: m.holdFraction !== null && m.holdFraction >= LISTEN_LIMITS.holdFraction,
       detail: `${m.holdFraction === null ? '無資料' : (m.holdFraction * 100).toFixed(1) + '%'} ≥ ${LISTEN_LIMITS.holdFraction * 100}%` },
-    { name: 'L3 聆聽期間不跑閒置劇本、不理游標', pass: null, detail: '待 P3：軌跡尚無情境欄位' },
+    { name: 'L3 聆聽期間不跑閒置劇本、不理游標（進入 0.3 秒後情境一直是聆聽）', pass: l3Pass, detail: l3Detail },
     { name: 'L4 頭部速度：進入 1.5 秒後 p95 ÷ 閒置 p95', pass: m.listenHeadSpeedP95 !== null && m.idleHeadSpeedP95 !== null && m.listenHeadSpeedP95 <= LISTEN_LIMITS.headSpeedRatio * m.idleHeadSpeedP95,
       detail: `${fmt(m.listenHeadSpeedP95)} ÷ ${fmt(m.idleHeadSpeedP95)} °/s ≤ ${LISTEN_LIMITS.headSpeedRatio}` },
     { name: 'L5 眨眼：閒置眨眼率 ÷ 聆聽眨眼率（＝平均間隔比）', pass: m.blinkRateRatio !== null && m.idleBlinkCount > 0 && m.blinkRateRatio >= LISTEN_LIMITS.blinkRateRatio,

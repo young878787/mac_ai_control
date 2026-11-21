@@ -130,7 +130,42 @@ test('聆聽：視線快速回正、持續正視、頭動得少、眨得少 → 
   assert.ok(m.blinkRateRatio >= 1.3, `ratio ${m.blinkRateRatio}`);
   const checks = judgeListening(m);
   assert.deepEqual(checks.filter(c => c.pass === false), []);
-  assert.equal(checks.find(c => c.name.startsWith('L3')).pass, null);   // 尚無情境欄位，P3 才能判
+  assert.equal(checks.find(c => c.name.startsWith('L3')).pass, null);   // 沒有情境欄位（舊軌跡）→ 不判
+});
+
+// 在 listening() 的軌跡上加 context 欄：聆聽窗內（2～8 s 內）進入 300 ms 後的列，bad(秒) 為真的那一列記成閒置（索引 7），其餘窗內記聆聽（1）、窗外記閒置
+const CONTEXTS = ['peek', 'listening', 'typing', 'click', 'thinking', 'responding', 'cursor', 'idle'];
+function withContext(trace, bad = () => false) {
+  const span = 16000;
+  const rows = trace.rows.map(r => {
+    const local = r[0] % span, inWin = local >= 2000 && local < 8000;
+    return [...r, inWin && !bad(r[0]) ? 1 : 7];
+  });
+  return { ...trace, cols: [...trace.cols, 'context'], contexts: CONTEXTS, rows };
+}
+
+test('L3：聆聽期間情境一直是 listening → 100% PASS', () => {
+  const m = analyzeListening(withContext(listening()));
+  assert.equal(m.contextFraction, 1);
+  assert.ok(m.contextRows > 0);
+  assert.equal(judgeListening(m).find(c => c.name.startsWith('L3')).pass, true);
+});
+
+test('L3：進入 0.3 秒後中間有一列變成 idle → FAIL；進入 0.3 秒內的 idle 不算', () => {
+  const m = analyzeListening(withContext(listening(), (t) => t === 5000));
+  assert.ok(m.contextFraction < 1);
+  assert.equal(judgeListening(m).find(c => c.name.startsWith('L3')).pass, false);
+  const early = analyzeListening(withContext(listening(), (t) => t >= 2000 && t < 2250));
+  assert.equal(early.contextFraction, 1);
+});
+
+test('L3：沒有 context 欄 → null（SKIP）；程序層關閉（context 全是 -1）也是 null', () => {
+  const plain = analyzeListening(listening());
+  assert.equal(plain.contextFraction, null);
+  assert.equal(judgeListening(plain).find(c => c.name.startsWith('L3')).pass, null);
+  const off = withContext(listening());
+  off.rows = off.rows.map(r => [...r.slice(0, -1), -1]);
+  assert.equal(judgeListening(analyzeListening(off)).find(c => c.name.startsWith('L3')).pass, null);
 });
 
 test('聆聽：視線一直不回正 → L1、L2 FAIL；頭動得一樣多 → L4 FAIL；眨得一樣多 → L5 FAIL', () => {

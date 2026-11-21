@@ -1,5 +1,6 @@
 // 畫面程序：載入 Live2D 模型、依狀態機演出、處理點擊穿透／拖曳／輸入。
 import { createController, EXPRESSIONS, GESTURES, MOTIONS, PEEK_RATIO } from '../../domain/character.js';
+import { CONTEXTS, createAttention } from '../../domain/attention.js';
 import { createFixedPhysics } from '../engine/physics-clock.js';
 import { createFrameGate } from '../../domain/frame-gate.js';
 import { checkRig } from '../../rig/check.js';
@@ -7,6 +8,7 @@ import rig from '../../rig/fullrig03.js';
 import { installDrawableColors } from '../engine/compat/drawable-colors.js';
 import { installRenderBuffers, installStateCache, nextRenderFrame } from '../engine/compat/render-buffers.js';
 import { createInterpolator } from '../engine/vertex-interp.js';
+import { createRandom } from '../animation/ambient.js';
 import { createProcedural, motionBlinks } from '../animation/procedural.js';
 import { createBubbles, createChoices, createInputBox, createQuick } from './widgets.js';
 
@@ -26,7 +28,7 @@ const MIN_FRAME_MS = 12;                          // 120 Hz 螢幕上 rAF 會到
 const SETTLE = { eps: 0.05, holdMs: 500, maxMs: 3000 };
 const FROZEN_TICK_MS = 250;                       // 停格期間狀態機與泡泡的更新間隔
 const RENDER_OPT = { buffers: true, state: true, halfRate: true };              // 渲染優化開關（計畫書 §6.3，A/B 實測後保留的項目）；有問題時改 false 回到原本的繪製
-const TRACE_COLS = ['t', 'angleX', 'angleY', 'angleZ', 'eyeX', 'eyeY', 'eyeOpen', 'motion'];   // 動作軌跡的欄位（量測用，見 dev/motion-metrics.js）；motion＝NEEDED_MOTIONS 的索引
+const TRACE_COLS = ['t', 'angleX', 'angleY', 'angleZ', 'eyeX', 'eyeY', 'eyeOpen', 'motion', 'context'];   // 動作軌跡的欄位（量測用，見 dev/motion-metrics.js）；motion＝NEEDED_MOTIONS 的索引、context＝CONTEXTS 的索引（程序層關閉＝-1）
 const PROCEDURAL = true;                          // 程序層（擬人化計畫書 §4）：頭身眼眉由 animation/procedural.js 接手。false＝回到 Idle 全權＋鎖游標的舊做法（A/B 與回退用，計劃書 §10）
 const TRACE_MAX = 50000;                          // 軌跡最多記幾列（30 Hz 計算約 28 分鐘），超過就停止記錄並標 truncated
 
@@ -104,6 +106,9 @@ async function main() {
   const blinkMotions = new Set(Object.entries(rig.motions).filter(([, name]) => motionBlinks(motions[name])).map(([semantic]) => semantic));
   const procedural = PROCEDURAL ? createProcedural({ index: P, defaults, minimums: raw.parameters.minimumValues, maximums: raw.parameters.maximumValues,
     seed: (Math.random() * 2 ** 32) >>> 0, blinkMotions }) : null;
+  // 注意力導演（§4.4）：亂數用另一個 seed，時鐘和程序層相同（time * 1000）
+  const attention = PROCEDURAL ? createAttention({ random: createRandom((Math.random() * 2 ** 32) >>> 0) }) : null;
+  let context = null;                               // 導演最近一次決定的情境名稱（軌跡與除錯用）
   const physics = createFixedPhysics(PIXI.live2d.CubismPhysics.create(physicsJSON), core, physicsJSON);
   const motionQueue = new PIXI.live2d.CubismMotionManager();
   const expressionQueue = new PIXI.live2d.CubismMotionQueueManager();
@@ -162,9 +167,11 @@ async function main() {
 
   // ---------- 視線 ----------
   let cursor = null, gx = 0, gy = 0;
+  const headCenterY = () => topY() + 0.16 * MODEL_H;   // 頭部中心的 y（視窗座標），游標與點擊的 dy 以它為基準（上為正）
   desktop.onCursor((p) => {
     if (trace && cursor) { const d = Math.hypot(p.x - cursor.x, p.y - cursor.y); if (d >= 1) { trace.cursor.px += d; trace.cursor.moves++; if (trace.cursor.at.length < TRACE_MAX) trace.cursor.at.push(traceMs(performance.now())); } }
     cursor = p;
+    if (attention) attention.cursor(p.x - W / 2, headCenterY() - p.y, time * 1000);
   });
 
   // ---------- 狀態機與介面 ----------
@@ -184,6 +191,7 @@ async function main() {
     applyEffects(controller.setInputOpen(true, Date.now()));
     input.open(); desktop.focus(true); wake();
   }
+  $('input').addEventListener('input', () => { if (attention) attention.typing(time * 1000); });
   desktop.onToggleInput(toggleInput);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { input.close(); controller.closeQuick(); } });
   window.addEventListener('blur', () => { input.close(); });
@@ -205,6 +213,7 @@ async function main() {
     if (msg.type === 'partial' && input.isOpen()) input.setHint(msg.text);
     if (msg.type === 'heard' && input.isOpen()) input.setHint('');
     applyEffects(controller.handle(msg, Date.now()));
+    if (attention && msg.type === 'heard') attention.heard(msg.status, time * 1000);   // 要在 controller 處理之後：mode 離開 listening 了，點頭才不會被取消
     pendingApplied.push(msg.id);
     wake();
   });
@@ -247,6 +256,7 @@ async function main() {
     const d = dragging; dragging = null;
     if (d.moved) { desktop.dragEnd(); return; }
     const head = (d.y - topY()) / MODEL_H < HEAD_FRACTION;
+    if (attention) attention.click(e.clientX - W / 2, headCenterY() - e.clientY, time * 1000);
     applyEffects(controller.click(head ? 'head' : 'body', Date.now()));
   });
   document.addEventListener('contextmenu', (e) => { e.preventDefault(); if (e.target.closest('.interactive') || alphaAt(e.clientX, e.clientY) >= ALPHA_HIT) desktop.menu(); });
@@ -274,7 +284,12 @@ async function main() {
       raw.parameters.values.set(defaults);
       motionQueue.updateMotion(core, cdt);
       // 程序層接手頭身眼眉（§4.3），時鐘用繪製時才前進的虛擬時間；表情與手勢疊在它上面
-      if (procedural) procedural.apply(raw.parameters.values, cdt, time * 1000, { pose: snap.pose, motion: activeSemantic, listening: false, swayGain: 1 });
+      if (procedural) {
+        const a = attention.update(time * 1000, { pose: snap.pose, mode: snap.mode, motion: activeSemantic, inputOpen: input.isOpen() });
+        context = a.context;
+        if (a.plan) procedural.plan(a.plan, time * 1000);
+        procedural.apply(raw.parameters.values, cdt, time * 1000, { pose: snap.pose, motion: activeSemantic, listening: a.context === 'listening', swayGain: a.swayGain });
+      }
       expressionQueue.doUpdateMotion(core, time);
       gestureQueue.doUpdateMotion(core, time);
 
@@ -282,7 +297,7 @@ async function main() {
       const v = raw.parameters.values, mn = raw.parameters.minimumValues, mx = raw.parameters.maximumValues;
       const add = (i, d) => { if (i >= 0) v[i] = clamp(v[i] + d, mn[i], mx[i]); };
       if (!procedural) {                                // 舊做法：Idle 全權＋游標視線
-        const headY = topY() + 0.16 * MODEL_H;
+        const headY = headCenterY();
         const wantGaze = snap.pose === 'out' && cursor;
         const tx = wantGaze ? clamp((cursor.x - W / 2) / 400, -1, 1) : 0;
         const ty = wantGaze ? clamp((headY - cursor.y) / 400, -1, 1) : 0;
@@ -311,7 +326,7 @@ async function main() {
   function recordTrace(now) {
     if (trace.rows.length >= TRACE_MAX) { trace.truncated = true; return; }
     const v = raw.parameters.values, r = (n) => Math.round(n * 1e4) / 1e4;
-    trace.rows.push([traceMs(now), r(v[P.angleX]), r(v[P.angleY]), r(v[P.angleZ]), r(v[P.eyeX]), r(v[P.eyeY]), r(v[P.eyeOpen]), NEEDED_MOTIONS.indexOf(activeMotion)]);
+    trace.rows.push([traceMs(now), r(v[P.angleX]), r(v[P.angleY]), r(v[P.angleZ]), r(v[P.eyeX]), r(v[P.eyeY]), r(v[P.eyeOpen]), NEEDED_MOTIONS.indexOf(activeMotion), context === null ? -1 : CONTEXTS.indexOf(context)]);
   }
   // 泡泡、快捷鍵、選擇清單、會話光環：每幀更新；停格時由計時器更新
   function updateUi(snap) {
@@ -335,10 +350,11 @@ async function main() {
   window.__ui = { snapshot: () => toRig(controller.snapshot(Date.now())), poseT: () => poseT, activeMotion: () => activeMotion,
     activeGesture: () => activeGesture, topY, modelH: MODEL_H, frames: 0, alphaAt, drawables: raw.drawables.count };
   // 除錯探針（唯讀，main/debug.js 的 debug_capture 讀它；DOM 選擇器留在畫面這邊，主程序不用知道 id）
+  window.__ui.attention = () => (attention ? attention.snapshot() : null);
   window.__ui.probe = () => {
     const center = (el) => { const b = el.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
     return { snap: window.__ui.snapshot(), poseT: window.__ui.poseT(), motion: window.__ui.activeMotion(), gesture: window.__ui.activeGesture(),
-      frames: window.__ui.frames, input: !$('input-box').hidden, quick: !$('quick').hidden, quickBtn: center($('quick-chat')),
+      frames: window.__ui.frames, attention: context, input: !$('input-box').hidden, quick: !$('quick').hidden, quickBtn: center($('quick-chat')),
       choices: !$('choices').hidden, choicesTitle: $('choices-title').textContent,
       choiceRows: [...document.querySelectorAll('#choices-list li')].map(li => { const r = li.getBoundingClientRect(), b = li.querySelector('button').getBoundingClientRect();
         return { text: li.textContent, x: r.x + 40, y: r.y + r.height / 2, bx: b.x + b.width / 2, by: b.y + b.height / 2 }; }),
@@ -349,13 +365,13 @@ async function main() {
 
   for (let i = 0; i < 120; i++) { raw.parameters.values.set(defaults); physics.evaluate(core, 1 / 60); }  // 讓頭髮物理先穩定
   startMotion(MOTIONS.idle); startExpression(EXPRESSIONS.neutral);
-  // 動作軌跡（ui_motion 用）：start 開始記錄；stop 回傳 { cols, motions, rows, marks, cursor, halfRate, truncated } 並清空，沒在記錄回傳 null
+  // 動作軌跡（ui_motion 用）：start 開始記錄；stop 回傳 { cols, motions, contexts, rows, marks, cursor, halfRate, truncated } 並清空，沒在記錄回傳 null
   window.__ui.motionTrace = (cmd) => {
     if (cmd === 'start') { trace = { t0: performance.now(), rows: [], marks: [], cursor: { px: 0, moves: 0, at: [] }, truncated: false }; return true; }
     if (cmd !== 'stop' || !trace) return null;
     const { rows, marks, cursor: moved, truncated } = trace;
     trace = null;
-    return { cols: TRACE_COLS, motions: NEEDED_MOTIONS, rows, marks, cursor: moved, halfRate: RENDER_OPT.halfRate, truncated };
+    return { cols: TRACE_COLS, motions: NEEDED_MOTIONS, contexts: CONTEXTS, rows, marks, cursor: moved, halfRate: RENDER_OPT.halfRate, truncated };
   };
   // 效能量測（ui_perf 用）：每個實際繪製的幀；perf() 回傳上次讀取以來的統計並清空，方便分階段量
   let frameStats = [];
