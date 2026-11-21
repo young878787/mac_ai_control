@@ -35,7 +35,7 @@ REPLY_RESULT = {"type": "result", "command": "今天天氣如何", "ok": True, "
                 "replies": ["今天台北多雲，氣溫約 24 度，晚上可能有短暫陣雨。"]}
 
 
-# 每個截圖點應有的演出（docs/桌面角色模型升級（fullrig03）：實作計畫.md §5.2）：動作、臉部表情、手勢、是否出場
+# 每個截圖點應有的演出（docs/plans/completed/2026-11-20-fullrig03-model.md §5.2）：動作、臉部表情、手勢、是否出場
 EXPECTED = {
     "02-appear": ("Surprised", "surprised", "none", True),
     "04-executing": ("Curious", "neutral", "none", True),
@@ -49,7 +49,7 @@ EXPECTED = {
     "12-click-head": ("Surprised", "star_eyes", "arm_r_up", True),
     "13-click-body": ("Happy", "happy", "arm_l_up", True),
 }
-# 每個截圖點注意力導演的情境（docs/桌面角色擬人化（注視與聆聽）：實作計畫.md §7.2 R1）；沒列的不檢查
+# 每個截圖點注意力導演的情境（docs/plans/completed/2026-11-20-humanize.md §7.2 R1）；沒列的不檢查
 ATTENTION = {
     "01-peek": "peek", "02-appear": "listening", "03-listening": "listening", "04-executing": "thinking",
     "05-success": "responding", "07-reply": "responding", "08-think": "thinking", "11-retreat": "peek",

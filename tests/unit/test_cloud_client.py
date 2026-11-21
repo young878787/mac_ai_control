@@ -211,8 +211,9 @@ def test_hot_paths_never_call_hans_to_hant(monkeypatch):
 
 def test_docs_are_not_corrupted_by_conversion():
     """全部繁體文件逐行轉換：被改的行都含確定是簡體的字（文件裡本來就在舉例簡體字的那幾行），沒有別的行被動到"""
-    lines = [l for f in ("README.md", "AGENTS.md") for l in (config.ROOT / f).read_text(encoding="utf-8").splitlines()]
-    lines += [l for f in (config.ROOT / "docs").glob("*.md") for l in f.read_text(encoding="utf-8").splitlines()]
+    files = [config.ROOT / f for f in ("README.md", "AGENTS.md", "ARCHITECTURE.md")]
+    files += sorted((config.ROOT / "docs").rglob("*.md"))
+    lines = [l for f in files for l in f.read_text(encoding="utf-8").splitlines()]
     changed = [l for l in lines if hant.hans_to_hant(l) != l]
     assert len(lines) > 1000 and all(hant.has_simplified(l) for l in changed)
-    assert len(changed) <= 10, len(changed)  # 2026-11-16 實測 1672 行中 4 行（說明簡體字的例子）
+    assert len(changed) <= 20, len(changed)  # 2026-11-21 實測 5626 行中 14 行（說明簡體字的例子，多在還原的舊計畫書）

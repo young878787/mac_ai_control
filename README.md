@@ -223,7 +223,7 @@ ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/inst
 | 游標（明顯移動） | 眼睛先動、頭跟一點；游標停 1.5～3 秒就失去興趣 |
 | 閒置 | 隨機的劇本（看旁邊、低頭、往上想、換重心、歪頭…），每次都不一樣 |
 
-潛伏時回到中性並停格。要回到舊做法（Idle 全權＋一直看游標），把 `desktop/renderer/role/app.js` 的 `PROCEDURAL` 改成 `false`。設計、常數與實測見 [docs/桌面角色擬人化（注視與聆聽）：實作計畫.md](docs/桌面角色擬人化（注視與聆聽）：實作計畫.md)。
+潛伏時回到中性並停格。要回到舊做法（Idle 全權＋一直看游標），把 `desktop/renderer/role/app.js` 的 `PROCEDURAL` 改成 `false`。設計、常數與實測見 [擬人化計畫](docs/plans/completed/2026-11-20-humanize.md)。
 
 ### 聊天室
 
@@ -306,12 +306,12 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
 | `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站 |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
-| `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、注意力導演、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`animation/` 程序動畫、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 AGENTS.md §3.3 |
+| `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、注意力導演、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`animation/` 程序動畫、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 [ARCHITECTURE.md](ARCHITECTURE.md) |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |
 | `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
 | `vocab/stt_hints.txt` | 由 `build_vocab.py` 產生，餵給語音辨識當提示詞 |
-| `docs/` | 設計與實作計畫（端點偵測、桌面角色與喚醒會話、本機優先的找東西分流、前景視窗上下文與常用功能、端雲協同） |
+| `docs/` | `decisions/` 設計決策（ADR）、`flows/` 跨模組流程、`guides/` 測試與程式守則、`plans/` 實作計畫（`completed/` 為已結案）；AI 程式助手的入口是 `AGENTS.md` |
 | `tests/` | 分層測試：`unit/` 單元、`flow/` 整條路由、`runtime/` 真執行緒與 socket、`real/` live／cloud／app 實測；共用假物件與語料在 `support/` |
 
 修改 `vocab/lexicon.json` 後，`main.py` 啟動時會自動重新產生詞表；也可以手動執行 `python build_vocab.py`。

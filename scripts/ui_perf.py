@@ -5,7 +5,7 @@
 CPU 用 `ps -o cputime` 每秒取樣一次（CPU 時間差 ÷ 牆鐘時間；macOS 的 %cpu 是整個生命週期平均，不能取樣），
 取樣值是「單核 %」，報每個階段的平均與每秒峰值，並換算成整台電腦（÷ 核心數）；**CPU 的通過判定用整台電腦 %**。
 階段：潛伏停格 → 出場 60 fps（期間輪流觸發每一種演出）→ 反覆進退場 → 退場後停格、事件喚醒。
-通過標準見 docs/桌面角色擬人化（注視與聆聽）：實作計畫.md §7.2 R4（沿用 docs/桌面角色模型升級（fullrig03）：實作計畫.md §9.2 R4～R6）。"""
+通過標準見 docs/plans/completed/2026-11-20-humanize.md §7.2 R4（沿用 docs/plans/completed/2026-11-20-fullrig03-model.md §9.2 R4～R6）。"""
 import argparse
 import json
 import os

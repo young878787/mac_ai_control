@@ -1,5 +1,5 @@
 """聊天室主動展開（result 事件的 expand）整條路由：看畫面 screen → 模型回覆 chat → 動作數／回覆字數 complex，其餘不帶欄位。
-規格見 docs/聊天室視窗與主動展開：實作計畫.md §4.1"""
+規格見 docs/plans/completed/2026-11-18-chat-window-expand.md §4.1"""
 import pytest
 
 import mac_ai.router as r

@@ -7,7 +7,7 @@
   閒置：出場後什麼都不送，記錄 --minutes 分鐘（R2：頭部靜止佔比、最長靜止、視線正中、掃視、眨眼）。
   聆聽：--rounds 輪，每輪 8 秒內每秒送一次 partial（模擬持續說話）再送 heard（ignored），輪與輪之間閒置 10 秒（R3：L1～L5；L3 看軌跡的情境欄位，舊軌跡沒有就略過）。
 指標由 desktop/dev/motion-metrics.js 計算（和 desktop/test 的模擬測試同一份定義）。
-通過標準見 docs/桌面角色擬人化（注視與聆聽）：實作計畫.md §7.1、§7.2。"""
+通過標準見 docs/plans/completed/2026-11-20-humanize.md §7.1、§7.2。"""
 import argparse
 import json
 import secrets

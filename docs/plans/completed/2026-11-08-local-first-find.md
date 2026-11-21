@@ -1,0 +1,649 @@
+# 本機優先的找東西分流（App／專案／資料夾／檔案／網頁）
+
+> **歸檔（2026-11-21 結案）**：原檔名 `docs/本機優先的找東西分流：實作計畫.md`。以下內文保留結案時的原樣；文中的路徑、章節編號與「待確認／尚未驗證」都是當時的狀態，目前有效的決策見 `docs/decisions/`。
+
+狀態（2026-11-08）：Phase 1～3 已實作；離線測試與桌面端測試全數通過；真實環境 E1～E4 已實際執行通過，E5 與 U1～U6 見 §13 的說明（部分改用比對驗證、部分待使用者）。實作與計畫的差異見 §13.4。**之後依使用者回饋調整成「找不到時轉交模型判斷」的閉環，見 §14（取代 §2、§5.1 中「找不到一律回報找不到」的部分）；轉交時的搜尋關鍵字改用使用者原話，見 §15。**
+
+## 1. 要解決的問題
+
+「找東西」幾乎都只會開 Google 搜尋頁。根本原因：路由只看**動詞**（找、搜尋），不看**受詞的範圍**（App、檔案、資料夾、專案、網頁）。
+
+| 位置 | 現況 |
+|---|---|
+| [fast_path.py](../mac_ai/router/fast_path.py) `_SEARCH` | 只有「搜尋／搜索／查詢／查」，命中就固定送 `web_search_or_open_url`；**沒有「找」** |
+| [tools.py](../mac_ai/router/tools.py) | 跟搜尋有關的 LLM 工具只有 `web_search_or_open_url` |
+| [slow_path.py](../mac_ai/router/slow_path.py) `_SEARCH_INTENT_RE` | 「找」算搜尋意圖，2B 4bit 小模型碰到「找 X」就開 Google |
+| `resolve_app` | 只查 `lexicon.json` 的 14 個 App；LLM 給的 `control_mac_app.app_name` **沒有驗證**，直接 `open -a` |
+| 檔案／資料夾 | 沒有任何工具（沒有 Spotlight、已知資料夾、Finder 中顯示） |
+
+2026-11-08 實測（目前的 Fast Path）：
+
+| 語句 | 結果 |
+|---|---|
+| 搜尋 Xcode | Google 搜尋「Xcode」 |
+| 查一下 mac_ai_control 專案 | Google 搜尋「mac_ai_control 專案」（專案明明在白名單） |
+| 找一下 Xcode／打開 Xcode／打開 Photoshop | 交給 LLM（不在詞庫） |
+| 幫我找 report.pdf、找昨天下載的 PDF | 交給 LLM，只能開網頁；「昨天」還會被敘述句守門擋下 |
+| 打開下載資料夾 | 交給 LLM |
+
+目標：本機優先。先判斷範圍（Domain），再決定動作，兩層不直接相連。多筆檔案結果會在桌面角色顯示清單，可以用語音或點選繼續操作。
+
+## 2. 已定案的決策
+
+| 項目 | 決定 | 來源 |
+|---|---|---|
+| 架構 | 本機優先；先分範圍（Domain），再分動作，兩層不直接相連 | 使用者確認 |
+| 動詞與範圍 | 「找」「打開」本機優先；「搜尋」「查」只有帶範圍詞或命中專案時才走本機，其餘維持網頁搜尋 | 使用者確認 |
+| 檔案預設動作 | 在 Finder 中顯示（`open -R`）；使用者明說「打開」才開檔 | 使用者確認 |
+| 檔案搜尋範圍 | 只搜家目錄，排除 `~/Library` | 使用者確認 |
+| 本機找不到 | 只告知「找不到」，不改搜網路 | 使用者確認 |
+| 多筆結果 | 做後續選擇（「第二個」），並在桌面角色顯示清單 | 使用者確認 |
+| LLM 工具清單 | 不新增 LLM 工具（實測：加工具會讓 4bit 模型誤判，見 [tools.py](../mac_ai/router/tools.py) 的 `browser_tab` 註解） | 建議 |
+| 本次範圍 | 只有「找／打開／搜尋」這一類改走兩層；音量、亮度、深色模式、鎖定、分頁、讀畫面不動 | 建議 |
+| 「找 X」都沒對上 | ~~搜尋檔名，0 筆就回報找不到~~ → 改成：先搜本機，0 筆時依「本機證據」決定回『本機沒有』或轉交模型判斷（§14） | 使用者確認（2026-11-08，後續調整） |
+| 「找 + App 名稱」 | 直接開 App（同 Spotlight） | 使用者確認（2026-11-08） |
+
+## 3. 已實測的前提（2026-11-08，本機）
+
+| 項目 | 結果 | 影響 |
+|---|---|---|
+| `mdfind` 建 App 清單 | 約 50 ms；`/Applications` 第一層有 58 個 App | 可以在第一次使用時才建，再快取 |
+| `mdfind -attr kMDItemDisplayName` | 拿得到系統語言名稱：計算機、終端機、郵件、照片、音樂、備忘錄 | 中文 App 名稱不必手動加進詞庫 |
+| 家目錄檔名搜尋 | 130–260 ms | 可以走 Fast Path 同步執行 |
+| 搜「readme」 | 1130 筆，大多在 `node_modules` | **一定要排除** |
+| `mdfind -onlyin ~` | **會回傳** `~/Library/…` 和 `node_modules/…` 的檔案 | 排除規則一定要做（§5.2） |
+| `touch` 建出的空檔 | 約 6 秒內就被索引 | 真實環境驗收可以臨時建測試檔 |
+| `kMDItemFSContentChangeDate >= $time.today(-1)`、`kMDItemContentTypeTree == "com.adobe.pdf"` | 可用 | 時間與類型條件可行 |
+| 名稱含 `\"` 的跳脫 | `mdfind` 結束碼 0，不會出錯 | 跳脫方式可行 |
+| 已安裝的 App | **沒有** Slack、Notion、Xcode、Google Chrome、Cursor、Spotify | 離線測試不能依賴本機裝了哪些 App（§8.3）；真實環境驗收改用本機有的 App（§9.2） |
+
+## 4. 架構：兩層分離
+
+```
+語句 ─► 第一層：範圍判斷（mac_ai/router/domain.py，純函式、無副作用）
+          parse_find(clause)        → FindRequest(verb, target, scope_words)
+          resolve_intent(req, cat)  → Intent(domain, verb, target, slots, source)
+                 ▲ 只透過 Catalog 介面唯讀查詢
+          Catalog（mac_ai/router/catalog.py）：詞庫 App ＋ 已安裝 App 清單 ＋ 專案 ＋ 已知資料夾
+                 │
+                 ▼ Intent（兩層之間唯一的介面）
+          對應表（local_actions.ACTION_TABLE）：(domain, verb, 結果筆數) → [(工具, 參數)]
+                 │
+                 ▼
+          第二層：執行（mac_ai/router/local_actions.py ＋ 既有 actions.py）
+          open_app／open_folder／find_file／pick_choice／open_project／web_search_or_open_url
+```
+
+兩層不直接相連，靠以下規則保證：
+
+- `domain.py` 不 import `subprocess`、`mac_ai.router.actions`、`mac_ai.router.local_actions`。用 AST 測試檢查（A2）。
+- 第二層只讀 `Intent.slots`，不看原句。
+- 要新增範圍或動作時只改對應表，不改判斷邏輯。
+- 新的內部工具（`open_app`、`find_file`、`open_folder`、`pick_choice`）只放進 `AVAILABLE_FUNCTIONS`，**不放進 `TOOLS_SCHEMA`**。LLM 叫這些名稱時，`validate_tool_call` 一律當成未知工具拒絕。
+- 每一步的 `step["intent"]` 會記錄 `{domain, verb, slots, source}`，方便追查判斷原因。
+
+`Intent` 欄位：
+
+| 欄位 | 值 |
+|---|---|
+| `domain` | `app`／`project`／`folder`／`file`／`web`／`none` |
+| `verb` | `find`／`open`／`search`／`quit` |
+| `target` | 原始受詞 |
+| `slots` | app：`{app}`；project：`{project_name}`；folder：`{path_key}`；file：`{name, kinds, since, location}`；web：`{query}` |
+| `source` | `scope_word`／`catalog`／`file_hint`／`realtime`／`default` |
+
+## 5. 規格
+
+### 5.1 第一層：範圍判斷
+
+**詞類**（`lexicon.json` 新增欄位：`find_verbs`、`scope_words`、`file_kinds`、`known_folders`、`time_words`；舊欄位不改）
+
+| 類別 | 詞 |
+|---|---|
+| 「找」動詞 | 找、找一下、找找、尋找、找出 |
+| 「打開」動詞 | 沿用現有 `verbs.open` |
+| 「搜尋」動詞 | 沿用現有的「搜尋、搜索、查詢、查一下、查查、查」 |
+| 範圍詞：網頁 | 網路上、上網、網上、線上、google、谷歌 |
+| 範圍詞：本機 | 電腦裡、電腦上、電腦裡面、本機、Mac 裡 |
+| 範圍詞：App | App、應用程式、程式、軟體 |
+| 範圍詞：檔案 | 檔案、檔、副檔名（`.pdf`、`.txt`…） |
+| 範圍詞：資料夾 | 資料夾、目錄 |
+| 檔案類型 | PDF → `com.adobe.pdf`；圖片、照片、截圖 → `public.image`；影片 → `public.movie`；音樂、歌 → `public.audio`；文件 → `public.text` 與 Office 文件；簡報；試算表 |
+| 時間 | 今天 → `$time.today`；昨天 → `$time.today(-1)` 到 `$time.today`；這週、這禮拜 → `$time.this_week`；最近 → `$time.today(-7)` |
+| 位置／已知資料夾 | 下載 → `~/Downloads`；桌面 → `~/Desktop`；文件資料夾 → `~/Documents`；應用程式 → `/Applications`；家目錄 → `~` |
+
+「文件」有兩種意思：後面接「資料夾」「裡」「中」時當成位置 `~/Documents`，單獨出現時當成檔案類型。
+
+**判斷順序**（輸入：動詞、受詞、範圍詞；由上往下，第一個成立的就採用）
+
+1. 有網頁範圍詞 → `web`
+2. 有「專案」這個詞，而且命中專案（沿用 `resolve_project`）→ `project`
+3. 有資料夾範圍詞，或受詞**整個**等於已知資料夾 → `folder`
+4. 有 App 範圍詞，或受詞**整個**等於詞庫別名或已安裝 App 名稱 → `app`
+   - 英文名稱沿用現有容錯比對（`FUZZY_MIN` 等）；中文只接受完全相同。
+   - 動詞是「搜尋／查」、又沒有 App 範圍詞或本機範圍詞時，跳過這一條。
+   - 受詞**整個**等於檔案類型詞（例如照片、音樂）時：動詞是「打開」→ 這一條成立（開 App）；動詞是「找」→ 跳過這一條，交給第 6 條。
+5. 有即時資訊詞（天氣、下雨、氣溫、新聞、股價、股票、匯率），而且**沒有**副檔名或檔案範圍詞 → `web`
+6. 有檔案提示 → `file`
+   - 「找／打開」：副檔名、檔案範圍詞、本機範圍詞、檔案類型、時間、位置都算檔案提示。
+   - 「搜尋／查」：**只有**副檔名、檔案範圍詞、本機範圍詞算。所以「搜尋最近的新聞」「搜尋 PDF 教學」仍然走網頁（決策 1）。
+7. 以上都不符合：「找」→ `file`，依檔名搜尋（沒有本機證據，0 筆轉交模型，見 §14）；「搜尋／查」→ `web`；「打開」→ `none`，交給 LLM（維持現行為）
+
+**守門規則**
+
+- 否定句（沿用 `_NEG_RE`）、句尾疑問（`嗎`、`呢`、`?`）一律不命中。
+- 敘述句守門 `_NARR_RE` 會擋下「昨天」。例外：**句首是「找」動詞**、時間詞已解析成 `since`、而且句中沒有「了」時才放行。「找昨天下載的 PDF」會命中，「我昨天找過了」不會。
+- `_r_find` 放在 `match()` 裡讀畫面規則之後、`_r_open_search`／`_r_search` 之前。它自己處理上面的守門規則。
+
+### 5.2 第二層：執行
+
+**對應表**
+
+| domain | 找 | 打開 | 搜尋／查 |
+|---|---|---|---|
+| app | 開 App | 開 App | 開 App（要有範圍詞才會到這裡） |
+| project | `open_project` | `open_project` | `open_project` |
+| folder | `open <資料夾>` | `open <資料夾>` | `open <資料夾>` |
+| file：1 筆 | `open -R`（在 Finder 中顯示） | `open`（危險類型改成 `open -R`） | `open -R` |
+| file：多筆 | 列出清單，點選預設為顯示 | 列出清單，點選預設為開檔 | 列出清單，點選預設為顯示 |
+| file：0 筆 | 回報「找不到」 | 回報「找不到」 | 回報「找不到」 |
+| web | Google 搜尋 | Google 搜尋 | Google 搜尋 |
+
+**App 清單**
+
+- 來源：`mdfind -onlyin /Applications -onlyin /System/Applications -onlyin ~/Applications 'kMDItemContentType == "com.apple.application-bundle"' -attr kMDItemDisplayName`。
+- 排除包在其他 `.app` 裡面的 App。
+- 每個 App 都可以用三種名稱查到：bundle 檔名（不含 `.app`）、`kMDItemDisplayName`、去空白的形式。詞庫別名優先。
+- 第一次使用時才建立並快取；查不到時最多每 `APP_INDEX_REFRESH_S` 秒重建一次。
+- 開啟方式：沿用 `control_mac_app`（`open -a <標準名稱>`，標準名稱就是 `.app` 檔名），關閉沿用現有的 `osascript quit`。這樣 `ExecContext` 記住剛開的瀏覽器／編輯器等既有行為不用改。
+
+**檔案搜尋（`find_file`）**
+
+- predicate：`kMDItemFSName == "*{name}*"cd`，依 slots 再加上 `&& kMDItemContentTypeTree == "…"`、`&& kMDItemFSContentChangeDate >= $time…`。
+- 搜尋範圍：`-onlyin`，依位置詞決定，預設是家目錄。
+- 防注入：name 裡的 `\`、`"`、`*`、`?` 先跳脫；一律用參數列表呼叫，不經過 shell。
+- 逾時：`FILE_SEARCH_TIMEOUT_S`。逾時回 `❌`，不拋例外。
+- 排除（過濾 `mdfind` 結果）：
+  - `~/Library/**`
+  - 路徑中任何一段以 `.` 開頭
+  - `node_modules`、`__pycache__`、`.venv`、`venv`、`site-packages`
+  - `.app`、`.framework`、`.bundle` 裡面的檔案
+  - `realpath` 之後不在家目錄底下的路徑
+- 排序：先比檔名吻合程度（主檔名完全相同 > 開頭相同 > 包含）；相同時，修改時間較新的在前。
+- 取前 `FIND_RESULTS_MAX` 筆，並回報總筆數。
+
+**危險類型：一律只顯示，不開檔**
+
+- 副檔名：`.app .command .tool .sh .terminal .pkg .mpkg .workflow .scpt .scptd .applescript .jar .webloc .inetloc .fileloc`
+- 沒有副檔名但有執行權限的檔案也一樣。
+- 回報訊息含「可執行檔，只在 Finder 中顯示」。
+
+**回覆文字**
+
+| 情況 | 回覆 |
+|---|---|
+| 1 筆 | `✅ 已在 Finder 中顯示：<檔名>（<縮寫資料夾>）` 或 `✅ 已開啟：<檔名>` |
+| 多筆 | `✅ 找到 N 筆「<name>」，顯示前 K 筆：1. … 2. …`，並附上 `choices` |
+| 0 筆 | `⚠️ 找不到符合「<name>」的檔案（範圍：家目錄，不含 ~/Library）` |
+
+### 5.3 LLM 這一側（不新增工具，`SYSTEM_PROMPT` 也不改）
+
+1. **`control_mac_app.app_name` 必須查得到。** 要能在 Catalog 解析到（詞庫別名或已安裝 App），否則拒絕，並回報「找不到 App：X（沒有安裝）」。
+2. **`web_search_or_open_url` 依原句動詞重新判斷。**
+   - 原句句首是「找」「打開」動詞，或帶本機範圍詞時：把 `query` 交給 `resolve_intent` 重新判斷，結果不是 `web` 就改走本機執行。step log 會記一筆 `[Domain 導向] web → <domain>`。
+   - 原句是「搜尋／查」而且沒有範圍詞時：維持網頁搜尋。
+
+## 6. 多筆結果與桌面角色清單
+
+**ChoiceStore**（跨語句保存，放在 router 層；`ExecContext` 仍然不跨語句）
+
+- 內容：`list_id`（遞增）、搜尋字、預設動作、各筆完整路徑、到期時間。
+- 新的搜尋會覆蓋舊清單；選擇成功後清掉。
+- 時鐘可以注入，方便測試。
+
+**語音選擇**（新的 Fast Path 規則 `_r_pick`）
+
+- 語法：`^(?:打開|開啟|開|顯示|在\s*Finder\s*(?:中)?顯示)?(?:就是)?第?(?:[一二三四五]|[1-5])(?:個|項|筆)?$`，以及「最後一個」。
+- 一定要有序號，所以「下一個分頁」不會命中。
+- 沒有清單或清單已過期 → `⚠️ 沒有可選的清單（已過期或尚未搜尋）`
+- 號碼超出範圍 → `⚠️ 清單只有 N 筆`
+
+**協定**（`PROTOCOL_VERSION` 維持 1，只新增欄位和訊息）
+
+- 後端 → UI：`result` 事件新增 `choices` 欄位：`{list_id, query, total, expires_in_s, default_action, items: [{n, name, dir, kind}]}`。
+  - `dir` 會縮寫成 `~/…`。**完整路徑不會送到 UI。**
+- UI → 後端：新訊息 `{"type": "choose", "list_id": int, "n": 1–5, "action": "reveal"|"open"}`。
+  - 由 `parse_ui_message` 驗證。
+  - 送進同一個指令佇列，跟語音指令一樣依序執行，執行結果也發同樣的 `result` 事件。
+  - `list_id` 不符時回報「清單已更新，請重選」。
+
+**桌面角色**（`desktop/state.js`、`desktop/renderer/ui.js`）
+
+- 新增清單元件：文字一律用 `textContent`，元件加上 `interactive`，讓滑鼠點得到。
+- 每一列顯示序號、檔名、所在資料夾。點一列 → 執行預設動作；每列另有一個按鈕，執行另一個動作（「打開」或「顯示」）。
+- 清單到期、選擇成功、或來了新清單時就關閉。
+- 對話紀錄會記一筆「列出 N 筆」。
+
+## 7. 實作內容
+
+### Phase 1：骨架，加上 App、專案、資料夾
+
+- 新增 `catalog.py`、`domain.py`、`local_actions.py`（`open_app`、`open_folder`、`ACTION_TABLE`）。
+- Fast Path 新增 `_r_find`；`_r_app` 改成走 Catalog。
+- LLM 側加上 §5.3 的兩條規則。
+- `tests/conftest.py` 新增 autouse 的假 App 清單（§8.3）。
+- 驗收：A0–A3、A6、B1 編號 1–14、E5。
+
+### Phase 2：檔案搜尋
+
+- `find_file` 執行器：排除、排序、危險類型、「昨天」放行。
+- 這個階段多筆結果先只用文字回報前 5 筆。
+- 驗收：A0、A4、B1 編號 15–28、E1–E4。
+
+### Phase 3：選擇清單與桌面角色
+
+- ChoiceStore、`_r_pick`、`choices` 事件、`choose` 訊息、桌面清單元件。
+- 驗收：A0、A5、A7、A8、B1 編號 29–34、U1–U6。
+
+每個階段完成後先跑 A0，全過才進下一階段。各階段可以分開回退（§12）。
+
+## 8. 設定與相依
+
+### 8.1 新增設定（`mac_ai/config.py`）
+
+| 設定 | 值 | 用途 |
+|---|---|---|
+| `FIND_RESULTS_MAX` | 5 | 清單最多顯示幾筆 |
+| `FIND_CHOICE_TTL_S` | 60 | 清單有效時間，與 `WAKE_SESSION_S` 一致 |
+| `FILE_SEARCH_TIMEOUT_S` | 3 | `mdfind` 逾時 |
+| `APP_INDEX_REFRESH_S` | 60 | App 清單查不到時，最短的重建間隔 |
+
+### 8.2 相依
+
+不新增任何 Python 或 npm 相依；只用 macOS 內建的 `mdfind`、`open`。
+
+### 8.3 會受影響的既有測試
+
+| 位置 | 原因 | 處理 |
+|---|---|---|
+| [test_router_offline.py:222-224](../tests/test_router_offline.py#L222-L224)、[:270-274](../tests/test_router_offline.py#L270-L274) | 「幫我找一下台北天氣」會在 Fast Path 命中，分段形狀改變 | 範例句換成仍然交給 LLM 的句子（例如「幫我查一下最近有什麼新聞好嗎」）；斷言要驗證的事情不變 |
+| [test_multistep_offline.py:376](../tests/test_multistep_offline.py#L376)、[:392](../tests/test_multistep_offline.py#L392) | 同上 | 同上 |
+| [test_router_offline.py:255-264](../tests/test_router_offline.py#L255-L264)、[test_multistep_offline.py:508-512](../tests/test_multistep_offline.py#L508-L512) | LLM 回 `control_mac_app("Slack"/"Notion")`；§5.3-1 會因為「沒有安裝」而拒絕 | 改用假 App 清單或詞庫裡的 App，並換成 Fast Path 不會命中的說法；斷言要驗證的事情（順序、合併）不變 |
+| [test_llm_live.py:109](../tests/test_llm_live.py#L109)、[:111](../tests/test_llm_live.py#L111)、[:151](../tests/test_llm_live.py#L151)、[:234](../tests/test_llm_live.py#L234) | 同上（live，本機沒裝 Slack、Notion），以及「找一下台北天氣」改走 Fast | 換範例句，保留 shape（`SF`、`SFS`）與 query 斷言 |
+| `tests/conftest.py` | 離線測試不能依賴本機裝了哪些 App | 新增 autouse fixture：已安裝 App 清單固定為空（只剩詞庫）；需要的測試自己加 |
+
+不受影響（已檢查）：[test_router_offline.py:314](../tests/test_router_offline.py#L314) 和 `:355` 直接呼叫 `plan_slow_path`；[test_fast_offline.py:227](../tests/test_fast_offline.py#L227)「開 Slack」在假 App 清單是空的情況下仍然不會命中。
+
+## 9. 驗證
+
+實作前的基準（2026-11-08 實際執行）：`python -m pytest -q` 797 passed、5 skipped、51 deselected；`desktop/` 的 `node --test` 36 pass、0 fail。
+
+### 9.1 自動化測試（全部離線，除了 A8）
+
+| # | 驗收項目 | 指令 | 通過標準 | 失敗時處置 |
+|---|---|---|---|---|
+| A0 | 全部回歸 | `python -m pytest -q` | 0 failed；passed ≥ 797 加上新增數；skipped 仍是 5 | 先修迴歸，不進下一階段 |
+| A1 | 範圍判斷表 | `python -m pytest -q tests/test_domain_offline.py` | §9.2 B1 每個案例的 `(domain, verb, slots 的關鍵欄位)` 完全相同（用假 Catalog，不碰系統） | 修規則；規格本身有爭議時回頭跟使用者確認 |
+| A2 | 兩層分離 | 同一支測試檔的 AST 檢查 | `domain.py` 沒有 import `subprocess`、`os.system`、`mac_ai.router.actions`、`mac_ai.router.local_actions` | 把相依移到 Catalog |
+| A3 | App 清單 | `python -m pytest -q tests/test_find_offline.py -k "scan or catalog or installed or llm_app"` | 假 `mdfind` 輸出中：① 巢狀 `.app` 被排除 ② DisplayName「計算機」對到 Calculator ③ 查不到時，在 `APP_INDEX_REFRESH_S` 內最多重建一次 ④ 開 App 送出 `["open", "-a", <bundle 路徑>]` | 修解析邏輯 |
+| A4 | 檔案搜尋 | `python -m pytest -q tests/test_find_offline.py -k "not scan and not catalog and not installed and not llm_app"` | ① 送出的 predicate 字串和預期**完全相同**（含 `"`、`*` 的跳脫）② 指令是 list 形式，包含 `-onlyin <家目錄>` ③ `~/Library`、`node_modules`、`.git`、`.app` 內的結果全被濾掉 ④ 排序依「完全相同 > 開頭相同 > 包含 > 修改時間」⑤ 1 筆、找 → `["open", "-R", path]` ⑥ 1 筆、打開 → `["open", path]` ⑦ `.command` 或可執行檔加「打開」→ 仍是 `open -R`，回覆含「可執行檔」⑧ 0 筆 → 回覆含「找不到」，而且**沒有**任何 `open` 呼叫 ⑨ `mdfind` 逾時 → 回 `❌`，不拋例外 | 修執行器 |
+| A5 | 選擇清單 | `python -m pytest -q tests/test_choice_offline.py` | 注入時鐘：第 59 秒說「第二個」成功；第 61 秒回「沒有可選的清單」；超出範圍回「清單只有 N 筆」；`list_id` 不符時拒絕；新搜尋覆蓋舊清單；選擇成功後清單清空 | 修 Store |
+| A6 | LLM 側導向 | `python -m pytest -q tests/test_find_route_offline.py` | 模擬 LLM 回 `web_search("Xcode")`（假清單裡有 Xcode）：原句「幫我把那個 Xcode 找出來」→ 改成開 App；原句「搜尋 Xcode」→ 維持 Google；`control_mac_app("Photoshop")`（不在清單）→ 被拒絕，而且沒有任何 `open` 呼叫；LLM 呼叫 `find_file` → 當成未知工具拒絕 | 修驗證邏輯 |
+| A7 | UI 協定與狀態 | `python -m pytest -q tests/test_ui_bus_offline.py`，以及在 `desktop/` 執行 `node --test`；真實 Electron：`python scripts/ui_demo.py --choices-test` | `choose` 的 `n` 不在 1–5、`action` 不在列舉值、`list_id` 不是整數 → 拒絕；state 收到帶 `choices` 的 result 會開清單，到期、選擇成功、新清單時會關；node 測試 ≥ 36 加上新增數，0 fail | 修協定或 state |
+| A8 | 找東西不呼叫 LLM、live 回歸 | 離線：`python -m pytest -q tests/test_find_route_offline.py -k stay_off_the_llm`；live（需先開 `mlx_vlm.server`）：`python -m pytest -m live -q tests/test_llm_live.py` | 離線：「欸你幫我在電腦裡面找那個叫做履歷的檔案」「幫我把那個 Xcode 找出來」「搜尋一下 Xcode 是什麼」「找一下台北天氣」都在 Fast Path 完成，LLM 一被呼叫就失敗；live：原有案例不能退步（Slack／Notion 改走 Fast Path，「找一下台北天氣」換成「今天台北會下雨嗎」，見 §13.4） | 離線失敗＝分流退步，修 `domain.py`／`fast_path.py`；live 失敗時記錄模型實際輸出，調整驗證或導向（不加工具） |
+
+### 9.2 範圍判斷案例表（B1，也是 A1 的測試資料）
+
+假 Catalog 內容：App 有 Xcode、Calculator（計算機）、Terminal（終端機）、Photos（照片）、Music（音樂），加上詞庫 App；專案有 mac_ai_control。
+
+| # | 語句 | 預期 |
+|---|---|---|
+| 1 | 找一下 Xcode | app／Xcode |
+| 2 | 打開 Xcode | app／Xcode |
+| 3 | 搜尋 Xcode | web |
+| 4 | 搜尋 Xcode 這個 App | app／Xcode |
+| 5 | 在電腦裡搜尋 Xcode | app／Xcode |
+| 6 | 查一下 mac_ai_control 專案 | project／mac_ai_control |
+| 7 | 找一下終端機 | app／Terminal |
+| 8 | 打開計算機 | app／Calculator |
+| 9 | 打開下載資料夾 | folder／Downloads |
+| 10 | 找桌面 | folder／Desktop |
+| 11 | 幫我找一下台北天氣 | web（realtime） |
+| 12 | 網路上找 Xcode | web |
+| 13 | 打開 Photoshop | none → 交給 LLM |
+| 14 | 不要找 Xcode | 不命中 |
+| 15 | 找 report.pdf | file／name=report、kinds=pdf |
+| 16 | 找昨天下載的 PDF | file／since=昨天、location=Downloads、kinds=pdf |
+| 17 | 找履歷 | file／name=履歷（default） |
+| 18 | 找照片 | file／kinds=image |
+| 19 | 打開照片 | app／Photos |
+| 20 | 打開履歷.pdf | file／verb=open、name=履歷、kinds=pdf |
+| 21 | 找桌面上的截圖 | file／location=Desktop、kinds=image |
+| 22 | 在電腦裡找 python 教學 | file／name=python 教學 |
+| 23 | 找 python 教學 | file／name=python 教學（行為變更，已確認） |
+| 24 | 我昨天找過了 | 不命中 |
+| 25 | 找得到嗎 | 不命中 |
+| 26 | 搜尋 report.pdf | file／name=report、kinds=pdf |
+| 27 | 搜尋最近的新聞 | web |
+| 28 | 找今天的新聞 | web（realtime） |
+| 29 | 第二個（有清單） | pick n=2，預設動作 |
+| 30 | 打開第三個 | pick n=3，open |
+| 31 | 在 Finder 顯示第一個 | pick n=1，reveal |
+| 32 | 最後一個 | pick n=最後一筆 |
+| 33 | 下一個分頁 | `browser_tab` next（不受影響） |
+| 34 | 第六個 | 不命中（只接受 1–5） |
+
+### 9.3 真實環境（本機實際執行）
+
+**準備**（測試檔放在專用資料夾，修改時間依序設好，讓排序結果固定為 A、B、C）：
+
+```bash
+T=~/macai_find_test; mkdir -p $T/node_modules ~/Library/macai_find_test
+touch -t $(date -v-1M +%Y%m%d%H%M) $T/驗收報告A.pdf
+touch -t $(date -v-2M +%Y%m%d%H%M) $T/驗收報告B.pdf
+touch -t $(date -v-3M +%Y%m%d%H%M) $T/驗收報告C.txt
+touch $T/node_modules/驗收報告N.pdf ~/Library/macai_find_test/驗收報告L.pdf $T/驗收單一檔Z.pdf
+printf '#!/bin/sh\necho hi\n' > $T/驗收腳本.command && chmod +x $T/驗收腳本.command
+sleep 8; mdfind -onlyin ~ 'kMDItemFSName == "*驗收*"cd'   # 要看到 7 個檔案，才代表索引完成
+```
+
+| # | 驗收項目 | 操作步驟 | 通過標準 | 失敗時處置 |
+|---|---|---|---|---|
+| E1 | 單筆顯示 | `python main.py --text 找驗收單一檔Z` | Finder 跳出並選取 `驗收單一檔Z.pdf`，檔案**沒有**被開啟；該步 `exec_ms` ≤ 800 ms | 超時就記錄 `mdfind` 耗時，再決定是否放寬 |
+| E2 | 多筆與排除 | `python main.py --text 找驗收報告` | 回覆含「找到 3 筆」，依序是 A.pdf、B.pdf、C.txt；**沒有** N.pdf、L.pdf | 修排除或排序 |
+| E3 | 危險類型 | `python main.py --text 打開驗收腳本.command` | 只在 Finder 中顯示；終端機**沒有**開，也沒有執行；回覆含「可執行檔」 | 立即修，這是安全問題 |
+| E4 | 找不到 | `python main.py --text 找不存在的檔名xyz123` | 回覆含「找不到」；沒有開瀏覽器，也沒有開 Finder | 修對應表 |
+| E5 | App、專案、網頁 | 依序執行 `--text`：`找一下 ChatGPT`、`打開郵件`、`查一下 mac_ai_control 專案`、`搜尋 Xcode`、`打開 Xcode` | 依序：開 ChatGPT；開「郵件」；用 VS Code 開專案；開 Google 搜尋頁；回報「找不到 App」或 LLM 被拒絕（本機沒裝 Xcode） | 依步驟記錄 `step["intent"]` 再修 |
+| E6 | 清理 | `rm -rf ~/macai_find_test ~/Library/macai_find_test` | 兩個資料夾都不存在 | — |
+
+### 9.4 人工／介面驗收（`--ui` 模式，由使用者判斷）
+
+U1–U6 執行前，先依 §9.3 的「準備」步驟建好測試檔。
+
+| # | 操作 | 通過標準 |
+|---|---|---|
+| U1 | 說「找驗收報告」 | 角色旁出現清單，有 3 列，第 1 列是「1. 驗收報告A.pdf　~/macai_find_test」 |
+| U2 | 點第 2 列 | Finder 顯示 B.pdf，清單關閉 |
+| U3 | 重新搜尋，點第 1 列的「打開」按鈕 | 用預設 App 開啟 A.pdf |
+| U4 | 重新搜尋，用語音說「第三個」 | Finder 顯示 C.txt |
+| U5 | 重新搜尋，等 61 秒 | 清單自動消失；再說「第二個」→ 泡泡顯示「沒有可選的清單」 |
+| U6 | 清單開著時說「下一個分頁」 | 瀏覽器切換分頁，清單不受影響 |
+
+### 9.5 不在本次範圍
+
+- 在網站或 App 內搜尋（例如「在 YouTube 搜尋 X」）
+- 切到指定分頁
+- 打開系統設定的某個面板
+- 搜尋檔案內容（全文搜尋）
+- 刪除、移動、改名檔案
+- Spotlight 沒有索引的路徑
+- 用語音唸出清單
+- 中文模糊比對
+- 把音量、亮度等既有規則重構成 Intent
+
+## 10. 待確認（2026-11-08 已確認）
+
+1. **「找 X」什麼都沒對上時**（例如「找 python 教學」）：改成搜尋檔名，0 筆回報找不到，不再開 Google。這是既有行為的變更（§9.2 #23）。
+2. **「找 + App 名稱」直接開 App**（同 Spotlight 的行為），而不是在 Finder 中顯示那個 App（§9.2 #1、#7）。
+
+## 11. 風險與已知限制
+
+- **App 中文名稱和檔案類型詞衝突**（照片、音樂）：依 §5.1 第 4 條處理，「打開」走 App，「找」走檔案。
+- **Spotlight 沒建好索引或被關閉**：會回報找不到，使用者可能誤以為檔案不存在。回覆裡會附上搜尋範圍。
+- **開檔就是執行**：用危險類型清單和執行權限擋下，只顯示不開（E3 驗證）。清單沒涵蓋到的類型，會交給 Launch Services 的預設 App 開啟。
+- **`mdfind` 同步執行**：最多 3 秒，這段時間內不會處理下一句語音（指令本來就是依序執行）。
+- **`lexicon.json` 新增欄位**：只新增，舊欄位格式不變。
+- **協定只新增**：舊版 UI 忽略 `choices` 也能正常運作；`PROTOCOL_VERSION` 維持 1。
+- **App 驗證變嚴格**：LLM 不能再開沒安裝、也不在詞庫的 App。這是刻意的行為變更（§5.3-1）。
+
+## 12. 回退方式
+
+- **Phase 1**：`match()` 拿掉 `_r_find`，`_r_app` 改回 `resolve_app`，移除 §5.3 的兩條規則，就回到現行為。新模組不被呼叫就沒有影響。
+- **Phase 2**：對應表把 `file` 改回「交給 LLM」即可。
+- **Phase 3**：不帶 `choices`、不註冊 `_r_pick` 即可；UI 沒收到 `choices` 就不會顯示清單。
+
+## 13. 實作結果（2026-11-08）
+
+### 13.1 自動化測試（全部實際執行）
+
+| 指令 | 結果 |
+|---|---|
+| `python -m pytest -q` | **971 passed**、5 skipped、51 deselected（基準 797，新增 174；skipped 5 是既有的 VAD 測試，deselected 是 live） |
+| `cd desktop && node --test` | **46 pass**、0 fail（基準 36，新增 10） |
+| `tests/test_domain_offline.py`（A1、A2） | 83 passed：範圍判斷表 34 列、Fast Path 動作表 39 列、兩層分離的 AST 檢查、內部工具 LLM 叫不到 |
+| `tests/test_find_offline.py`（A3、A4） | 34 passed |
+| `tests/test_choice_offline.py`（A5） | 13 passed（注入時鐘：第 59 秒成功、第 61 秒失效） |
+| `tests/test_find_route_offline.py`（A6、A8 離線） | 19 passed |
+| `tests/test_ui_bus_offline.py`（A7） | 78 passed（新增 25：`choose` 驗證 19 列、`result.choices`、佇列順序、無處理函式、經匯流排來回） |
+
+### 13.2 真實環境（實際執行）
+
+| # | 結果 |
+|---|---|
+| E1 | `python main.py --text 找驗收單一檔Z`：Finder 選取 `驗收單一檔Z.pdf`（用 AppleScript 讀回 Finder 選取項目確認），檔案沒有被開啟；Fast Path 103 ms（其中 `mdfind` 約 78 ms），遠低於 800 ms |
+| E2 | 回覆「找到 3 筆」，依序 A.pdf、B.pdf、C.txt；`node_modules/驗收報告N.pdf` 與 `~/Library/…/驗收報告L.pdf` 沒有出現（Spotlight 實際回傳了這 2 筆，被過濾掉）；84 ms |
+| E3 | `打開驗收腳本.command`：只在 Finder 選取它。腳本內容改成「執行就建立標記檔」，結束後標記檔**不存在**，確認沒有被執行；回覆含「可執行檔，只在 Finder 中顯示」 |
+| E4 | 回覆「找不到符合『不存在的檔名xyz123』的檔案（範圍：家目錄，不含 ~/Library）」；沒有搜尋網頁（離線測試 `test_pipeline_not_found_opens_nothing_and_does_not_search_the_web` 也驗證沒有任何 `open` 呼叫） |
+| E5 | **只做比對，沒有真的執行**（避免在桌面上開 App、瀏覽器）。用真實的已安裝 App 清單（133 筆，掃描 53 ms）比對：`找一下 ChatGPT`→開 ChatGPT；`打開郵件`→Mail；`找一下終端機`→Terminal；`打開計算機`→Calculator；`查一下 mac_ai_control 專案`→`open_project`；`搜尋 Xcode`→Google 搜尋；`打開 Xcode`、`打開 Photoshop`→Fast Path 未命中（交給 LLM，LLM 若要開會被「找不到 App」拒絕）；`找一下 Xcode`→當檔名搜尋 |
+| E6 | 測試資料夾已刪除，確認不存在 |
+
+### 13.3 桌面角色清單（真實 Electron）
+
+`python scripts/ui_demo.py --choices-test`：8 項檢查全部 PASS——清單顯示且有 3 列、第 1 列有序號／檔名／資料夾、標題含查詢字與預設動作、狀態機與後端一致、點第 2 列送出 `choose(n=2, reveal)`、點選後清單先留著、點第 1 列按鈕送出 `choose(n=1, open)`、後端通知選擇成功後清單消失。已看過截圖：清單乾淨、沒有被泡泡蓋住。
+
+### 13.4 與計畫的差異
+
+1. **開 App 用名稱、不用 bundle 路徑**：沿用 `control_mac_app`（`open -a <.app 檔名>`），`ExecContext` 記住剛開的瀏覽器／編輯器等既有行為不用改（§5.2 已改寫）。
+2. **App 清單的重掃時機**：改成「每次指令開始時檢查是否超過 60 秒」，不是「查不到時重掃」。原因：比對也會在收音的端點判斷（`classify`）裡執行，不該在那裡跑 `mdfind`。`main.py` 啟動時另外先掃一次。
+3. **有清單時不跳結果泡泡**：清單本身就是輸出，泡泡會被清單蓋住（截圖發現）；操作提示放進清單標題。
+4. **桌面端的 `ALLOWED_SEND` 白名單新增 `choose`**：不加的話點選訊息會被 Electron 主程序擋掉（`--choices-test` 第一次執行時發現）。
+5. **「找檔案」「找資料夾」這種只說範圍詞的句子不命中**：沒說要找什麼，交給 LLM。
+6. **「第二」沒有量詞也算選擇**（原計畫的正規式本來就允許，測試表補上）。
+7. **A8 的前提改變**：「欸你幫我在電腦裡面找那個叫做履歷的檔案」等句子現在由 Fast Path 完成，不經 LLM，所以原本要驗證「LLM 選對工具」已不適用；改成離線驗證「LLM 不被呼叫」。
+8. **既有測試的調整**（計畫 §8.3 預告的範圍，加上實際發現的）：`test_router_offline.py` 3 個測試、`test_multistep_offline.py` 3 個測試、`test_llm_live.py` 2 組案例。調整方式只有換範例句、加 `installed_apps`，驗證的事情不變。
+9. 新增 `scripts/ui_demo.py --choices-test` 與 `desktop/main.js` 除錯狀態的清單欄位（只有設了 `MAC_AI_UI_CAPTURE_DIR` 才生效）。
+
+### 13.5 尚未驗證
+
+- ~~live LLM 測試沒有實際執行~~：已在 §14.6 實際執行，51 個全部通過。
+- **語音端到端**：U1（說「找驗收報告」）、U4（說「第三個」）、U5（真的等 61 秒）、U6（清單開著說「下一個分頁」）需要麥克風與 STT，待使用者。對應的離線驗證：A5 注入時鐘、`test_fast_match_actions`（「下一個分頁」不受影響）、node 測試「不相關的 result 不會動到清單」。
+- **檔案類型的 UTI**：pdf、`public.plain-text`（txt、`.command`）用真實 Spotlight 驗證過；圖片、影片、音樂、Office 文件、`public.folder` 只做了字串組裝的測試，沒有用真實檔案驗證。
+- **`$time.this_week`**：語法可用（結果與 `today` 相同，因為驗證當天是週日），尚未在週中驗證。
+- **E5 沒有真的開 App／瀏覽器**（見上）。
+
+### 13.6 實作時的發現與已知風險
+
+- **端點判斷會變早**：`stt/completeness.py` 的 `classify` 用 Fast Path 判斷「這句是否完整」。現在「找 X」幾乎都命中，所以說「找驗收…」中間停頓 0.35 秒就可能被收句（之前要等 1.3 秒）。若實際使用發現句子被截斷，要在 `classify` 針對「找」加長等待。
+- ~~「找」的預設行為變了：「找 python 教學」會回報「找不到檔案」~~：已在 §14 修正，改成 0 筆轉交模型判斷。
+- **循環匯入**：`actions → llm_client → tools → catalog → actions`，所以 `catalog` 只在掃描時才匯入 `_run`。
+- **`docs/` 底下另外兩份計畫書**（桌面角色、語音端點）在工作區是被刪除的狀態（`git status` 顯示 `D`，不是這次改動造成），README 內有連結指向其中一份。
+
+## 14. 調整：找不到時轉交模型判斷（2026-11-08）
+
+### 14.1 為什麼要改
+
+§13 的實作把「找 X 都沒對上」一律當檔名搜尋，0 筆就回「找不到檔案」。實測發現它把很多不是找檔案的句子也攔下來了：
+
+| 類型 | 例子 | 舊結果 |
+|---|---|---|
+| 知識／網頁查詢 | 找 python 教學、找附近的餐廳、找 youtube | 「找不到檔案」 |
+| 一般中文用法 | 找工作、找朋友、找人 | 搜檔名 |
+| 「找到／找不到」 | 找到了、找不到我的鑰匙 | 搜「到了」「不到我的鑰匙」 |
+| 類型或時間詞只是話題 | 找最近的電影、找影片教學、找今天的會議 | 搜近 7 天的檔案、搜影片檔 |
+
+原因是把「有本機證據、結果找不到」和「根本沒有本機證據」混成同一條規則。使用者確認的方向：**本機先找；找不到或遇到例外，就交給模型判斷；模型也確認沒有，才回「找不到」或說明為什麼不行。** 有明確檔案證據時，不允許模型改開網頁，只回「本機沒有」。
+
+### 14.2 流程（閉環）
+
+```
+「找 X」
+ ├─ 例外句（第一層直接回傳 None，不搜檔案）→ 模型判斷（聊天、網頁…）
+ │    · 找到／找不到／找得到開頭：找到了、找不到我的鑰匙、找得到嗎
+ │    · 類型或時間詞加上一段話題：找最近的電影、找影片教學、找今天的會議
+ ├─ 命中 App／資料夾／專案 → 直接執行（不經模型）
+ ├─ 即時資訊（天氣、新聞…）→ 網頁搜尋（不經模型）
+ └─ 檔案搜尋（Spotlight）
+      ├─ ≥1 筆 → 顯示（1 筆）或列清單（多筆）（不經模型）
+      ├─ 搜尋失敗（逾時等）→ 回報「檔案搜尋失敗（原因）」（不轉交：不能把失敗當成「沒有」）
+      └─ 0 筆
+           ├─ 有本機證據（local_only）→ 「⚠️ 找不到「X」：本機沒有符合的檔案（範圍：…）」（不經模型）
+           └─ 沒有本機證據 → 同一步轉交模型，使用者訊息附上「本機沒有名為「X」的檔案。」（放使用者訊息、不放 system：見 §14.6）
+                ├─ 模型呼叫 web_search → 開網頁（不再導回本機，避免繞圈）
+                ├─ 模型呼叫 chat_reply → 聊天回覆（chat 的系統提示也附上「找不到，不要說已經找到」）
+                ├─ 模型呼叫其他工具 → 照常驗證後執行（例如沒裝的 App 會被拒絕）
+                ├─ 模型沒有選任何動作（或只有被拒絕的呼叫）→ 「⚠️ 找不到「X」：本機沒有…；AI 沒有選擇上網搜尋。要上網查請說「搜尋 X」」
+                └─ LLM 不可用 → 「⚠️ 找不到「X」：本機沒有…；AI 目前無法判斷要不要上網找（原因）。要上網查請說「搜尋 X」」
+```
+
+**本機證據**（`Intent.slots["local_only"]`）：副檔名、「檔案」「電腦裡」「資料夾」範圍詞、位置（「下載的」「桌面上」），或只說類型、時間（「找照片」「找昨天的 PDF」）。
+
+### 14.3 實作
+
+| 檔案 | 改動 |
+|---|---|
+| `mac_ai/router/domain.py` | 檔案 slots 新增 `local_only`；「找到／找不到／找得到」開頭回傳 None；類型或時間詞加上話題、又沒有本機證據時回傳 None |
+| `mac_ai/router/local_actions.py` | `find_file` 新增 `local_only` 參數。0 筆時：有證據 → 回「本機沒有」；沒有證據 → 設定 `ctx.escalate` 並回 `🔎 … 交給 AI 判斷` |
+| `mac_ai/router/actions.py` | `ExecContext` 新增 `escalate`、`chat_hint`；`chat_reply` 的系統提示附上 `chat_hint` |
+| `mac_ai/router/slow_path.py` | `plan_slow_path`／`execute_slow_path_llm` 新增 `local_miss`：使用者訊息附上本機結果、停用導回本機、模型沒有動作時回保底的「找不到」與下一步 |
+| `mac_ai/router/pipeline.py` | Fast Path 這一步若有 `ctx.escalate`，同一步交給模型；LLM 不可用時回保底並標記 `llm_unavailable`；`step["escalated"]` 記錄轉交內容 |
+
+不新增 LLM 工具，`TOOLS_SCHEMA` 與 `SYSTEM_PROMPT` 本體不變（只在轉交時附加一行提示）。
+
+### 14.4 驗收（全部實際執行）
+
+| 項目 | 指令 | 結果 |
+|---|---|---|
+| 全部回歸 | `python -m pytest -q` | **1002 passed**、5 skipped、51 deselected |
+| 桌面端 | `cd desktop && node --test` | 46 pass |
+| 證據判斷與例外句 | `python -m pytest -q tests/test_domain_offline.py` | 範圍表新增 2 個本機證據案例、6 個例外句，既有案例補上 `local_only`；Fast Path 動作表新增 6 個例外句（都不命中） |
+| 閉環流程 | `python -m pytest -q tests/test_find_route_offline.py` | 模型改開網頁（本機只搜一次，不繞圈）；模型沒有動作 → 保底「找不到」且不另外閒聊；LLM 不可用 → 保底並說明原因；chat 收到「找不到」提示；被拒絕的工具 → 保底；本機找得到 → 不呼叫 LLM；搜尋失敗 → 不轉交；例外句 → 不搜檔案；多子句仍照說話順序 |
+| 有證據不呼叫 LLM | 同上 `-k never_call_the_llm` | 「欸你幫我在電腦裡面找那個叫做履歷的檔案」「找 report.pdf」「找昨天下載的 PDF」0 筆都只回「本機沒有」，LLM 一被呼叫就失敗 |
+| 真實環境（LLM 未啟動） | `python main.py --text 找 xyzzy 教學` | 本機 0 筆 → 轉交 → LLM 連不上 → 「找不到『xyzzy 教學』：本機沒有…；AI 目前無法判斷要不要上網找（Connection refused）」，154 ms |
+| | `python main.py --text 在電腦裡找不存在的檔名xyz123` | 「找不到…：本機沒有符合的檔案」，不經 LLM，136 ms |
+| | `python main.py --text 找到了` | 不搜檔案，直接交給模型；LLM 連不上 → 「AI 服務無法使用…這句沒有處理」 |
+
+### 14.5 風險（已更新，實測數據見 §14.6）
+
+- **轉交會多等一次模型**：沒有本機證據又 0 筆的句子，端到端實測約 **1.1 秒**（10 句從未出現過的新句子，中位 1118 ms、最慢 1175 ms）。命中本機的句子不受影響。
+- **「找工作」這類句子會先跑一次 Spotlight**（約 80 ms）；剛好有檔名吻合時，會先列出檔案而不是交給模型。
+- **類型詞加話題的判斷是啟發式**：「找 report 的 pdf」會被當成例外句交給模型；要直接搜本機請說「找 report.pdf」或「在電腦裡找 report」。
+- **2B 模型的判斷不是 100%**：見 §14.6。模型沒選動作時，保底訊息會告訴使用者下一步（說「搜尋 X」）。
+
+### 14.6 模型判斷的實測分析（2026-11-08，本機 LFM3-VL-2B 4bit，實際執行）
+
+**方法**：mdfind 假裝 0 筆，其餘走真實流程；模型解碼是確定性的（同一句連跑 8 次結果完全相同），所以每句每種做法各跑 1 次即可。腳本放在 scratchpad，不入版控。
+
+**1. 轉交後模型有沒有選網頁搜尋**（最終版，每句 8/8 相同）
+
+| 類型 | 句子 | 結果 |
+|---|---|---|
+| 該上網查 | 找 python 教學、找附近的餐廳、找咖啡廳推薦、找 youtube、找蘋果官網、找 taylor swift 的歌、找一個好看的電影、找 notion | 8/8 句都選網頁搜尋 |
+| 不一定要上網 | 找工作、找朋友、找履歷、找藉口 | 都沒選動作 → 保底「找不到…要上網查請說『搜尋 X』」 |
+| 例外句（不搜檔案，直接交模型） | 找到了、找不到我的鑰匙 | 聊天回覆 |
+| | 找最近的電影、找影片教學 | 網頁搜尋 |
+| | 找今天的會議 | **網頁搜尋「today's meeting」（不理想：這比較像行事曆，不是網頁）** |
+
+**2. 提示放法與措辭的對照**（34 句：26 句該上網、8 句不一定要上網）
+
+| 做法 | 該上網→上網 | 其他→沒亂上網 | 備註 |
+|---|---|---|---|
+| V0：提示附在 system 尾巴（原本） | 24/26 | 7/8 | **冷啟動 3 秒**：前綴快取只剩 119 token，每次重算 800 多個 token 的工具定義 |
+| V1：長指示放使用者訊息 | 17/26 | 6/8 | 準確率大跌，且有 1 次生成 392 token 超過 10 秒逾時 |
+| V2：加「除非明顯不是查資料，否則請搜尋」 | 25/26 | **0/8** | 變成一律上網（朋友、藉口也開 Google），失去判斷意義 |
+| **V3：只陳述事實、放使用者訊息（採用）** | **23/26** | **7/8** | 快取命中（cache_n 930），端到端約 1.1 秒 |
+
+採用 V3。V3 沒有上網的 3 句：vim 快捷鍵、go 語言入門（沒選動作 → 保底訊息）、tmux 設定（選了 `control_mac_app`，被「找不到 App」驗證拒絕 → 保底訊息）。
+
+**3. 我先前說錯的地方**：計畫階段我說轉交「約 1 秒」，第一版實作實測是 **3 秒**（提示放 system 破壞快取），已修正為 1.1 秒。另外第一版保底訊息寫「AI 判斷不需要上網查」，但模型實際的文字是在問「你是想查網路嗎？」，這個說法不符事實，已改成「AI 沒有選擇上網搜尋。要上網查請說『搜尋 X』」。
+
+**4. 模型會改寫搜尋關鍵字（尚未處理，待決定）**：V3 的 23 個網頁搜尋裡，14 個和使用者說的字不同：加地區或年份（`高鐵時刻表 台灣`、`天文望遠鏡推薦 2025`）、加「繁體中文」、翻成英文（`Apple official website`、`best English learning websites`、`macOS docker installation guide`）、偶爾出現簡體（`灵感 概念 灵感 想法`）。多半無害，但不忠於原話，年份是模型憑空加的。
+
+**5. live 測試**：`python -m pytest -m live -q tests/test_llm_live.py` **51 passed**（163 秒，LLM server 實際開著）。包含這次調整過的案例（Slack／Notion 改走 Fast Path、「今天台北會下雨嗎」走 LLM）。
+
+**6. 已知例外與不足**：「找今天的會議」被模型搜成網頁；`找 vim 快捷鍵` 這類沒被選上網的，靠保底訊息引導使用者說「搜尋 X」；模型對提示措辭很敏感，改動提示或換模型後要重跑這組對照。
+
+## 15. 調整：轉交時的搜尋關鍵字用使用者的原話（2026-11-08）
+
+### 15.1 問題與做法
+
+§14.6 實測：模型改寫關鍵字，26 句裡只有 11 句（42%）和原話相同；其餘有加年份（`好看的電影 2025`）、翻成英文（`Apple official website`、`Go programming language beginner tutorial`）、丟字（`台中的早午餐`→`台中早午餐 地點 時間`）等。**轉交路徑改成：模型只決定要不要上網，關鍵字一律用第一層從原話截出來的 `query`。** 一般由模型發起的網頁搜尋（不是本機 0 筆轉交）這次不動，只量測。
+
+截取方式（業界「固定詞＋自由欄位」做法）：只去掉頭尾的固定詞，中間一個字都不動——
+```
+原話「我想找台中好吃的早午餐啦」
+ → 正規化（全形轉半形、簡轉繁、誤聽詞替換）
+ → canonicalize_clause 去掉開頭「我想」、結尾「啦」（固定詞表）
+ → parse_find 去掉動詞「找」與「一下／個」，再去掉開頭指示詞（那個、一個、叫做…）和頭尾單獨的「的」
+ → 「台中好吃的早午餐」
+```
+**可以保證、也有測試檢查的性質**：查詢一定是原話的一段（去空白、不分大小寫後是子字串）；規則是確定性的。**不能保證的**：語音辨識本身聽錯的字。
+
+### 15.2 同時修掉的 3 個截錯的地方
+
+| 原話 | 舊結果 | 原因 | 修法 |
+|---|---|---|---|
+| 找谷哥的評價 | `Google Chrome的評價` | 正規化把整句的「谷哥」換成 App 名稱 | 正規化照舊替換（開 App 需要），但 `normalize_utterance(text, replacements)` 記錄每次替換；查詢用 `restore_misheard` 還原。只在對得準時還原：整句裡替換字的出現次數必須剛好等於紀錄筆數，否則保持原樣；用查詢在整句中的位置算它是第幾次出現，所以多子句（「開谷哥瀏覽器，找谷哥的評價」）不會錯配 |
+| 找我的最愛清單 | `最愛清單` | 檔名清理會刪開頭的「我的」 | 網頁查詢另走 `_clean_query`（不刪「我的」），檔名比對仍用原本的清理 |
+| 找 node.js | 被當成確定的本機檔案 → 只回「本機沒有」、不上網 | `.js` 在 `other_ext` 裡，和 `.pdf` 一樣算強證據 | `FileTerms.known_ext`：只有已知文件格式（pdf、png、txt…）算確定證據。`.js`、`.command` 這類：「找／打開」仍先搜本機、0 筆就轉交模型；「搜尋 node.js」直接走網頁 |
+
+### 15.3 實作
+
+| 檔案 | 改動 |
+|---|---|
+| `mac_ai/router/domain.py` | `FindRequest.query`、`Intent.query`（`to_log` 有值才記）、`_clean_query`、`FileTerms.known_ext`、強證據只算已知格式 |
+| `mac_ai/router/normalize.py` | `normalize_utterance(text, replacements=None)` 可選回傳替換紀錄（不傳時行為不變）；新增 `restore_misheard` |
+| `mac_ai/router/actions.py` | `ExecContext.misheard`、`normalized` |
+| `mac_ai/router/pipeline.py` | 收集替換紀錄、算每個子句在整句的位置；轉交時算出 `query`（含還原）並記 `step["extract_ms"]` |
+| `mac_ai/router/slow_path.py` | 轉交時模型的 `web_search_or_open_url` 關鍵字換成原話；`step["model_query"]`、`step["used_query"]` 兩者都記；多個網頁搜尋去重成一個 |
+| `tests/` | 新增 A1～A4 測試與運算時間記錄；`test_llm_live.py` 新增量測報告 |
+
+### 15.4 驗收結果（全部實際執行）
+
+| # | 項目 | 結果 |
+|---|---|---|
+| A1 | 截取正確 | `pytest tests/test_domain_offline.py -k query`：14 句截取結果完全等於預期，且每句都滿足「是原話子字串」；另有一個測試對表格裡所有「找」的句子（40 多句）檢查子字串不變式 |
+| A2 | 轉交用原話 | 假模型回 `Apple official website`／`… 2025`／`早午餐 地點`／`灵感 概念…`／`Python 教學`，實際開的網址都是原話；`model_query`、`used_query` 都有記；本機只搜一次；兩個網頁搜尋只開一頁；一般路徑（今天台北會下雨嗎 → `台北天氣`）維持模型的關鍵字 |
+| A3 | 副檔名分級 | `找 node.js`、`找 vue.js 教學` → 不帶 local_only；`搜尋 node.js` → 網頁；`找 report.pdf`、`找 notes.txt`、`找 photo.png` → local_only；`打開驗收腳本.command` → 仍是檔案、只在 Finder 顯示（既有測試不變） |
+| A4 | 誤聽還原 | `找谷哥的評價` → 搜 `谷哥的評價`；`開谷哥` 仍開 Google Chrome；`開谷哥瀏覽器，找谷哥的評價` → 第二句對到第二筆替換；使用者本來就說「Google Chrome」→ 分不出就不還原 |
+| A5 | 既有行為不變 | `pytest -q`：**1042 passed**、5 skipped、52 deselected（基準 1002，新增 40）；`test_normalize_offline.py` 沒改任何預期；node 46 pass |
+| R1 | 真實模型、34 句走完整流程 | 該上網→上網 **23/26**（上次 23/26）；其他→沒亂上網 **7/8**（上次 7/8）；**模型選上網的 24 句，實際搜尋字 24/24 等於原話**；其中 18 句模型原本想搜的字被換回原話 |
+| R2 | live 回歸 | `pytest -m live`：**52 passed**（194 秒） |
+| R3 | 一般路徑量測（只報告） | 26 句：原話（含只差大小寫）11、翻成英文 6、原話＋額外的字 3、改寫措辭 4、沒選網頁搜尋 2；忠於原話約 42% |
+
+### 15.5 運算時間記錄
+
+**新增邏輯的成本（5000 次微基準，本機）**
+
+| 項目 | 中位 | p95 |
+|---|---|---|
+| `normalize_utterance`（含誤聽紀錄） | 4.5 µs | 4.7 µs |
+| `parse_find`（含截取原話） | 5.4 µs | 5.5 µs |
+| `resolve_intent`（範圍判斷） | 32.5 µs | 33.4 µs |
+| `restore_misheard`（誤聽還原） | 1.0 µs | 1.1 µs |
+| `FastPathMatcher.match` 整句 | 53.5 µs | 56.6 µs |
+| 轉交時 `step["extract_ms"]`（截取＋還原，34 句） | 0.001 ms | 0.001 ms |
+
+結論：新增的截取與還原是微秒等級，對延遲沒有可測量的影響。
+
+**轉交的端到端各階段（真實模型，34 句，每句 1 次）**
+
+| 階段 | 中位 | 最慢 |
+|---|---|---|
+| 搜本機（Spotlight，這組實驗假裝 0 筆） | 0.0 ms | 0.0 ms（真實 Spotlight 約 80 ms，見 §13） |
+| 截取原話 | 0.001 ms | 0.001 ms |
+| LLM 判斷 | 1105 ms | 3097 ms |
+| 整步 | 1105 ms | 3097 ms |
+
+最慢的 3097／2792 ms 都是「模型沒選動作」的句子（vim 快捷鍵、go 語言入門）：模型會寫一段話然後被我們丟掉，解碼時間花在這裡；選工具的句子都在約 1.1 秒。去掉最慢 1 句後最慢 2792 ms。
+
+**一般路徑（未轉交）單次規劃**：中位 1126 ms，最慢 2526 ms（vim 快捷鍵，同樣是沒選動作）。
+
+### 15.6 已知限制與觀察
+
+- **忠於原話的代價**：模型加「台灣」「推薦」有時其實有幫助；改用原話後沒有這類補充。Google 本身會處理查詢，這是你選擇的取捨。
+- **誤聽還原只還原有紀錄的替換**：使用者本來就說過替換後的字（整句出現次數對不上）就保持原樣，寧可不還原也不錯還原。
+- **檔案搜尋用的名稱仍是正規化後的字**：「找谷哥的評價」若在本機搜檔名，用的是 `Google Chrome的評價`；「找不到「…」」訊息也是。只有網頁關鍵字還原。
+- **轉交時模型可能選別的工具**：`找 tmux 設定` 模型選了 `control_mac_app` 開 Terminal（已安裝，通過驗證所以真的執行）。這是模型的判斷，不是路由錯誤，但「找設定檔」開了終端機可能出乎意料。
+- **模型沒選動作時多花 1.5～3 秒**：模型寫了一段話再丟掉。若要壓低，可以對這次規劃設較小的 `max_tokens`，這次沒做。
+- 一般路徑的模型關鍵字仍會被改寫（R3）；「找今天的會議」仍會被搜成網頁。
+
