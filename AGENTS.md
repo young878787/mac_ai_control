@@ -42,7 +42,7 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 5. `validate_tool_call` 是唯一的信任邊界；LLM 編出來的名稱不能直接 `open -a`。本機工具對 LLM 保持看不到（雲端只有 `front_action`、`site_search` 兩個例外）。（0011）
 6. 找檔案預設只在 Finder 顯示，危險檔一律只顯示，範圍限家目錄。（0005）
 7. 對象順序固定：明說 → 同句剛開 → 前景 → 預設；讀不到就退回預設，不猜。（0006）
-8. 常用功能走 `front_action`→`native.py`；送按鍵只允許 ⌘ 組合鍵與翻頁鍵；不任意打字、不放結束程式或刪除類。（0008）
+8. 常用功能走 `front_action`→`native.py`；送按鍵只允許 ⌘ 組合鍵與翻頁鍵，媒體鍵只允許 play／next／previous；不任意打字、不放結束程式或刪除類。（0008、0019）
 9. 雲端只用在 Slow Path 規劃，失敗退回本機；不能繞過任何守門，不能謊稱已執行。（0009）
 10. 金鑰只在 `cloud_client` 讀，不進 `os.environ`、log 或錯誤訊息。（0010）
 11. 結果字串前綴 ✅／❌／⚠️／⏭️ 決定 status，不要把失敗寫成 ✅。送 LLM 的永遠是原句。
@@ -53,7 +53,7 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 ## 不要碰
 
 - `archive/`：唯讀參考，不改、不 import。`macos-stt/`：獨立 repo，不在本 repo 提交範圍。
-- 不入版控：`AI_models/`、`Rushia_hd/`、`desktop/vendor/`、`desktop/node_modules/`、`logs/`、`bench/synth/`、`*.wav`、`.env*`。
+- 不入版控：`AI_models/`、`Rushia_hd/`、`desktop/vendor/`、`desktop/node_modules/`、`logs/`、`data/`、`bench/synth/`、`*.wav`、`.env*`。
 - 不修改 `.env`、production 設定或外部服務。`vocab/lexicon.json` 的 `project_roots`、`projects.path` 是個人設定。
 - `catalog._scan_installed` 在函式內 import `actions`（避免循環匯入），不要搬到檔案頂層。
 

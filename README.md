@@ -71,10 +71,10 @@ cd ..
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install mlx-vlm sounddevice websockets pytest onnxruntime numpy
+pip install mlx-vlm sounddevice websockets pytest onnxruntime numpy alembic
 ```
 
-開發時的版本：`mlx-vlm 0.7.11`、`sounddevice 0.5.6`、`websockets 17.4`、`pytest 9.2.0`、`onnxruntime 1.31.1`、`numpy 2.5.4`。
+開發時的版本：`mlx-vlm 0.7.11`、`sounddevice 0.5.6`、`websockets 17.4`、`pytest 9.2.0`、`onnxruntime 1.31.1`、`numpy 2.5.4`、`alembic 1.20.1`（連帶 `SQLAlchemy 2.1.9`、`Mako 1.4.3`；只在啟動時準備點歌偏好資料庫用，之後可以移除，見 [0019](docs/decisions/0019-music-play.md)）。若虛擬環境是用 `uv` 建的（沒有 `pip`），改用 `uv pip install` 安裝同一組套件。
 
 ### 4. 準備語言模型
 
@@ -170,11 +170,27 @@ python main.py --ui               # 同時顯示桌面角色（需先完成「�
 | 任何 App | 關閉視窗、開新視窗、最小化、全螢幕、放大、縮小 | 直接對最前面的 App 操作（按視窗的關閉鈕、設定最小化／全螢幕、按 App 自己的選單項目） |
 | 瀏覽器 | 上一頁、下一頁、回到頂端、往下捲、往上捲 | 同上 |
 | 編輯器 | 開側邊欄、存檔 | 同上 |
-| YouTube、Music、Spotify | 播放、暫停 | YouTube 按播放器的播放／暫停按鈕；Music／Spotify 用 App 自己的播放／暫停指令 |
+| YouTube、Music、Spotify | 播放、暫停、繼續、下一首、上一首 | YouTube 按播放器的按鈕；Music／Spotify 用 App 自己的指令。「暫停」「繼續」有方向（已經是那個狀態就不動作），單說「播放」是切換 |
 
 網站與常用功能都定義在 `vocab/lexicon.json` 的 `sites`、`app_shortcuts`。常用功能以輔助使用介面直接操作，不經過鍵盤，所以不受中文輸入法影響；只有沒有選單項目的翻頁鍵才送按鍵。說法前後多了「再／多／繼續／稍微」「一點／多一點」也算（「再往下滑」「往下滑一點」）；其他說法（「再往下」）由雲端依目前視窗與最近對話判斷。功能不支援最前面的 App 時什麼都不做，只回報。需要「輔助使用」權限。判斷結果記在每一步的 `step["context"]`（只記 App 與網站 host，不記完整網址與視窗標題）。
 
 已知限制：讀網址只支援 Safari 與 Google Chrome；選單依快捷鍵或標題尋找，App 改了快捷鍵或介面語言不在詞庫列出的名稱時，會退回送按鍵或回報找不到。
+
+### 點歌與播放控制
+
+說一句話就在 Safari 用 YouTube 播放（Fast Path，不經 LLM；Safari 以外的瀏覽器只有離線測試）：
+
+| 說法 | 結果 |
+|---|---|
+| 我想聽周杰倫的晴天／播放稻香／放一首告白氣球／來首五月天／聽五月天的歌／五月天的歌來一首 | 搜尋後直接播放（YouTube 合輯，播完接著播）；有音樂分頁就換它的網址，沒有才開新分頁 |
+| 我想聽歌／放音樂／來一首 | 播常聽的歌（偏好資料庫沒有紀錄時會請你說歌名） |
+| 下一首、上一首、暫停、繼續 | 前景是 YouTube、Music、Spotify 時直接操作；否則控制 Safari 背景的 YouTube 音樂分頁（先按播放器按鈕，按不到才送系統媒體鍵；找不到音樂分頁回「找不到正在播放的音樂」） |
+| 換一首／不是這首 | 改播同一次搜尋的下一個候選，並記住 |
+| 我喜歡這首／不要再放這首 | 記下偏好（不要再放的歌不會被「常聽的歌」選到） |
+| 我最常聽什麼 | 列出最常聽的歌手與歌曲 |
+
+否定、敘述、提問不會觸發（「我不想聽這首」「播放清單在哪」「聽我說」）；「聽說明天會下雨」「他想聽周杰倫」會交給模型判斷。搜尋用 YouTube／YouTube Music 網頁用的內部介面（InnerTube），不需要金鑰、不扣配額；搜尋失敗就改開搜尋頁並回報。只說歌手（「我想聽五月天」）會播 YouTube Music 上該歌手的第一首熱門歌曲，接著自動播合輯。偏好（聽歌紀錄、說法矯正、搜尋快取）存在本機 `data/music.sqlite3`：永久保存、不入版控、第一次啟動自動建立；結構與取捨見 [0019](docs/decisions/0019-music-play.md)。
+語音實機辨識歌名（H5）還沒有驗收；有聲自動播放、背景控制、媒體鍵（H1～H4）由使用者判定通過、沒有逐項實際執行，見 `docs/plans/completed/2026-11-21-music-play.md` §9。
 
 ## 桌面角色
 
@@ -304,7 +320,8 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
 | `mac_ai/wake.py` | 喚醒詞閘門與會話 |
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
-| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站 |
+| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站；點歌：`youtube_client.py`（InnerTube 搜尋）、`music_prefs.py`（偏好、計分、拼音矯正） |
+| `mac_ai/db/` | 點歌偏好資料庫（`data/music.sqlite3`）的建立、備份與升級（Alembic migration）、從事件重算詞表（`rebuild.py`） |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
 | `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、注意力導演、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`animation/` 程序動畫、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 [ARCHITECTURE.md](ARCHITECTURE.md) |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |

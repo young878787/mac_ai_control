@@ -48,6 +48,7 @@ flowchart TD
 
 單執行緒、依序執行；單一指令出例外只記錯，不停下。
 
+- `QueuedJob`（內部工作，例如點歌定時整理）→ 直接 `run()`；不發 executing／result 事件、不寫 `commands.jsonl`，出錯只印錯誤
 - str → `pipeline.process_voice_command`
 - dict → `pipeline.process_choice` → `run_tool("pick_choice")`（和語音說「第 N 個」走同一個工具）
 - 輸出：
@@ -61,9 +62,9 @@ flowchart TD
 2. `split_clauses`：依標點與「然後／接著／再幫我／順便／還有／並且／以及」切，不以空白切。
 3. 逐子句跑 `FastPathMatcher.match`。這是純比對：不執行、不讀前景、不碰網路或 LLM。順序：
    - 「讓電腦睡眠」固定句 → `canonicalize_clause`（去填充詞、「把 X 打開」改成「打開 X」）
-   - → `_r_negated_command`（窄的否定即指令）→ `_blocked`（否定／敘述，`_narrative_exempt` 例外）→ None
-   - → `_read_screen_re` → `_r_open_search` → `_r_search`（這三項在問句守門之前）→ `_QUESTION_RE` → None
-   - → `_r_front` → `_r_tab` → `_r_project` → `_r_volume` → `_r_mute` → `_r_brightness` → `_r_dark` → `_r_lock`
+   - → `_r_negated_command`（窄的否定即指令；含「不要再放這首」）→ `_blocked`（否定／敘述，`_narrative_exempt` 例外）→ None
+   - → `_read_screen_re` →「我最常聽什麼」（含「什麼」，所以在問句守門之前，只收這幾句）→ `_r_open_search` → `_r_search`（這三項在問句守門之前）→ `_QUESTION_RE` → None
+   - → `_r_front`（「播放」「暫停」「下一首」這類整句說法先比對）→ `_r_music_feedback`（換一首、我喜歡這首）→ `_r_music`（點歌，比對**原句**，不是 canonicalize 後的）→ `_r_tab` → `_r_project` → `_r_volume` → `_r_mute` → `_r_brightness` → `_r_dark` → `_r_lock`
    - → `_r_find` → `_r_pick` → `_r_site` → `_r_app` → `_r_front_degree`（第一個命中的規則勝出）
    - 命中 → `("fast", [子句], Match)`，各自成一步；未命中 → 併進前一個 slow 段（連續的才合併），否則新開 slow 段。
 4. 建立 `ExecContext`（整句共用、不跨語句），依說話順序跑每一段：
@@ -83,7 +84,7 @@ flowchart TD
 
 - `control_mac_app` 開瀏覽器或編輯器 → 記下 `last_browser`／`last_editor`，成功時重置前景快取；失敗 → `ctx.failed`。
 - `web_search`／`browser_tab`／`open_project`／`read_screen`：前置失敗就 ⏭️ 略過；對象依序是明說 → 同句剛開 → 前景 → 預設。
-- `LOCAL_TOOLS`（`open_folder`、`find_file`、`pick_choice`、`context_search`、`front_action`）→ `local_actions`。
+- `LOCAL_TOOLS`（`open_folder`、`find_file`、`pick_choice`、`context_search`、`front_action`、`play_media`、`music_replace`、`music_feedback`、`music_top`）→ `local_actions`。
 - `front_action` → `native.py`（視窗、選單、按鈕、App 指令；最後才送按鍵，送前重讀前景 pid）。
 - `read_screen` → `screencapture`；雲端路線且 `CLOUD_VISION_ENABLED` 時，看圖走雲端。
 
@@ -91,6 +92,44 @@ flowchart TD
 
 - 角色視窗：Electron＋Live2D＋泡泡；有 expand 時，泡泡只顯示「詳細內容在對話視窗」。
 - `chat.js`：紀錄只放記憶體，重開清空 → 聊天室視窗。這是獨立視窗，平常隱藏；隱藏時不推紀錄，展開前才補送。有 expand 時 `showInactive` 展開，無互動 20 秒收回。
+
+## F. 點歌與播放控制
+
+決策見 [0019](../decisions/0019-music-play.md)。比對（`match()`）只看句子，下面全是執行階段；全部在 `command_worker` 執行緒。
+
+```mermaid
+flowchart TD
+    M[Fast Path：_r_music 命中] --> P[play_media query]
+    P -- query 空字串 --> Fav[music_prefs.favorite<br/>常聽的歌，不連網]
+    P --> Fix[拼音矯正 correct]
+    Fix --> Cache{queries 快取<br/>30 天內或 pinned}
+    Cache -- 命中 --> Open
+    Cache -- 沒有 --> S[youtube_client.search<br/>InnerTube 一般搜尋＋YouTube Music 並行，YT_TIMEOUT_S]
+    S -- 挑到 --> Open[open_music_video<br/>找 list=RD 分頁改網址，沒有才開新分頁]
+    S -- 兩邊都沒有可播的 --> Page[開搜尋頁，回 ⚠️]
+    Fav --> Open
+    Open --> Rec[寫 play 事件、videos、terms、快取]
+```
+
+**點歌 `play_media(query)`**
+
+1. 資料庫還沒準備好（`MUSIC_DB.conn()` 是 None）：跳過矯正、快取與寫入，照常搜尋播放。
+2. 矯正（`music_prefs.correct`，每次改寫寫一筆 `correct` 事件）→ 快取。`query` 空字串＝常聽的歌，沒有紀錄回 ⚠️。
+3. 沒命中快取：InnerTube 兩邊並行、共用同一個截止時間；YouTube Music 第一筆通過接受規則才採用，再挑官方 MV（`source`＝mv／ytm）；只說歌手（YouTube Music 回歌手卡片）播卡片第一首（ytm）；否則播一般搜尋第一筆（web）。InnerTube 沒有可播的結果就開搜尋頁（page，回 ⚠️，另寫 `fallback` 事件，失敗分類在 `source` 欄位）。InnerTube 回 4xx 只標記 `clientVersion` 需要更新。
+4. 開啟成功後寫 `play` 事件，更新 `videos`、`terms`、快取。結果字串前綴照紅線 11（✅ 播放、⚠️ 退回搜尋頁、❌ 開啟失敗）。
+
+**播放控制（`front_action`：play_pause、next_track、prev_track）**
+
+- 前景是 Music／Spotify／YouTube 分頁：照 `app_shortcuts` 的綁定（Music／Spotify 用 App 指令，YouTube 按播放器按鈕）。「暫停」「繼續」帶方向（已是目標狀態回 ✅ 不動作），單說「播放」「播放暫停」是切換。
+- 其他前景 → `_background_control`，依序嘗試，前一個成功就停：
+  1. Safari 最近使用的視窗目前顯示的是 YouTube 影片分頁 → 輔助使用 API 按該視窗的播放器按鈕（`source=ax`）
+  2. Safari 任何視窗任何分頁是 YouTube 影片 → 送媒體鍵（`source=mediakey`，只有 play／next／previous）
+  3. 都不成立 → ⚠️「找不到正在播放的音樂」
+- 成功後 `_record_control` 寫 next／prev／pause／resume 事件（toggle 與「已經是這個狀態」不寫）；播放後 30 秒內的 next 會讓該影片扣 0.3 分。
+
+**回饋**：換一首（`music_replace`）改播同一次搜尋的下一個候選並釘選；喜歡／不要再放（`music_feedback`）讀 Safari 音樂分頁目前的 videoId；我最常聽什麼（`music_top`）把前 5 名放進 `ctx.replies`。這幾個都不連網、不呼叫 LLM。
+
+**定時整理**：`MusicMaintenance` 的計時器執行緒（`MAINT_POLL_S` 檢查一次）到期（啟動時一次、之後每 `MUSIC_MAINT_INTERVAL_S`）就把 `QueuedJob` 排進指令佇列，由 `command_worker` 做 `terms` 衰減與刪除；做完另開短命執行緒抓兩個首頁的 `clientVersion`（只做網路），結果再排回佇列寫入 `maintenance` 表。寫資料庫的永遠只有 `command_worker`。
 
 ## 量測鏈
 

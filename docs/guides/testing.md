@@ -15,14 +15,14 @@ pytest -m app -v                          # 真實 App 驗收（Safari／Finder�
 python scripts/acceptance.py run [--app] [--live] [--cloud] && python scripts/acceptance.py report   # 存數字並和上次比，變差結束碼 1
 cd desktop && node --test                 # 桌面角色狀態機／路徑白名單／分層規則／IPC 頻道
 cd desktop && npm run typecheck           # 桌面前端型別檢查（JSDoc＋checkJs）
-python main.py --text 打開小算盤           # 不啟動服務、不檢查喚醒詞，直接跑一句（改路由後的最快實測方式）
+python main.py --text 打開小算盤           # 不啟動服務、不檢查喚醒詞，直接跑一句（改路由後的最快實測方式；點歌句會真的搜尋並開 Safari，並寫專案的 data/music.sqlite3）
 python main.py [--no-stt] [--ui] [--device N]
 python build_vocab.py                     # 改 vocab/lexicon.json 後重產 stt_hints／userdict（main.py 啟動時也會自動跑）
 python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥克風預覽桌面角色；--chat-test 驗聊天室（會短暫出現視窗）
 python scripts/ui_motion.py [--skip-idle|--skip-listen]   # 桌面角色動作軌跡指標（擬人化 R2 閒置 10 分鐘／R3 聆聽 10 輪；量測期間不要動滑鼠）
 ```
 
-基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 前端分層整理 S0～S4 後實測 142 pass；2026-11-21 擬人化 P1～P4 後 266 pass，其中 `motion-sim.test.js` 是 T2／T3 模擬指標；pytest 1730 通過、5 skipped；同日去掉 runtime 層的空等〔關閉握手逾時、0.5 s 輪詢〕後，離線全部 37.5 s → 14.5 s，runtime 35.3 s → 12.6 s，項數不變）。新增行為要新增測試。
+基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 前端分層整理 S0～S4 後實測 142 pass；2026-11-21 擬人化 P1～P4 後 266 pass，其中 `motion-sim.test.js` 是 T2／T3 模擬指標；pytest 1730 通過、5 skipped；同日去掉 runtime 層的空等〔關閉握手逾時、0.5 s 輪詢〕後，離線全部 37.5 s → 14.5 s，runtime 35.3 s → 12.6 s，項數不變；2026-11-21 點歌 P1～P5 後 `pytest` 2473 passed、6 skipped、0 failed，約 21 秒，119 deselected）。新增行為要新增測試。
 
 ## 分層節奏：改什麼跑什麼
 
@@ -44,6 +44,11 @@ Fast Path 與正規化的改動，flow 層的整條路由都會跑到，所以 L
 | `router/cloud_client.py`、`memory.py`、`hant.py` | `tests/unit/test_cloud_client.py tests/flow/test_route_cloud.py` | 動到提示詞或雲端工具才跑 `pytest -m cloud -s`（會產生費用） |
 | `router/domain.py`、`catalog.py`、`local_actions.py`、`choices.py`（找檔案） | `tests/unit/test_domain.py tests/unit/test_find.py tests/unit/test_choice.py tests/flow/test_route_find.py` | — |
 | `router/context.py`、`native.py`、`actions.py`（前景、常用功能、分頁、看畫面） | `tests/unit/test_context.py tests/unit/test_native.py tests/flow/test_route_context.py tests/flow/test_route_tabs.py tests/flow/test_route_screen.py tests/runtime/test_applescript.py` | `pytest -m app -v` |
+| `router/fast_path.py` 的點歌規則（`_r_music`、`_r_music_feedback`）、詞庫 `music`、`app_shortcuts` 的 `play_pause`／`next_track`／`prev_track`、`completeness` 的點歌判斷 | `tests/flow/test_route_music.py tests/unit/test_completeness.py tests/unit/test_endpoint.py tests/flow/test_route_context.py`（規則會連動其他指令，再加上第一列 `fast_path.py` 的檔案） | — |
+| `router/youtube_client.py`（InnerTube 解析、接受規則、挑 MV、退回搜尋頁、`clientVersion`） | `tests/unit/test_youtube_client.py tests/unit/test_pinyin.py tests/runtime/test_youtube_search.py tests/flow/test_route_music.py` | 實機搜尋與延遲：計畫書 `docs/plans/completed/2026-11-21-music-play.md` §7.2（R1～R5，會用真的網路；只打 InnerTube，不用金鑰） |
+| `router/music_prefs.py`（事件、計分、`terms`、拼音矯正、定時整理排程） | `tests/unit/test_music_prefs.py tests/unit/test_pinyin.py tests/runtime/test_music_maintenance.py tests/runtime/test_stt_client.py::test_t8_music_terms_correction_and_maintenance_do_not_touch_stt_hints`（T8：矯正與整理不影響 STT 提示詞） | — |
+| `mac_ai/db/`（`ensure_schema`、migration、`rebuild`）、`assistant.py` 的 `QueuedJob`／`MusicMaintenance` | `tests/unit/test_music_db.py tests/runtime/test_music_db_runtime.py tests/runtime/test_music_maintenance.py tests/runtime/test_assistant.py` | — |
+| `local_actions.py` 的 `play_media`、`music_*`、播放控制鏈（`_background_control`、`_record_control`）、`native.py` 的 `press_button_in_window`／`post_media_key`、`actions.py` 的 `open_music_video` | `tests/flow/test_route_music.py tests/unit/test_native.py tests/flow/test_route_context.py tests/runtime/test_applescript.py` | 實機（Safari 腳本、AX、媒體鍵）沒有自動測試，只能照計畫書 §7.3 人工驗收 |
 | `router/pipeline.py`（主動展開） | `tests/flow/test_route_expand.py tests/unit/test_ui_contract.py` | — |
 | `stt/completeness.py`、`stt/endpoint.py`、`wake.py` | `tests/unit/test_completeness.py tests/unit/test_endpoint.py tests/unit/test_wake.py` | 調參數用 `scripts/stt_bench.py` A/B |
 | `stt/client.py`、`vad.py`、`mic.py` | `tests/runtime/test_stt_client.py tests/runtime/test_vad.py` | 語音實機（人工） |
@@ -76,6 +81,7 @@ Fast Path 與正規化的改動，flow 層的整條路由都會跑到，所以 L
 - 時間相關邏輯（喚醒會話、選擇清單 TTL、端點偵測）用注入的時鐘測，不要 `sleep`。
 - runtime 測試不要讓收尾空等：產品端等待 stop 的輪詢間隔做成可注入（`SttClient.RECV_POLL_S`、`assistant.WORKER_POLL_S`，由 `tests/runtime/conftest.py` 調成 0.02 s）；假 server 收尾用短輪詢；不讀資料的 WebSocket 客戶端要設短的 `close_timeout`。
 - 修 bug 先寫能重現的測試；重構要確認前後行為一致。
+- **YouTube fixture**（`tests/fixtures/youtube/`，55 個檔、約 419 KB；載入與假 `urlopen` 在 `tests/support/youtube.py`）：2026-11-21 用真的 InnerTube 抓的回應（`web_*`、`ytm_*`、`home_*`），`index.json` 記每個檔的搜尋字。**重新抓取只打 InnerTube**（不需金鑰、不扣配額）；重新抓取與縮小用 `scripts/capture_youtube_fixtures.py`（`fetch` 抓原始回應到 repo 外的資料夾、`shrink` 縮成 fixture；請求格式與正式程式相同，縮小規則寫在腳本裡，`tests/unit/test_youtube_fixture_tool.py` 鎖住規則；重抓後內容變了，要重跑 pytest 並先看過再改測試預期值），`test_fixture_directory_size` 檢查總大小。邊界案例（Shorts、廣告、不合法 videoId…）從真實 fixture 複製再改欄位，標示「衍生」。測試不得連網、不得真的執行 `open`／`osascript`，也不得寫專案的 `data/`（用 `tmp_path`）。
 - 路由、LLM 工具或 prompt 的改動要另外跑 `pytest -m live`（需 server）；不能跑就明說「live 未驗證」。
 - **錯字語料**（資料在 `tests/support/typo_corpus.py`，測試在 `tests/flow/test_typo.py`）：每句跑完整 `process_voice_command`，LLM 一被呼叫就失敗（矯正必須在正規化＋Fast Path 完成）。新增誤聽詞或常用功能說法時順手加案例；類別代號給 `scripts/acceptance.py` 算矯正率。
 - **真實 App 驗收**（`tests/real/test_app_real.py`，marker `app`，預設不跑）：只操作測試自己開的視窗並在收尾關掉；Terminal 要等 shell 閒置才關（否則跳「終止程序」對話框卡住）；測試期間以 `caffeinate` 防止螢幕自動鎖定（底層操作不算使用者活動）。改 `front_action`、`app_shortcuts`、`native.py`、站內搜尋或前景讀取時要跑。離線測試的 `native_calls` fixture 會攔下並記錄所有底層操作。

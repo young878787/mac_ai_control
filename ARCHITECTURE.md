@@ -12,6 +12,8 @@ Apple Silicon Mac 上的語音助手：麥克風 → 系統語音辨識（macos-
 | 本機找不到→轉交 LLM | 約 1.1 秒 | 靠 prefix cache；沒命中快取會變 3 秒 |
 | Slow Path（LLM 規劃工具呼叫） | 離線預算 `PLAN_TIMEOUT_S`＝10 秒；live 測試要求單次規劃 < 5 秒 | 本機 4bit 小模型，會出錯 |
 | Slow Path 雲端 | `CLOUD_TIMEOUT_S`＝8 秒；2026-11-16 實測 130 句 p50 0.93 s、p95 2.1 s | 同一步失敗退回本機；熔斷 30 秒 |
+| 點歌（`play_media`，沒快取） | 門檻 p50 ≤ 1.0 s、p95 ≤ 2.0 s | 是**驗收門檻**，2026-11-21 實測（R1，20 首、每句一個程序）p50 946 ms、p95 1175 ms；InnerTube 兩邊並行共用截止時間 `YT_TIMEOUT_S`＝2 秒，最差（兩邊都逾時）約 2 秒會擋住下一句，[0019](docs/decisions/0019-music-play.md) |
+| 點歌（有快取） | 門檻 p50 ≤ 0.3 s | 不連網；門檻實測待計畫 R2（找分頁改網址單項實測 p50 197 ms） |
 | 端點偵測（說完到開始處理） | 完整指令靜音 0.35 秒就收句 | [0003](docs/decisions/0003-client-endpoint-detection.md) |
 
 ## 行程
@@ -29,25 +31,29 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | 路徑 | 職責 |
 |---|---|
 | `main.py` | 入口；起 LLM／STT／UI 服務、暖機、收音迴圈；`--text` 繞過服務直接跑 |
-| `mac_ai/config.py` | **所有**路徑、埠號、逾時、端點偵測、雲端參數（單一來源，數值旁有實測理由註解）；`env_value()` 讀 `.env`（雲端端點／模型／金鑰） |
+| `mac_ai/config.py` | **所有**路徑、埠號、逾時、端點偵測、雲端參數、點歌參數（單一來源，數值旁有實測理由註解）；`env_value()` 讀 `.env`（雲端端點／模型／金鑰） |
 | `mac_ai/services.py` | 子程序管理：沿用已健康的服務、`/health` 就緒檢查、SIGINT→SIGTERM→SIGKILL 收尾 |
 | `mac_ai/wake.py` | `WakeGate`：喚醒詞（預設關閉；`--ui` 開啟）＋ 60 秒會話，每句重新計時 |
 | `mac_ai/router/normalize.py` | NFKC、簡轉繁、誤聽詞、中文數字（只在數值語境）、疊詞 |
 | `mac_ai/router/fast_path.py` | `canonicalize_clause`、安全守門、各類 regex 規則 `_r_*`；回傳尚未執行的 `Match` |
 | `mac_ai/router/domain.py` | 第一層：範圍判斷（App／專案／資料夾／檔案／網頁），**純函式、無副作用** |
-| `mac_ai/router/local_actions.py` | 第二層：只讀 `Intent.slots` 執行（開資料夾、`mdfind`、選擇清單）；`ACTION_TABLE` 是 (domain, verb)→工具對應 |
+| `mac_ai/router/local_actions.py` | 第二層：只讀 `Intent.slots` 執行（開資料夾、`mdfind`、選擇清單）；`ACTION_TABLE` 是 (domain, verb)→工具對應。也放點歌工具（`play_media`、`music_replace`、`music_feedback`、`music_top`）與前景不是媒體 App 時的背景音樂控制（`_background_control`）；`front_action` 成功後寫控制事件（`_record_control`） |
 | `mac_ai/router/catalog.py` | 詞庫 App＋Spotlight 掃出的已安裝 App（快取，每指令開始檢查是否逾 60 秒） |
 | `mac_ai/router/context.py` | 前景視窗上下文：`lsappinfo` 讀最前面的 App（含 pid）、`osascript` 讀瀏覽器 host、`sites`／`app_shortcuts` 查表。**只在執行階段呼叫** |
-| `mac_ai/router/native.py` | 常用功能的底層執行：ctypes 直接呼叫輔助使用 API（視窗操作、按選單項目、按視窗裡的按鈕）與 CGEvent 送鍵；不經 osascript、不需額外套件、不拋例外 |
+| `mac_ai/router/native.py` | 常用功能的底層執行：ctypes 直接呼叫輔助使用 API（視窗操作、按選單項目、按視窗裡的按鈕）與 CGEvent 送鍵（含媒體鍵，只允許 play／next／previous）；不經 osascript、不需額外套件、不拋例外 |
 | `mac_ai/router/choices.py` | 多筆搜尋結果清單（`STORE`，跨語句、60 秒 TTL；UI 只拿到 `~` 縮寫路徑，完整路徑不出本程序） |
 | `mac_ai/router/slow_path.py` | LLM 規劃（雲端優先 `_execute_cloud`、本機 `plan_slow_path`）、共用驗證 `validate_calls`、對象守門 `target_error`、`_local_reroute`、轉交、`warmup_llm` |
 | `mac_ai/router/cloud_client.py` | 雲端 `/v1/chat/completions`（`urllib`）、`.env` 設定判斷、錯誤分類、獨立熔斷、XML 提示詞 `CLOUD_SYSTEM_PROMPT`、雲端工具 `CLOUD_TOOLS`；**金鑰只在這裡讀** |
+| `mac_ai/router/youtube_client.py` | 點歌搜尋：InnerTube 一般搜尋＋YouTube Music 搜尋並行（`urllib`、共用截止時間）、YouTube Music 接受規則與挑 MV（只說歌手播歌手卡片第一首）、`clientVersion` 讀取、`valid_video_id`；**只做網路與解析，不碰資料庫與子程序；不用金鑰**（[0019](docs/decisions/0019-music-play.md)） |
+| `mac_ai/router/music_prefs.py` | 點歌偏好（執行階段、`command_worker` 執行緒）：事件、計分、常聽的歌、`terms` 詞表與拼音矯正（macOS ICU，ctypes）、快取 `queries`、定時整理的排程邏輯 |
+| `mac_ai/db/` | 偏好資料庫 `data/music.sqlite3`（不入版控、永久保存）：`ensure_schema`（備份、在複本上升級、損毀改名）、`MusicDb`（背景準備、每執行緒一條連線）、`migrations/`（Alembic，只在 `ensure_schema` 內載入，日後可移除）、`rebuild.py`（從 `events` 重算 `terms`） |
 | `mac_ai/router/hant.py` | 簡轉繁（macOS ICU，ctypes）：只換 Big5 編不出來的字與一份精選的「只有簡體才這樣寫」清單，繁體字不動（整句轉換會把「退回路徑」改成「退迴路徑」）；雲端回覆經 `cloud_client.clean_text` 套用，**熱路徑（`normalize`、`completeness`）不得呼叫** |
 | `mac_ai/router/memory.py` | 對話記憶 `STORE`（最近 5 輪、60 秒；原句、工具與成功與否、回覆摘要），給雲端 user 訊息與「它」的對象守門 |
 | `mac_ai/router/tools.py` | `TOOLS_SCHEMA`（LLM 看得到的工具）與 `validate_tool_call`（唯一信任邊界） |
-| `mac_ai/router/actions.py` | 實際執行器（`open -a`、`osascript`、`screencapture`…）、`ExecContext`、`read_screen`、`chat_reply`、`run_tool` |
+| `mac_ai/router/actions.py` | 實際執行器（`open -a`、`osascript`、`screencapture`…）、`ExecContext`、`read_screen`、`chat_reply`、`run_tool`；點歌開分頁（`open_music_video`：一支 osascript 找含 `list=RD` 的 YouTube 分頁並改網址，沒有才 `open -a` 開新分頁） |
 | `mac_ai/router/llm_client.py` | `mlx_vlm.server` OpenAI 相容呼叫；連不上即熔斷 30 秒 |
 | `desktop/` | 桌面角色（Electron）。依行程與層次分目錄，規則與依賴方向見下方「桌面前端分層」 |
+| `mac_ai/assistant.py` | 收音迴圈、`CommandRouter`、`command_worker`；`QueuedJob`（內部工作，不發事件、不寫指令紀錄）與 `MusicMaintenance`（點歌定時整理的計時器，只負責排進指令佇列） |
 | `mac_ai/stt/` | `mic`、`client`（WS＋重連）、`vad`（Silero ONNX）、`endpoint`（純邏輯，時間由外部注入）、`completeness`（句子完整度）、`latency_log` |
 | `vocab/lexicon.json` | **詞庫單一來源**：App、別名、誤聽、動詞、資料夾、檔案類型、喚醒詞 |
 | `archive/` | 舊版單檔實作，**唯讀參考，不要改、不要 import** |

@@ -28,7 +28,7 @@
    - 守門前只放行窄的「否定即指令」（`_r_negated_command`：不要靜音了、螢幕不要那麼亮、不想用深色模式）。
    - **G1**（`slow_path.intent_guard`）：交給 Slow Path 後，任一子句是否定／敘述 → **不呼叫 LLM**（規劃與 chat 都不送），回固定文字 `NO_ACTION_REPLY`；每個子句都是資訊提問（什麼／怎麼…）→ 照常規劃但丟掉 `STATE_TOOLS`。只有「嗎」的是非問句／客氣請求、糾正句開頭的「沒有／不是」不擋。實測依據：4bit 模型幾乎不理會否定（「別讓電腦睡眠」→ 睡眠），chat 回覆會謊稱已執行，改提示詞無效（[0007](../decisions/0007-no-model-for-negation.md)）。
 2. **`validate_tool_call` 是唯一的信任邊界**：未知工具／參數、缺必填、型別錯、enum 不符一律拒絕；App 名稱必須在詞庫或已安裝清單；專案只能從白名單解析；editor 必須是編輯器類 App。**LLM 編出來的名稱不能直接拿去 `open -a`。**
-3. **LLM 看不到的工具要保持看不到**：`browser_tab`、`open_folder`、`find_file`、`pick_choice`、`context_search`、`front_action` 刻意不在 `TOOLS_SCHEMA`（加了會讓 4bit 模型誤判，例如「開深色模式」→ `toggle_dark_mode`）。本機工具登錄在 `actions.LOCAL_TOOLS`。例外只有雲端（「準」第 19 條）。
+3. **LLM 看不到的工具要保持看不到**：`browser_tab`、`open_folder`、`find_file`、`pick_choice`、`context_search`、`front_action`、`play_media`（及 `music_replace`、`music_feedback`、`music_top`）刻意不在 `TOOLS_SCHEMA`（加了會讓 4bit 模型誤判，例如「開深色模式」→ `toggle_dark_mode`）。本機工具登錄在 `actions.LOCAL_TOOLS`。例外只有雲端（「準」第 19 條）。
 4. **搜尋意圖守門**（`_search_intent_error`）：句子沒有「搜／查／找／天氣…」等字，LLM 的 `web_search_or_open_url` 會被拒絕（防小模型對糾正句亂開搜尋頁）。
 5. **範圍判斷順序固定**（`domain.resolve_intent`）：網頁範圍詞 → 專案 → 資料夾 → App → 即時資訊 → 檔案 → 預設。**本機優先**。「搜尋／查」沒帶範圍詞維持網頁搜尋；「找」預設先搜本機檔案、0 筆且無本機證據才轉交 LLM。判斷結果寫入 `step["intent"]`，錯判時從這裡追查。
 6. **找檔案的安全規則不可放寬**：預設只「在 Finder 中顯示」，使用者明說「打開」才開檔；`DANGEROUS_EXT` 與無副檔名的可執行檔一律只顯示（開檔等於執行）；搜尋只限家目錄、排除 `~/Library`、隱藏資料夾、`node_modules`、`.app` 內部、符號連結逃出家目錄的結果。
@@ -44,7 +44,7 @@
 16. **對象的優先順序固定**：句子明說的 → 同句剛開的（`last_browser`／`last_editor`）→ 前景視窗 → 預設。前景讀不到（含桌面角色自己在前景）就退回預設，不猜。
 17. **常用功能只走 `front_action`，以底層直接執行為主**（`native.py`，對前景 App 的 pid 下指令，不經鍵盤與輸入法）：
    - 詞庫 `app_shortcuts` 的每個綁定擇一：`window`（關閉鈕／最小化／全螢幕屬性）、`path`（依選單標題，各語言名稱並列）、`char`＋`mods`（依快捷鍵找 App 自己的選單項目，和介面語言無關）、`button`（視窗裡說明文字符合的按鈕，例如 YouTube 播放器）、`script`（App 自己的指令，例如 Music 的 playpause）。
-   - 找不到選單項目才送按鍵（`code`），送之前重讀前景確認 pid 沒變；**送按鍵只允許 ⌘ 組合鍵與翻頁鍵**（實測注音輸入法會吃掉 ⌃` 與單一字母鍵）。
+   - 找不到選單項目才送按鍵（`code`），送之前重讀前景確認 pid 沒變；**送按鍵只允許 ⌘ 組合鍵與翻頁鍵**（實測注音輸入法會吃掉 ⌃` 與單一字母鍵）；唯一的例外是系統媒體鍵（`native.post_media_key`，只允許 play／next／previous），只在播放控制鏈最後一步、而且 Safari 有 YouTube 影片分頁時才送（[0019](../decisions/0019-music-play.md)）。
    - 功能不支援目前的 App 時什麼都不做（有 fallback 才執行原動作）。不做任意打字、不在終端機輸入指令；結束程式、刪除類不放進表。`step["context"]` 只記 App、host 與做法（`method`）。
 18. **「它／剛剛那個」的對象守門**（`slow_path.target_error`，本機與雲端共用）：句子有代名詞而模型決定了 App／專案時，對象必須出現在本句，或最近幾輪（`memory.STORE`）／同句前面步驟成功的操作裡，否則拒絕。**`剛剛`開頭的說法（「把剛剛開的關掉」）會被 G1 當成敘述擋下，這是既有的安全決策，不要為了代名詞放寬 G1。**
 19. **雲端也不能繞過任何守門**：雲端的 `tool_calls` 走 `validate_calls`（`validate_tool_call` → 對象守門 → 搜尋意圖守門 → 本機優先導向）；`LOCAL_TOOLS` 對雲端同樣看不到，**唯二例外**（2026-11-17 使用者同意）是 `cloud_client.CLOUD_ONLY_TOOLS`：`front_action(id)`（id 限詞庫有說法的常用功能、不收 `fallback`；句子有「關掉／關閉／退出…」時不得是 `minimize`〔`_CLOSE_RE`〕，「收起來」最小化可以）與 `site_search(query)`（過搜尋意圖守門與本機導向後換成 `context_search` 執行），驗證用 `CLOUD_SCHEMAS`、本機規劃一律拒絕；`info_question` 一樣丟掉 `STATE_TOOLS`（含 `front_action`）。
@@ -60,6 +60,7 @@
 | 調雲端提示詞 | 只動 `cloud_client.CLOUD_SYSTEM_PROMPT`；用 `pytest -m cloud -s tests/real/test_cloud_live.py -k planning` 比改動前後的各類正確率與延遲，數字附在 commit 或計劃書 |
 | 新增本機（不給 LLM）工具 | 寫在 `local_actions.py`，登錄 `LOCAL_TOOLS`，在 `ACTION_TABLE` 加對應；不要放進 `TOOLS_SCHEMA` |
 | 新增站內搜尋網站／常用功能快捷鍵／可開啟的網站 | 只改 `vocab/lexicon.json` 的 `sites`（`search_url` 站內搜尋、`home` 首頁、`aliases` 別名）／`app_shortcuts`（說法要整句完全相同才命中）；`home` 有填的網站，「打開／上／去＋名稱」會由 Fast Path（`_r_site`）開首頁，雲端／本機規劃的開網站呼叫也靠它放行（`slow_path.site_open_home`）；跑 `tests/flow/test_route_context.py`、`tests/unit/test_context.py` 與 `tests/unit/test_completeness.py`，確認新說法不是其他指令的前半句 |
+| 改點歌規則／接受規則 | 規則在 `fast_path._r_music`、詞庫 `music`（比對原句、純比對、不碰 IO；守門不放寬，先列誤觸發案例並加進 `tests/flow/test_route_music.py` 的反例）；改了要連動跑 `test_completeness.py`、`test_endpoint.py`、`test_route_music.py`。搜尋的接受規則與挑 MV 在 `youtube_client.accept_music`／`pick`：先用 `tests/fixtures/youtube/` 的真實回應或衍生案例補測試（已知風險：YouTube Music 回中文歌手名時，英文說法如「Jay Chou 晴天」對不到歌手而被拒、改播一般搜尋第一筆，見計畫書 §9）；動 `youtube_client` 不得碰資料庫與子程序，videoId 一律過 `valid_video_id`。偏好資料庫改 schema 要新增 Alembic revision（結尾 `PRAGMA user_version`），不改舊的 |
 | 調整範圍判斷 | 只動 `domain.py`（純函式）；要有 Intent 層的測試（`tests/unit/test_domain.py`、`tests/flow/test_route_find.py`） |
 | 調端點偵測參數 | 動 `config.py` 的 `EP_*`／`VAD_*`；用 `scripts/stt_bench.py` A/B 比對再決定 |
 | 改 UI 協定 | `ui_bus.py`／`config.py` 與 `desktop/shared/contract.js`、`domain/`、`main/` 一起改（`tests/unit/test_ui_contract.py` 會比對合約、`desktop/test/ipc-channels.test.js` 比對 IPC 頻道），兩邊測試都要跑；跑 `python scripts/ui_demo.py --chat-test` |
@@ -70,7 +71,7 @@
 ## 不要碰／注意
 
 - `macos-stt/` 是**獨立 git repo**（在 `.gitignore`），自有 venv、不在本 repo 提交範圍；語音授權必須在它的 `.app` bundle 內，只能經 `start.py serve` 啟動。
-- 不入版控、不要提交：`AI_models/`、`Rushia_hd/`（Live2D 模型，個人使用）、`desktop/vendor/`（Live2D Cubism Core 專有授權）、`desktop/node_modules/`、`logs/`、`bench/synth/`、`*.wav`、`.env*`。不要修改 `.env`、production 設定或外部服務。
+- 不入版控、不要提交：`AI_models/`、`Rushia_hd/`（Live2D 模型，個人使用）、`desktop/vendor/`（Live2D Cubism Core 專有授權）、`desktop/node_modules/`、`logs/`、`data/`、`bench/synth/`、`*.wav`、`.env*`。不要修改 `.env`、production 設定或外部服務。
 - `mac_ai/router/catalog.py` 的 `_scan_installed` 在函式內才 import `actions`（避免 `actions → llm_client → tools → catalog` 的循環匯入），不要搬到檔案頂層。
 - `ENDPOINT_MODE="client"`（預設）需要 `AI_models/silero_vad.onnx`；沒有這個檔案時才改成 `"server"`。
 - `WAKE_WORD_ENABLED` 預設 `False`；`--ui` 會強制啟用喚醒詞。
