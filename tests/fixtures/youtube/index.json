@@ -1,0 +1,159 @@
+{
+ "qingtian": {
+  "query": "晴天",
+  "web": true,
+  "ytm": true
+ },
+ "jay_qingtian": {
+  "query": "周杰倫的晴天",
+  "web": true,
+  "ytm": true
+ },
+ "qingtian_jay": {
+  "query": "晴天 周杰倫",
+  "web": true,
+  "ytm": true
+ },
+ "daoxiang": {
+  "query": "稻香",
+  "web": true,
+  "ytm": true
+ },
+ "shape_of_you": {
+  "query": "Shape of You",
+  "web": true,
+  "ytm": true
+ },
+ "gaobai": {
+  "query": "告白氣球",
+  "web": true,
+  "ytm": true
+ },
+ "typo_daoxiang": {
+  "query": "到香",
+  "web": true,
+  "ytm": true
+ },
+ "typo_gaobai": {
+  "query": "告白汽球",
+  "web": true,
+  "ytm": true
+ },
+ "typo_jay_qingtian": {
+  "query": "周杰論的晴天",
+  "web": true,
+  "ytm": true
+ },
+ "jay_only": {
+  "query": "周杰倫",
+  "web": true,
+  "ytm": true
+ },
+ "mayday_qingtian": {
+  "query": "五月天的晴天",
+  "web": true,
+  "ytm": true
+ },
+ "rainy": {
+  "query": "適合下雨天",
+  "web": true,
+  "ytm": true
+ },
+ "study": {
+  "query": "讀書用的輕音樂",
+  "web": true,
+  "ytm": true
+ },
+ "sleep": {
+  "query": "睡眠音樂",
+  "web": true,
+  "ytm": true
+ },
+ "buxiangzhangda": {
+  "query": "不想長大 S.H.E",
+  "ytm": true
+ },
+ "ribuluo": {
+  "query": "日不落 蔡依林",
+  "ytm": true
+ },
+ "shinian": {
+  "query": "十年 陳奕迅",
+  "web": true,
+  "ytm": true
+ },
+ "jiangnan": {
+  "query": "江南 林俊傑",
+  "ytm": true
+ },
+ "tinghai": {
+  "query": "聽海 張惠妹",
+  "ytm": true
+ },
+ "qilixiang": {
+  "query": "七里香",
+  "ytm": true
+ },
+ "yequ": {
+  "query": "夜曲",
+  "ytm": true
+ },
+ "yellow": {
+  "query": "Coldplay Yellow",
+  "ytm": true
+ },
+ "despacito": {
+  "query": "Despacito",
+  "web": true,
+  "ytm": true
+ },
+ "uptown_funk": {
+  "query": "Uptown Funk",
+  "ytm": true
+ },
+ "see_you_again": {
+  "query": "See You Again",
+  "ytm": true
+ },
+ "bohemian": {
+  "query": "Bohemian Rhapsody",
+  "ytm": true
+ },
+ "country_roads": {
+  "query": "Take Me Home Country Roads",
+  "ytm": true
+ },
+ "sweet_caroline": {
+  "query": "Sweet Caroline",
+  "ytm": true
+ },
+ "hotel_california": {
+  "query": "Hotel California",
+  "ytm": true
+ },
+ "let_it_be": {
+  "query": "Let It Be",
+  "ytm": true
+ },
+ "yesterday": {
+  "query": "Yesterday",
+  "ytm": true
+ },
+ "moon": {
+  "query": "月亮代表我的心",
+  "web": true,
+  "ytm": true
+ },
+ "siledouyao": {
+  "query": "死了都要愛",
+  "ytm": true
+ },
+ "eclipse": {
+  "query": "Total Eclipse of the Heart",
+  "ytm": true
+ },
+ "rolling_karaoke": {
+  "query": "Rolling in the Deep karaoke",
+  "ytm": true
+ }
+}
