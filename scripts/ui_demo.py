@@ -117,6 +117,9 @@ def check_capture(capture_dir: Path) -> bool:
     ok = True
     for name, want in ATTENTION.items():
         got = json.loads((capture_dir / f"{name}.json").read_text())["state"].get("attention")
+        if got is None:  # 程序層關閉（app.js 的 PROCEDURAL = false）沒有導演，略過情境比對
+            print(f"SKIP  {name}：沒有情境（程序層關閉）")
+            continue
         ok &= got == want
         print(f"{'PASS' if got == want else 'FAIL'}  {name}：情境 {got}" + ("" if got == want else f"（應為 {want}）"))
     for name, (motion, expression, gesture, out) in EXPECTED.items():
