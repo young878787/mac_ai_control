@@ -6,8 +6,9 @@
 
 ```bash
 source .venv/bin/activate                 # Python 3.12
-pytest                                    # 離線測試，預設，約 38 秒
-pytest -m unit                            # 只跑單元層，約 1.4 秒（改程式先跑這個；另有 -m flow／-m runtime）
+pytest                                    # 離線測試，預設，約 15 秒（commit 前跑，平常照下面「分層節奏」只跑相關的）
+pytest -m "unit or flow"                  # 單元＋整條路由，約 3 秒（改完一個功能跑這個）
+pytest -m unit                            # 只跑單元層，約 1.5 秒（另有 -m flow 約 2 秒／-m runtime 約 13 秒）
 pytest -m live -s                         # 需 mlx_vlm.server 已載入模型（約 4 分鐘）
 pytest -m cloud -s                        # 連真的雲端（需 .env 金鑰、約 200 次請求會產生費用，約 3 分鐘）
 pytest -m app -v                          # 真實 App 驗收（Safari／Finder／Terminal／VS Code，佔用螢幕約 2 分鐘）
@@ -21,7 +22,50 @@ python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥�
 python scripts/ui_motion.py [--skip-idle|--skip-listen]   # 桌面角色動作軌跡指標（擬人化 R2 閒置 10 分鐘／R3 聆聽 10 輪；量測期間不要動滑鼠）
 ```
 
-基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 前端分層整理 S0～S4 後實測 142 pass；2026-11-21 擬人化 P1～P4 後 266 pass，其中 `motion-sim.test.js` 是 T2／T3 模擬指標；pytest 1730 通過、5 skipped）。新增行為要新增測試。
+基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 前端分層整理 S0～S4 後實測 142 pass；2026-11-21 擬人化 P1～P4 後 266 pass，其中 `motion-sim.test.js` 是 T2／T3 模擬指標；pytest 1730 通過、5 skipped；同日去掉 runtime 層的空等〔關閉握手逾時、0.5 s 輪詢〕後，離線全部 37.5 s → 14.5 s，runtime 35.3 s → 12.6 s，項數不變）。新增行為要新增測試。
+
+## 分層節奏：改什麼跑什麼
+
+不要每改一行就跑完整測試。由小到大，前一層過了才往下：
+
+| 層 | 什麼時候 | 跑什麼 | 約耗時 |
+|---|---|---|---|
+| L0 | 每次改動 | 下表「L0」那一欄（只跑相關檔案） | 1～5 s（runtime 檔案較慢） |
+| L1 | 一個功能改完 | `pytest -m "unit or flow"`；改到 `desktop/` 加 `cd desktop && node --test`，改到 `renderer/` 再加 `npm run typecheck` | 3～6 s |
+| L2 | commit 前 | `pytest`（離線全部，0 failed）；改到 `desktop/` 加 `node --test && npm run typecheck` | 約 20 s |
+| L3 | 只在下表「L3」有寫的時候 | live／cloud／app／`ui_demo`／`ui_motion`／`ui_perf` | 分鐘級 |
+
+Fast Path 與正規化的改動，flow 層的整條路由都會跑到，所以 L1 一定要跑；L1 只要 3 秒，不要省。
+
+| 改到 | L0（`pytest` 加這些路徑） | L3 |
+|---|---|---|
+| `router/fast_path.py`、`normalize.py`、`lexicon.py`、`vocab/lexicon.json` | `tests/unit/test_completeness.py tests/unit/test_endpoint.py tests/unit/test_domain.py tests/unit/test_normalize.py tests/unit/test_lexicon.py tests/flow/test_route_fast.py tests/flow/test_typo.py tests/flow/test_route_corpus.py` | — |
+| `router/slow_path.py`、`llm_client.py`、`tools.py`（含 prompt） | `tests/unit/test_guard.py tests/unit/test_tools.py tests/unit/test_llm_client.py tests/flow/test_route_slow.py tests/flow/test_route_guard.py tests/flow/test_route_multistep.py` | `pytest -m live -s` |
+| `router/cloud_client.py`、`memory.py`、`hant.py` | `tests/unit/test_cloud_client.py tests/flow/test_route_cloud.py` | 動到提示詞或雲端工具才跑 `pytest -m cloud -s`（會產生費用） |
+| `router/domain.py`、`catalog.py`、`local_actions.py`、`choices.py`（找檔案） | `tests/unit/test_domain.py tests/unit/test_find.py tests/unit/test_choice.py tests/flow/test_route_find.py` | — |
+| `router/context.py`、`native.py`、`actions.py`（前景、常用功能、分頁、看畫面） | `tests/unit/test_context.py tests/unit/test_native.py tests/flow/test_route_context.py tests/flow/test_route_tabs.py tests/flow/test_route_screen.py tests/runtime/test_applescript.py` | `pytest -m app -v` |
+| `router/pipeline.py`（主動展開） | `tests/flow/test_route_expand.py tests/unit/test_ui_contract.py` | — |
+| `stt/completeness.py`、`stt/endpoint.py`、`wake.py` | `tests/unit/test_completeness.py tests/unit/test_endpoint.py tests/unit/test_wake.py` | 調參數用 `scripts/stt_bench.py` A/B |
+| `stt/client.py`、`vad.py`、`mic.py` | `tests/runtime/test_stt_client.py tests/runtime/test_vad.py` | 語音實機（人工） |
+| `assistant.py` | `tests/runtime/test_assistant.py tests/runtime/test_runlog.py tests/runtime/test_ui_bus.py` | — |
+| `ui_bus.py`、UI 協定 | `tests/unit/test_ui_contract.py tests/runtime/test_ui_bus.py`＋`node --test test/ipc-channels.test.js test/protocol.test.js` | `ui_demo.py --chat-test` |
+| `services.py`、`main.py` | `tests/runtime/test_services.py tests/runtime/test_main.py` | — |
+| `scripts/acceptance.py` | `tests/unit/test_acceptance.py` | — |
+| `desktop/` 任一檔 | `cd desktop && node --test test/<同名或相關>.test.js` | 見下一節 |
+
+## 視覺驗收：以量化為準
+
+桌面角色的畫面與演出，**通過與否只看腳本的 PASS／FAIL 與結束碼**，不靠看截圖判定（ADR [0018](../decisions/0018-visual-checks-quantitative.md)）：
+
+| 改到 | 平常（L1） | 只在這些情況跑實機（L3） |
+|---|---|---|
+| 演出常數、注意力導演（`renderer/animation/`、`domain/attention.js`） | `node --test`（`motion-sim.test.js` 用 `dev/motion-metrics.js` 同一份指標模擬 T2／T3） | `python scripts/ui_demo.py --capture <dir>`（逐張比對動作、表情、手勢、情境）；改到幀迴圈、更新頻率或時序時才跑 `python scripts/ui_motion.py`（閒置 10 分鐘＋聆聽 10 輪，標準不縮短） |
+| 模型、rig profile、語意名稱 | `node --test`（`rig.test.js`） | `ui_demo.py --capture <dir>` |
+| 渲染迴圈、幀率、緩衝 | `node --test`（`frame-rate`／`render-buffers`／`physics-clock`） | `python scripts/ui_perf.py`（CPU、RSS、幀間隔） |
+| 聊天室、輸入框、選擇清單 | `node --test`（`chat`／`ipc-channels`） | `ui_demo.py --chat-test`／`--focus-test N`／`--choices-test`／`--interact-test` |
+
+- `--capture` 產生的 PNG 只拿來除錯（FAIL 時看哪裡不對），不作為通過條件。
+- 量化指標只能證明「符合定義、沒有退步」，不能證明「好看、自然」。**人眼仍是最準的判準**：演出、表情、動作手感有明顯改動時，回報裡要提醒使用者親自看一次，但這不是通過條件，也不要聲稱「看起來自然」。
 
 ## 測試規範
 
@@ -30,6 +74,7 @@ python scripts/ui_motion.py [--skip-idle|--skip-listen]   # 桌面角色動作�
 - 離線測試是預設且必須通過；`tests/conftest.py` 已經：重設 LLM 熔斷、**讓 `urllib.request.urlopen` 預設拋錯**（不會誤打本機 server）、把已安裝 App 清單固定為空、把 `normalize`／`latency`／`commands` 三種 log 導到暫存目錄（測試不得寫進專案的 `logs/`）。
 - 需要的假環境用現成 fixture：`sh`（記錄 `subprocess.run`）、`find_env`（假家目錄＋假 `mdfind`）、`installed_apps`、`projects`、`front`（假的前景 App 與網站；預設是「讀不到」）。**測試不得依賴這台電腦裝了哪些 App，也不得真的執行 `open`／`osascript`／`mdfind`。**
 - 時間相關邏輯（喚醒會話、選擇清單 TTL、端點偵測）用注入的時鐘測，不要 `sleep`。
+- runtime 測試不要讓收尾空等：產品端等待 stop 的輪詢間隔做成可注入（`SttClient.RECV_POLL_S`、`assistant.WORKER_POLL_S`，由 `tests/runtime/conftest.py` 調成 0.02 s）；假 server 收尾用短輪詢；不讀資料的 WebSocket 客戶端要設短的 `close_timeout`。
 - 修 bug 先寫能重現的測試；重構要確認前後行為一致。
 - 路由、LLM 工具或 prompt 的改動要另外跑 `pytest -m live`（需 server）；不能跑就明說「live 未驗證」。
 - **錯字語料**（資料在 `tests/support/typo_corpus.py`，測試在 `tests/flow/test_typo.py`）：每句跑完整 `process_voice_command`，LLM 一被呼叫就失敗（矯正必須在正規化＋Fast Path 完成）。新增誤聽詞或常用功能說法時順手加案例；類別代號給 `scripts/acceptance.py` 算矯正率。

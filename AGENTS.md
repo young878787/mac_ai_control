@@ -24,13 +24,14 @@ Apple Silicon Mac 上的語音助手：麥克風 → macos-stt → 路由 → �
 
 ```bash
 source .venv/bin/activate         # Python 3.12
-pytest -m unit                    # 約 1.4 秒，改程式先跑
-pytest                            # 離線全部，必須 0 failed
+pytest <相關測試檔>                # L0：改什麼跑什麼，對照表見 testing.md「分層節奏」
+pytest -m "unit or flow"          # L1：約 3 秒，一個功能改完跑
+pytest                            # L2：離線全部約 15 秒，commit 前跑，必須 0 failed
 cd desktop && node --test && npm run typecheck
 python main.py --text 打開小算盤   # 不起服務直接跑一句
 ```
 
-live／cloud／app 實測與驗收腳本見 `docs/guides/testing.md`。
+live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `docs/guides/testing.md`。視覺驗收以腳本的 PASS／FAIL 為準，人眼最準但不是通過條件（0018）。
 
 ## 紅線（細節與理由見 coding-style.md 與 ADR）
 
