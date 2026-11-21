@@ -1,4 +1,5 @@
 // 聊天室畫面：依主程序送來的紀錄顯示對話、收發指令。文字一律用 textContent，不解析成 HTML。
+/** @type {(id: string) => any} */
 const $ = (id) => document.getElementById(id);
 const log = $('log'), live = $('live'), box = $('box'), form = $('form'), send = $('send'), empty = $('empty');
 const FAIL = new Set(['exec_failed', 'llm_unavailable', 'llm_error']);

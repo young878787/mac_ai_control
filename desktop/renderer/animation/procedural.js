@@ -42,12 +42,10 @@ export function motionBlinks(json, id = 'ParamEyeLOpen') {
 }
 
 /**
- * @param {{
- *   index: Record<string, number>,        rig.params 鍵 → 參數索引（-1＝模型沒有）
- *   defaults: Float32Array, minimums: Float32Array, maximums: Float32Array,
- *   seed: number,                         同一個 seed 逐幀相同；ambient、face 各自由它推導獨立的亂數流
- *   blinkMotions: Set<string>,            自己會眨眼的語意動作名（程序眨眼在這些動作播放時暫停）
- * }} options
+ * index：rig.params 鍵 → 參數索引（-1＝模型沒有）；seed：同一個 seed 逐幀相同，ambient、face 各自由它推導獨立的亂數流；
+ * blinkMotions：自己會眨眼的語意動作名（程序眨眼在這些動作播放時暫停）。
+ * @param {{ index: Record<string, number>, defaults: Float32Array, minimums: Float32Array, maximums: Float32Array,
+ *           seed: number, blinkMotions: Set<string> }} options
  */
 export function createProcedural({ index, defaults, minimums, maximums, seed, blinkMotions }) {
   const slot = (key) => (Number.isInteger(index[key]) && index[key] >= 0 ? index[key] : -1);
@@ -118,7 +116,7 @@ export function createProcedural({ index, defaults, minimums, maximums, seed, bl
       }
 
       // 眼皮：潛伏 1；Idle 不用動作曲線；反應動作乘上程序眨眼（動作自己會眨眼時 blink 已是 1）
-      for (const [key, event] of [['eyeOpen', eyes.eyeL], ['eyeROpen', eyes.eyeR]]) {
+      for (const [key, event] of /** @type {[string, number][]} */ ([['eyeOpen', eyes.eyeL], ['eyeROpen', eyes.eyeR]])) {
         const i = slot(key);
         if (i < 0) continue;
         if (!out) put(values, key, 1);

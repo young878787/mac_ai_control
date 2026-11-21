@@ -1,5 +1,5 @@
 // 動作軌跡指標（量測用）：輸入 renderer 的 __ui.motionTrace('stop') 輸出，純函式，不碰 DOM／Electron。
-// 閒置指標（B3）與聆聽指標（D6）的定義、門檻見 docs/桌面角色擬人化（注視與聆聽）：實作計畫.md §7.1。
+// 閒置指標（B3）與聆聽指標（D6）的定義、門檻見 docs/plans/completed/2026-11-20-humanize.md §7.1。
 // 命令列（給 scripts/ui_motion.py 用）：node dev/motion-metrics.js idle|listen <trace.json> → 印出 { metrics, checks } 的 JSON
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';

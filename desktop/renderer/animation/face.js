@@ -15,6 +15,7 @@ export const BLINK_INTERVAL = Object.freeze({ idle: [1, 4], listening: [3, 6] })
 const DOUBLE_CHANCE = 0.075;           // 連眨兩下的機率（參考）
 const DOUBLE_COOLDOWN_MS = 8000;       // 連眨之後多久內不再連眨（參考）
 const MAX_FRAME_GAP_MS = 1000;         // 相鄰兩幀超過這個間隔（或時間倒退）視為中斷，重新排程（參考）
+/** @type {[number, number]} */
 const EVENT_GAP_MS = [3000, 7000];     // 眼皮、眉毛事件之間的間隔（參考）
 const BROW_FADE_MS = 400;              // 眉毛被禁止時，從當下權重淡出到 0 的時間（新增）
 const GAZE_BLINK_DISTANCE = 0.5;       // 視線轉移距離 ≥ 這個值才可能順便眨眼（手感）
@@ -251,6 +252,7 @@ export function createFaceIdle(random) {
 
   function createEvent(startedAtMs, context, eyesAllowed) {
     const pick = between(0, 1);
+    /** @type {FaceIdleKind} */
     let kind = pick < 0.12 ? 'still' : pick < 0.42 ? 'relax' : pick < 0.62 ? 'half'
       : pick < 0.7 ? 'deep' : pick < 0.82 ? 'asymmetric' : pick < 0.92 ? 'brow' : 'relax';
     if (kind === 'still') return null;

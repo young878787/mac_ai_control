@@ -1,4 +1,4 @@
-// 分層規則：每個檔案只能 import 規定的層，純邏輯層不能碰 DOM／Electron／Node。規則表見 docs/桌面前端分層整理：實作計畫.md §1。
+// 分層規則：每個檔案只能 import 規定的層，純邏輯層不能碰 DOM／Electron／Node。規則表見 docs/plans/completed/2026-11-20-desktop-layering.md §1。
 // 掃原始碼（去掉註解後）；checkFile 也拿故意違規的字串驗證，確保檢查本身有在檢查。
 import test from 'node:test';
 import assert from 'node:assert/strict';

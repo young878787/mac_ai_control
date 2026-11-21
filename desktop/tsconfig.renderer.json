@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2023",
+    "lib": [
+      "es2023",
+      "dom",
+      "dom.iterable"
+    ],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": [],
+    "skipLibCheck": true,
+    "strict": false
+  },
+  "include": [
+    "renderer",
+    "types"
+  ]
+}

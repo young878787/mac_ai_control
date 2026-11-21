@@ -1,5 +1,5 @@
 // 擬人化模擬指標測試：導演（attention）＋程序層（procedural：ambient、face、mixer）＋狀態機（controller），
-// 用假模型參數與虛擬時鐘照 renderer/role/app.js 的每幀順序跑，軌跡交給 dev/motion-metrics.js 判定（和真實量測 R2／R3 同一份定義）。
+// 用假模型參數與虛擬時鐘照 renderer/role/app.js 與 renderer/animation/animator.js 的每幀順序跑，軌跡交給 dev/motion-metrics.js 判定（和真實量測 R2／R3 同一份定義）。
 // T2：閒置十分鐘無機械感（B3）；T3：連續十輪聆聽（D6）。60 Hz 與 30 Hz（O5：Core 每 2 幀算一次）各跑一次。
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +31,7 @@ const index = Object.fromEntries(SPEC.map(([key], i) => [key, i]));
 const defaults = Float32Array.from(SPEC.map(s => s[1]));
 const minimums = Float32Array.from(SPEC.map(s => s[2]));
 const maximums = Float32Array.from(SPEC.map(s => s[3]));
-const r4 = (n) => Math.round(n * 1e4) / 1e4;   // app.js recordTrace 的取整
+const r4 = (n) => Math.round(n * 1e4) / 1e4;   // role/probe.js record 的取整
 
 /** 假 Idle 動作：只留 Breath（4 s 週期）與頭身、眼的 8 s 週期曲線；程序層必須把後者蓋掉，只有 Breath 保留 */
 function writeIdle(values, ms) {
@@ -44,7 +44,7 @@ function writeIdle(values, ms) {
 }
 
 /**
- * 照 app.js 的計算幀跑一段：重設預設值 → Idle → controller.tick／snapshot → attention.update → procedural.plan → procedural.apply → 記一列。
+ * 照 app.js／animator.js 的計算幀跑一段：重設預設值 → Idle → controller.tick／snapshot → attention.update → procedural.plan → procedural.apply → 記一列。
  * events：[{ at（相對記錄起點的 ms）, msg }]，到時間的 bus 訊息經 controller.handle 送入（heard 之後呼叫 attention.heard，同 app.js 順序）。
  */
 function simulate({ seed, hz, recordMs, events = [] }) {
