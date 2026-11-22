@@ -18,7 +18,7 @@
 
 ## 1. 要解決的問題
 
-- 目前用的是 `Rushia_hd/runtime-swing`（[config.py](../mac_ai/config.py) `UI_MODEL_PATH`）。新的完整骨架版 `runtime-fullrig03` 加了手臂、袖子、飾品的骨架與物理，但現在的程式沒有用到新的表情，也沒有讓新物理的擺動被完整看見：
+- 目前用的是 `Rushia_hd/runtime-swing`（[config.py](../../../mac_ai/config.py) `UI_MODEL_PATH`）。新的完整骨架版 `runtime-fullrig03` 加了手臂、袖子、飾品的骨架與物理，但現在的程式沒有用到新的表情，也沒有讓新物理的擺動被完整看見：
   - 閒置出場時是 12 fps，動作結束後袖子、披肩還在擺，畫面卻已經降成 12 fps。
 - 狀態機（[state.js](../desktop/state.js)）只用 6 個動作和 4 個表情（neutral／happy／pout／sleepy）。
 - 臉部表情和手臂姿勢目前共用同一個佇列（[app.js](../desktop/renderer/app.js) 的 `expressionQueue`），直接把手臂表情放進去，臉部表情會被淡出。
@@ -444,12 +444,12 @@ WindowServer 的部分：本機閒置時 WindowServer 自己就有 40.9%（其�
 
 | 階段 | 內容 | 檔案 |
 |---|---|---|
-| P0 量測 | 切換模型路徑，量物理變化量的時間序列，決定 `SETTLE_*`；用正式程式實測 60 fps 的基線（預期接近 L0 的 37.5%）。數字寫回 §6.2 與實作後新增的「§13 實作結果」 | [config.py](../mac_ai/config.py)、[README.md](../README.md)、暫存量測腳本（不入版控） |
+| P0 量測 | 切換模型路徑，量物理變化量的時間序列，決定 `SETTLE_*`；用正式程式實測 60 fps 的基線（預期接近 L0 的 37.5%）。數字寫回 §6.2 與實作後新增的「§13 實作結果」 | [config.py](../../../mac_ai/config.py)、[README.md](../../../README.md)、暫存量測腳本（不入版控） |
 | P1 狀態機 | §5 的對應、手勢層、Talk 的停止時機、連續失敗計數；`node --test` 案例 | [state.js](../desktop/state.js)、`desktop/test/state.test.js` |
 | P2 渲染 | `NEEDED_MOTIONS` 加入 Talk；`NEEDED_EXPRESSIONS` 加入 6 個新表情；`gestureQueue`；`gesture` effect；`__ui.activeGesture`、`PAGE_STATE` | [app.js](../desktop/renderer/app.js)、[main.js](../desktop/main.js) |
 | P3 幀率 | 物理變化量、收尾判斷、60 fps／停格兩種狀態；把「要不要畫下一幀」的判斷抽成純函式並寫測試 | [physics-clock.js](../desktop/renderer/physics-clock.js)、`desktop/renderer/frame-rate.js`（新增，純函式）、`desktop/test/frame-rate.test.js`、`desktop/test/physics-clock.test.js` |
 | P3.5 渲染優化 | §6.3 的 O1～O5，逐項 A/B，無效就撤回；O5 另外要使用者看過才保留 | `desktop/renderer/render-buffers.js`（新增，prototype 修補）、[app.js](../desktop/renderer/app.js) |
-| P4 驗收工具 | `ui_perf.py` 依 D1 更新上限，階段改成「潛伏停格」「出場 60 fps」「進退場」「退場後收尾到停格」，分別量 CPU 峰值（每秒取樣取最大值）與幀間隔；`ui_demo.py` 播放序列加入「點頭部」「長執行」「有回覆的成功」「連續失敗」，`--capture` 會帶出 gesture | [scripts/ui_perf.py](../scripts/ui_perf.py)、[scripts/ui_demo.py](../scripts/ui_demo.py) |
+| P4 驗收工具 | `ui_perf.py` 依 D1 更新上限，階段改成「潛伏停格」「出場 60 fps」「進退場」「退場後收尾到停格」，分別量 CPU 峰值（每秒取樣取最大值）與幀間隔；`ui_demo.py` 播放序列加入「點頭部」「長執行」「有回覆的成功」「連續失敗」，`--capture` 會帶出 gesture | [scripts/ui_perf.py](../../../scripts/ui_perf.py)、[scripts/ui_demo.py](../../../scripts/ui_demo.py) |
 
 ## 8. 新增常數
 

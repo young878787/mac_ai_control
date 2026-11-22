@@ -10,9 +10,9 @@
 
 | 位置 | 現況 |
 |---|---|
-| [fast_path.py](../mac_ai/router/fast_path.py) `_SEARCH` | 只有「搜尋／搜索／查詢／查」，命中就固定送 `web_search_or_open_url`；**沒有「找」** |
-| [tools.py](../mac_ai/router/tools.py) | 跟搜尋有關的 LLM 工具只有 `web_search_or_open_url` |
-| [slow_path.py](../mac_ai/router/slow_path.py) `_SEARCH_INTENT_RE` | 「找」算搜尋意圖，2B 4bit 小模型碰到「找 X」就開 Google |
+| [fast_path.py](../../../mac_ai/router/fast_path.py) `_SEARCH` | 只有「搜尋／搜索／查詢／查」，命中就固定送 `web_search_or_open_url`；**沒有「找」** |
+| [tools.py](../../../mac_ai/router/tools.py) | 跟搜尋有關的 LLM 工具只有 `web_search_or_open_url` |
+| [slow_path.py](../../../mac_ai/router/slow_path.py) `_SEARCH_INTENT_RE` | 「找」算搜尋意圖，2B 4bit 小模型碰到「找 X」就開 Google |
 | `resolve_app` | 只查 `lexicon.json` 的 14 個 App；LLM 給的 `control_mac_app.app_name` **沒有驗證**，直接 `open -a` |
 | 檔案／資料夾 | 沒有任何工具（沒有 Spotlight、已知資料夾、Finder 中顯示） |
 
@@ -38,7 +38,7 @@
 | 檔案搜尋範圍 | 只搜家目錄，排除 `~/Library` | 使用者確認 |
 | 本機找不到 | 只告知「找不到」，不改搜網路 | 使用者確認 |
 | 多筆結果 | 做後續選擇（「第二個」），並在桌面角色顯示清單 | 使用者確認 |
-| LLM 工具清單 | 不新增 LLM 工具（實測：加工具會讓 4bit 模型誤判，見 [tools.py](../mac_ai/router/tools.py) 的 `browser_tab` 註解） | 建議 |
+| LLM 工具清單 | 不新增 LLM 工具（實測：加工具會讓 4bit 模型誤判，見 [tools.py](../../../mac_ai/router/tools.py) 的 `browser_tab` 註解） | 建議 |
 | 本次範圍 | 只有「找／打開／搜尋」這一類改走兩層；音量、亮度、深色模式、鎖定、分頁、讀畫面不動 | 建議 |
 | 「找 X」都沒對上 | ~~搜尋檔名，0 筆就回報找不到~~ → 改成：先搜本機，0 筆時依「本機證據」決定回『本機沒有』或轉交模型判斷（§14） | 使用者確認（2026-11-08，後續調整） |
 | 「找 + App 名稱」 | 直接開 App（同 Spotlight） | 使用者確認（2026-11-08） |
