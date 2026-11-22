@@ -25,6 +25,7 @@
     {"text": "淨音", "to": "靜音", "source": "seed"},
     {"text": "競音", "to": "靜音", "source": "seed"},
     {"text": "營幕", "to": "螢幕", "source": "seed"},
+    {"text": "熒幕", "to": "螢幕", "source": "seed"},
     {"text": "中端機", "to": "終端機", "source": "seed"},
     {"text": "音亮", "to": "音量", "source": "seed"},
     {"text": "金音", "to": "靜音", "source": "seed"},
