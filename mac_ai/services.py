@@ -1,4 +1,4 @@
-"""背景服務管理：啟動 mlx_vlm.server 與 macos-stt server、等待就緒、結束時清理。"""
+"""背景服務管理：啟動 mlx_vlm.server 與語音辨識 server（macos-stt 或 X-ASR）、等待就緒、結束時清理。"""
 import http.client
 import json
 import os
@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional
 
 from mac_ai import config
 from mac_ai.stt.latency_log import RUN_ID
+from mac_ai.stt.xasr_server import MODEL_FILES as XASR_MODEL_FILES
 
 
 class ServiceError(Exception):
@@ -166,6 +167,26 @@ def stt_service() -> Service:
         log_path=config.SERVICE_LOG_DIR / "stt.log",
         ready=_stt_ready,
         after_stop=kill_stt_backend,
+    )
+
+
+def _xasr_ready(health: dict) -> bool:
+    # 要認 engine：8765 埠上若是 macos-stt 在跑，它的 /health 也是 status ok，不能被當成 xasr 沿用
+    return health.get("status") == "ok" and health.get("engine") == "xasr"
+
+
+def xasr_stt_service() -> Service:
+    """備用辨識引擎 X-ASR（mac_ai/stt/xasr_server.py）：用主專案的 Python 起，模型在 AI_models/，不需要語音辨識授權、也沒有 PID 檔"""
+    missing = [f for f in (*XASR_MODEL_FILES, config.XASR_TOKENS) if not (config.XASR_MODEL_DIR / f).is_file()]
+    if missing:
+        raise ServiceError(f"找不到 X-ASR 模型檔：{'、'.join(missing)}（應放在 {config.XASR_MODEL_DIR}，下載方式見 README「備用辨識引擎」）")
+    return Service(
+        name="STT（X-ASR）",
+        cmd=[sys.executable, "-m", "mac_ai.stt.xasr_server", "--port", str(config.STT_PORT)],
+        health_url=f"{config.STT_URL}/health",
+        cwd=config.ROOT,
+        log_path=config.SERVICE_LOG_DIR / "stt.log",
+        ready=_xasr_ready,
     )
 
 

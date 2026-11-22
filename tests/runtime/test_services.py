@@ -280,6 +280,75 @@ def test_stt_service_without_its_venv_explains_how_to_fix(monkeypatch, tmp_path)
         services.stt_service()
 
 
+# ---------- 備用辨識引擎 X-ASR ----------
+def make_xasr_dir(tmp_path, missing=()):
+    model = tmp_path / "x-asr"
+    model.mkdir()
+    for name in (*services.XASR_MODEL_FILES, config.XASR_TOKENS):
+        if name not in missing:
+            (model / name).write_text("")
+    return model
+
+
+def test_xasr_service_runs_the_project_server_with_the_main_python(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "XASR_MODEL_DIR", make_xasr_dir(tmp_path))
+    svc = services.xasr_stt_service()
+    assert svc.cmd == [sys.executable, "-m", "mac_ai.stt.xasr_server", "--port", str(config.STT_PORT)]
+    assert svc.health_url == f"{config.STT_URL}/health" and svc.cwd == config.ROOT
+    assert svc.log_path == config.SERVICE_LOG_DIR / "stt.log"
+
+
+def test_xasr_service_needs_no_macos_authorization_pid_file_or_cleanup(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "XASR_MODEL_DIR", make_xasr_dir(tmp_path))
+    svc = services.xasr_stt_service()
+    assert svc.after_stop is None and svc.ready is not services._stt_ready
+
+
+@pytest.mark.parametrize("health, expected", [
+    ({"status": "ok", "engine": "xasr", "model": "m"}, True),
+    ({"status": "starting", "engine": "xasr"}, False),
+    ({"status": "ok", "auth": "authorized"}, False),  # 8765 埠上是 macos-stt 在跑：不能當成 xasr 沿用
+    ({}, False),
+])
+def test_xasr_ready_only_for_the_xasr_engine(health, expected):
+    assert services._xasr_ready(health) is expected
+
+
+def test_macos_stt_is_not_ready_when_xasr_holds_the_port():
+    assert services._stt_ready({"status": "ok", "engine": "xasr"}) is False  # 反過來也一樣：沒有授權欄位就不是 macos-stt
+
+
+def test_xasr_service_without_model_files_lists_them_and_points_to_readme(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "XASR_MODEL_DIR", make_xasr_dir(tmp_path, missing=("encoder.int8.onnx", config.XASR_TOKENS)))
+    with pytest.raises(ServiceError) as info:
+        services.xasr_stt_service()
+    message = str(info.value)
+    assert "encoder.int8.onnx" in message and config.XASR_TOKENS in message and "decoder.onnx" not in message
+    assert str(config.XASR_MODEL_DIR) in message and "README" in message
+
+
+def test_xasr_service_without_model_dir_is_a_service_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "XASR_MODEL_DIR", tmp_path / "nothing")
+    with pytest.raises(ServiceError, match="找不到 X-ASR 模型檔"):
+        services.xasr_stt_service()
+
+
+@pytest.mark.skipif(not (config.XASR_MODEL_DIR / "encoder.int8.onnx").is_file(), reason="沒有 X-ASR 模型檔（下載方式見 README）")
+def test_xasr_service_really_starts_and_stops_a_real_server(tmp_path, started, monkeypatch):
+    port = free_port()
+    monkeypatch.setattr(config, "STT_PORT", port)
+    monkeypatch.setattr(config, "STT_URL", f"http://127.0.0.1:{port}")
+    monkeypatch.setattr(config, "SERVICE_LOG_DIR", tmp_path)
+    svc = services.xasr_stt_service()
+    svc.start()
+    started.append(svc.proc)
+    svc.wait_ready(30)
+    health = probe(svc.health_url)
+    assert health["engine"] == "xasr" and health["status"] == "ok" and health["sessions_active"] == 0
+    stop_all([svc])
+    assert not svc.alive() and probe(svc.health_url) is None
+
+
 # ---------- 桌面角色介面（Electron） ----------
 def make_ui_dir(tmp_path, electron=True, core=True):
     ui = tmp_path / "desktop"

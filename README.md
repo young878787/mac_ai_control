@@ -21,7 +21,7 @@
                                                   執行動作（開啟／關閉 App 等）
 ```
 
-- **語音辨識**交給 [macos-stt](#感謝)，它會呼叫 Apple 內建的 `SFSpeechRecognizer`，不需下載模型。
+- **語音辨識**交給 [macos-stt](#感謝)，它會呼叫 Apple 內建的 `SFSpeechRecognizer`，不需下載模型。也可以改用本機的 X-ASR（備用引擎，比較不準，Windows 的預設），見[備用辨識引擎](#備用辨識引擎x-asrwindows-預設)。
 - **語言模型**使用 `mlx_vlm.server` 載入的本地模型（預設 `AI_models/LFM3-VL-2B-MLX-4bit`）。
 - **雲端模型**（選用）：Slow Path 有金鑰時先問雲端（OpenAI 相容的 LiteLLM proxy），失敗、逾時、熔斷時同一步退回本機模型。雲端與本機用同一套驗證，雲端也不能繞過否定／敘述句守門；雲端另外多兩個工具：對目前視窗執行常用功能（「再往下」）與站內搜尋。
 - 模型不可用時，Fast Path 仍能執行常見指令。
@@ -39,6 +39,52 @@ mac_ai_control/
 ```
 
 原因：macOS 要求語音辨識程式必須是 `.app` bundle 才能取得授權，所以 `mac_ai` 會透過 `macos-stt/start.py serve` 啟動它，而不是直接 import。`mac_ai/config.py` 會去找 `macos-stt/.venv/bin/python`。
+
+## 備用辨識引擎（X-ASR，Windows 預設）
+
+macos-stt 只能在 macOS 用。為了讓語音辨識這一層可以在 Windows 執行，另外提供一個本機的備用引擎：`mac_ai/stt/xasr_server.py` 用 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 跑 [Luigi/x-asr-zh-tw-native-itn](https://huggingface.co/Luigi/x-asr-zh-tw-native-itn)（160M 的串流 Zipformer，繁體輸出，int8 ONNX），並說跟 macos-stt 一樣的 WebSocket 協定，所以端點偵測與路由都不用改。完全在本機執行，不連網。
+
+**它比 macos-stt 不準**。同一份真人語料（`bench/human`）的實測：
+
+| 項目 | macos-stt | X-ASR |
+|---|---|---|
+| A+C+F 類（指令）意圖正確率 | 24/24 | 22/24（92%） |
+| 字錯率（CER） | 2.6% | 10.0% |
+| A 類說完到收到結果（中位／p90） | 624／952 ms | 739／1370 ms |
+| 辨識伺服器 CPU（整機百分比，8 核心機器） | 跑 bench 期間 0.8% | 跑 bench 期間 3.4%；閒置（麥克風開著沒說話）3.9% |
+| 記憶體 | 77 MB | 約 470 MB |
+
+已知的缺點：英文 App 名稱會有辨識錯字（例如 Safari 被聽成「沙發率」）；環境雜音可能被聽成短字（例如「Sh」）而送進 Slow Path；講「螢幕」偶爾被聽成「熒幕」（已由詞庫矯正）或「一幕」（沒有矯正）。macOS 預設仍是 macos-stt，只有明確指定才會用 X-ASR。
+
+**授權**：模型是 Apache-2.0；它是用 `GilgameshWind/X-ASR-zh-en` 與 k2-fsa/icefall 做的。模型權重不放在本 repo，請自行下載。
+
+**安裝**（只有用 X-ASR 才需要）：
+
+```bash
+pip install sherpa-onnx==2.0.2      # 內含自己的 onnxruntime，不影響主環境的 onnxruntime
+mkdir -p AI_models/x-asr-zh-tw-native-itn
+R=3d5bad21ccf54b37eef1fddccad48ca82001ddd9
+B=https://huggingface.co/Luigi/x-asr-zh-tw-native-itn/resolve/$R/deployment/onnx-int8-480ms
+for f in encoder.int8.onnx decoder.onnx joiner.int8.onnx tokens_traditional.txt; do
+  curl -L -o AI_models/x-asr-zh-tw-native-itn/$f $B/$f
+done
+shasum -a 256 AI_models/x-asr-zh-tw-native-itn/*     # Windows 用 Get-FileHash -Algorithm SHA256
+# encoder.int8.onnx        908596dcc137a73b95be908ca55e88caa1b3dbbe8027c171615f4b0609c5eb1e
+# decoder.onnx             a1cbc9eac2d5e3fb6617a218c67ad6daaa7f4e0fd225f08b2c22ab0413c8c257
+# joiner.int8.onnx         aedb7fa697b2ab43f20499826fff7c997eea7d67db77be97769aeeeb726e63b3
+# tokens_traditional.txt   62b7a97bd385dd84835e4e627820ca3ca69058502dfbd80108c6a88c94ecdd90
+```
+
+共約 170 MB。其餘需要的套件與 macOS 相同（`sounddevice websockets onnxruntime numpy`）。缺少模型檔時，啟動會直接列出缺哪個檔，不會默默退回別的引擎。
+
+**使用**：
+
+```bash
+python main.py --stt-engine xasr         # macOS 上手動選用；Windows 不帶參數就是 xasr
+python -m mac_ai.stt.xasr_server         # 只起辨識伺服器（127.0.0.1:8765），例如跑 scripts/stt_bench.py
+```
+
+**Windows 的狀態（請先看這段）**：沒有 Windows 實機測試過。語音辨識這一層是在 macOS 上模擬 Windows 驗證的（只裝 Windows 版會裝的套件的乾淨環境、把 `sys.platform` 改成 `win32`、確認 `win_amd64` 的安裝檔存在）。本專案其餘部分（執行 macOS 動作、`mlx_vlm` 本機模型、前景視窗、桌面角色的 macOS 專用處理）不能在 Windows 跑，Windows 全流程不在目前範圍。麥克風驅動（WASAPI）、主控台編碼（cp950）、防毒軟體擋 8765 埠、Windows 版 sherpa-onnx 的實際速度，都還沒有驗證。
 
 ## 環境需求
 
@@ -135,9 +181,10 @@ python main.py --no-stt           # 只啟動 LLM 服務，不收音
 python main.py --text 打開小算盤  # 直接送入文字指令後結束（不檢查喚醒詞）
 python main.py --device 1         # 指定麥克風裝置編號
 python main.py --ui               # 同時顯示桌面角色（需先完成「桌面角色」一節的安裝）
+python main.py --stt-engine xasr  # 語音辨識改用備用引擎 X-ASR（見「備用辨識引擎」；預設 macOS 用 macos-stt）
 ```
 
-啟動後會依序啟動 LLM（`mlx_vlm.server`）與 STT（`macos-stt serve`），等兩者就緒後開始收音。
+啟動後會依序啟動 LLM（`mlx_vlm.server`）與 STT（`macos-stt serve`，或 `--stt-engine xasr` 時的 X-ASR 伺服器），等兩者就緒後開始收音。
 
 ### 找 App、資料夾、檔案
 
@@ -322,7 +369,7 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
 | `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站；點歌：`youtube_client.py`（InnerTube 搜尋）、`music_prefs.py`（偏好、計分、拼音矯正） |
 | `mac_ai/db/` | 點歌偏好資料庫（`data/music.sqlite3`）的建立、備份與升級（Alembic migration）、從事件重算詞表（`rebuild.py`） |
-| `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`） |
+| `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`）；備用辨識引擎的伺服器（`xasr_server.py`）與熱詞編碼（`xasr_hotwords.py`） |
 | `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、注意力導演、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`animation/` 程序動畫、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 [ARCHITECTURE.md](ARCHITECTURE.md) |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |
 | `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
@@ -334,6 +381,8 @@ python scripts/acceptance.py list                   # 歷次結果
 修改 `vocab/lexicon.json` 後，`main.py` 啟動時會自動重新產生詞表；也可以手動執行 `python build_vocab.py`。
 
 ## 感謝
+
+備用辨識引擎使用 **[Luigi/x-asr-zh-tw-native-itn](https://huggingface.co/Luigi/x-asr-zh-tw-native-itn)**（Apache-2.0，建立在 GilgameshWind/X-ASR-zh-en 與 k2-fsa/icefall 之上）與 **[k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)**（Apache-2.0），感謝這些作者。
 
 本專案的語音辨識能力來自 **[bannana/macos-stt](https://github.com/bannana/macos-stt)**，作者 **bannana** 以 MIT 授權釋出這個 Python 函式庫，讓 Python 能直接使用 macOS 內建的語音辨識引擎，不必下載任何模型。這個專案的 `macos-stt/` 目錄是在原版基礎上另外加入 `serve` 子命令（HTTP／WebSocket 串流伺服器）等修改，感謝原作者的設計與實作。
 

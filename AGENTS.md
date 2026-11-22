@@ -4,7 +4,7 @@
 
 ## 專案與北極星
 
-Apple Silicon Mac 上的語音助手：麥克風 → macos-stt → 路由 → 執行 macOS 動作。Fast Path 與本機 LLM 都在本機；雲端是選用的加分，`.env` 沒有金鑰時，行為要與沒有雲端逐字相同。
+Apple Silicon Mac 上的語音助手：麥克風 → macos-stt（Windows 改用備用引擎 X-ASR）→ 路由 → 執行 macOS 動作。Fast Path 與本機 LLM 都在本機；雲端是選用的加分，`.env` 沒有金鑰時，行為要與沒有雲端逐字相同。
 **兩個目標：快、準。** 任何改動都要先問：會不會讓常見指令變慢？會不會讓誤觸發變多？衝突時準確優先（誤開、誤關、誤執行的成本遠高於多等 1 秒），但不能讓 Fast Path 退化成要等 LLM。
 
 ## 文件地圖
@@ -49,6 +49,7 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 12. 外部指令一律設逾時；`command_worker` 是單執行緒，不加長時間阻塞。效能主張要附實測數字。
 13. 桌面：依賴只能往下（`layers.test.js`）；匯流排只綁 127.0.0.1＋token＋不收 Origin；聊天室主動展開只用 `showInactive()`。（0012、0014）
 14. 擬人化的指標門檻在 `desktop/dev/motion-metrics.js`，不得為了過關放寬。（0015）
+15. 辨識引擎的切換點是 WS 協定：`xasr_server` 與 macos-stt 行為要一致，`SttClient`、端點偵測、`EP_*` 不為單一引擎改；CPU 門檻用整機百分比；Windows 只在 macOS 上模擬過，不可說成實機驗證。（0020）
 
 ## 不要碰
 
