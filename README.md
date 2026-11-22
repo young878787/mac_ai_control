@@ -304,7 +304,7 @@ ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/inst
 
 ## 端點偵測（說完就收）
 
-預設 `mac_ai/config.py` 的 `ENDPOINT_MODE = "client"`：本端用 Silero VAD 判斷何時開始／結束說話，並看辨識中的文字是不是一句完整的指令（完整就早點收、句尾是「然後」之類就多等），決定後主動要求 macos-stt 收尾。改成 `"server"` 即回到舊行為（macos-stt 的能量 VAD，靜音 1.5 秒才斷句）。每句的計時寫在 `logs/runtime/latency.jsonl`（各 log 的用途見下方「Logs」）。設計、參數與實測結果見 [docs/語音端點偵測與延遲改善：實作計畫.md](docs/語音端點偵測與延遲改善：實作計畫.md)。
+預設 `mac_ai/config.py` 的 `ENDPOINT_MODE = "client"`：本端用 Silero VAD 判斷何時開始／結束說話，並看辨識中的文字是不是一句完整的指令（完整就早點收、句尾是「然後」之類就多等），決定後主動要求 macos-stt 收尾。改成 `"server"` 即回到舊行為（macos-stt 的能量 VAD，靜音 1.5 秒才斷句）。每句的計時寫在 `logs/runtime/latency.jsonl`（各 log 的用途見下方「Logs」）。設計、參數與實測結果見 [docs/plans/completed/2026-11-05-endpoint-latency.md](docs/plans/completed/2026-11-05-endpoint-latency.md)。
 
 量測與比較（需要 macos-stt 已啟動）：
 
