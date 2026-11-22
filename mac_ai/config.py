@@ -1,5 +1,6 @@
 """路徑、LLM 連線與逾時設定（單一來源）。"""
 import os
+import sys
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -140,6 +141,15 @@ LATENCY_LOG = RUNTIME_LOG_DIR / "latency.jsonl"  # 每句話的收音→定稿�
 STT_RECONNECT_MIN_S = 1.0  # 斷線重連的等待時間（每次加倍，最多 MAX）
 STT_RECONNECT_MAX_S = 10.0
 STT_PID_FILE = "/tmp/macstt_pid"  # start.py 寫入的後端（.app 內）PID
+
+# --- 備用辨識引擎 X-ASR（mac_ai/stt/xasr_server.py，sherpa-onnx，離線、可跑 Windows）。與 macos-stt 說同一份 WS 協定，兩者不同時執行（共用 STT_PORT）
+# macOS 預設 macos-stt（比較準）；Windows 沒有 macos-stt，預設 xasr。數值的依據：docs/plans/completed/2026-11-21-stt-engine-xasr.md §1.6
+STT_ENGINE = "xasr" if sys.platform == "win32" else "macos"  # "macos"｜"xasr"；main.py --stt-engine 可覆寫
+XASR_MODEL_DIR = ROOT / "AI_models" / "x-asr-zh-tw-native-itn"  # Luigi/x-asr-zh-tw-native-itn 的 deployment/onnx-int8-480ms，下載方式見 README
+XASR_TOKENS = "tokens_traditional.txt"  # 模型內建的繁體 token 表（用簡體表再靠 normalize 轉，A+C+F 意圖只有 12/24）
+XASR_THREADS = 2  # P0：1／2／4 執行緒的 RTF 是 0.043／0.032／0.040
+XASR_TAIL_PAD_S = 0.6  # flush 時補在句尾的靜音：模型每 480 ms 才出一段字，P0：補 0.4 秒時 F 類句尾只有 1/3 完整，0.6 秒 3/3
+XASR_HOTWORDS_SCORE = 4.0  # stt_hints 熱詞的加分，P0：score 2 是 18/24、score 4 是 19/24
 
 # --- 桌面角色介面（main.py --ui）。UI 是另一個程序（Electron），透過本機 WebSocket 收事件、送指令
 UI_BUS_HOST = "127.0.0.1"  # 只綁本機
