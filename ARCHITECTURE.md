@@ -1,6 +1,6 @@
 # 架構
 
-Apple Silicon Mac 上的語音助手：麥克風 → 系統語音辨識（macos-stt）→ 路由 → 執行 macOS 動作。語音辨識、Fast Path、本機 LLM 都在本機；雲端模型是選用的加分（[0009](docs/decisions/0009-cloud-optional.md)）。
+Apple Silicon Mac 上的語音助手：麥克風 → 系統語音辨識（macos-stt；備用引擎 X-ASR）→ 路由 → 執行 macOS 動作。語音辨識、Fast Path、本機 LLM 都在本機；雲端模型是選用的加分（[0009](docs/decisions/0009-cloud-optional.md)）。
 
 流程細節：[docs/flows/main-flow.md](docs/flows/main-flow.md)、[docs/flows/slow-path.md](docs/flows/slow-path.md)。
 
@@ -21,6 +21,7 @@ Apple Silicon Mac 上的語音助手：麥克風 → 系統語音辨識（macos-
 ```
 main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
          ├─ macos-stt（獨立 repo，.app bundle 內 start.py serve，WS :8765）
+         │    或 xasr_server（mac_ai.stt.xasr_server，sherpa-onnx，同一個埠、同一套協定；兩者擇一，[0020](docs/decisions/0020-stt-engine-xasr.md)）
          ├─ ui_bus（127.0.0.1:8766，token）── Electron 桌面角色（desktop/）
          └─ 收音迴圈（STT 執行緒）→ 指令佇列 → command_worker（單執行緒依序）
                                                    └─（選用）雲端 LiteLLM proxy（https，.env）
@@ -30,9 +31,9 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 
 | 路徑 | 職責 |
 |---|---|
-| `main.py` | 入口；起 LLM／STT／UI 服務、暖機、收音迴圈；`--text` 繞過服務直接跑 |
-| `mac_ai/config.py` | **所有**路徑、埠號、逾時、端點偵測、雲端參數、點歌參數（單一來源，數值旁有實測理由註解）；`env_value()` 讀 `.env`（雲端端點／模型／金鑰） |
-| `mac_ai/services.py` | 子程序管理：沿用已健康的服務、`/health` 就緒檢查、SIGINT→SIGTERM→SIGKILL 收尾 |
+| `main.py` | 入口；起 LLM／STT／UI 服務、暖機、收音迴圈；`--text` 繞過服務直接跑；`--stt-engine {macos,xasr}` 選語音辨識引擎（預設 `config.STT_ENGINE`） |
+| `mac_ai/config.py` | **所有**路徑、埠號、逾時、端點偵測、雲端參數、點歌參數、語音辨識引擎與 X-ASR 參數（單一來源，數值旁有實測理由註解）；`env_value()` 讀 `.env`（雲端端點／模型／金鑰） |
+| `mac_ai/services.py` | 子程序管理：沿用已健康的服務、`/health` 就緒檢查、SIGINT→SIGTERM→SIGKILL 收尾；`stt_service()`（macos-stt）與 `xasr_stt_service()`（缺模型檔就丟 `ServiceError`、ready 要求 `/health` 的 `engine` 是 `xasr`） |
 | `mac_ai/wake.py` | `WakeGate`：喚醒詞（預設關閉；`--ui` 開啟）＋ 60 秒會話，每句重新計時 |
 | `mac_ai/router/normalize.py` | NFKC、簡轉繁、誤聽詞、中文數字（只在數值語境）、疊詞 |
 | `mac_ai/router/fast_path.py` | `canonicalize_clause`、安全守門、各類 regex 規則 `_r_*`；回傳尚未執行的 `Match` |
@@ -55,6 +56,7 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | `desktop/` | 桌面角色（Electron）。依行程與層次分目錄，規則與依賴方向見下方「桌面前端分層」 |
 | `mac_ai/assistant.py` | 收音迴圈、`CommandRouter`、`command_worker`；`QueuedJob`（內部工作，不發事件、不寫指令紀錄）與 `MusicMaintenance`（點歌定時整理的計時器，只負責排進指令佇列） |
 | `mac_ai/stt/` | `mic`、`client`（WS＋重連）、`vad`（Silero ONNX）、`endpoint`（純邏輯，時間由外部注入）、`completeness`（句子完整度）、`latency_log` |
+| `mac_ai/stt/xasr_server.py`、`xasr_hotwords.py` | 備用辨識引擎：獨立子程序，說與 macos-stt 相同的 WS 協定 v1（`/stream`、`/health`），用 sherpa-onnx 串流解碼；`SherpaEngine` 包住模型，`XasrServer` 處理協定、錯誤碼、安全網 `server_vad`；熱詞由 `stt_hints.txt` 轉成 token（`encode_hotwords`）。**只被 `services.xasr_stt_service()` 以子程序啟動；`SttClient`、端點偵測、路由不知道引擎是哪一個**；`sherpa_onnx` 是延遲 import，macOS 預設路徑不需要安裝 |
 | `vocab/lexicon.json` | **詞庫單一來源**：App、別名、誤聽、動詞、資料夾、檔案類型、喚醒詞 |
 | `archive/` | 舊版單檔實作，**唯讀參考，不要改、不要 import** |
 

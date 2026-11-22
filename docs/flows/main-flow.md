@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-    Mic[麥克風 MicSource] --> Stt[SttClient<br/>送音訊到 macos-stt WS :8765]
+    Mic[麥克風 MicSource] --> Stt[SttClient<br/>送音訊到 STT 伺服器 WS :8765<br/>macos-stt 或 xasr_server]
     Stt --> Ep[EndpointDetector<br/>Silero VAD＋completeness.classify]
     Ep -- 說完了 → flush --> Stt
     Stt -- final --> Router[CommandRouter → WakeGate]
@@ -29,7 +29,7 @@ flowchart TD
 三種輸入，最後都匯進同一個佇列（`--text` 除外）。
 
 - **麥克風** `stt/mic.MicSource`（PCM）
-  - `stt/client.SttClient` 把音訊送到 macos-stt（WS :8765），同時逐窗跑 Silero VAD，交給 `endpoint.EndpointDetector`。
+  - `stt/client.SttClient` 把音訊送到 STT 伺服器（WS :8765），同時逐窗跑 Silero VAD，交給 `endpoint.EndpointDetector`。伺服器是 macos-stt 或 `stt/xasr_server`（`main.py --stt-engine`、預設 `config.STT_ENGINE`；macOS 預設 macos-stt，Windows 預設 xasr），兩者說同一套 WS 協定，client 與之後的流程不分引擎（[0020](../decisions/0020-stt-engine-xasr.md)）。
   - `EndpointDetector` 是純邏輯，時間由外部注入。它結合 VAD 的 onset／offset 遲滯，以及 partial 文字經 `completeness.classify` 的結果：
     - `classify`：去喚醒詞 → normalize → split_clauses → 每個子句都被 `FastPathMatcher.match` 命中，就算 complete。
     - 收句門檻：complete 靜音 0.35 s；incomplete（句尾接續詞、光動詞）多等；其餘用 default。另有 `asr_stall`、`max_len` 保底。

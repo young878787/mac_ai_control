@@ -22,7 +22,7 @@ python scripts/ui_demo.py [--hold|--choices-test|--chat-test [N]]   # 不用麥�
 python scripts/ui_motion.py [--skip-idle|--skip-listen]   # 桌面角色動作軌跡指標（擬人化 R2 閒置 10 分鐘／R3 聆聽 10 輪；量測期間不要動滑鼠）
 ```
 
-基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 前端分層整理 S0～S4 後實測 142 pass；2026-11-21 擬人化 P1～P4 後 266 pass，其中 `motion-sim.test.js` 是 T2／T3 模擬指標；pytest 1730 通過、5 skipped；同日去掉 runtime 層的空等〔關閉握手逾時、0.5 s 輪詢〕後，離線全部 37.5 s → 14.5 s，runtime 35.3 s → 12.6 s，項數不變；2026-11-21 點歌 P1～P5 後 `pytest` 2473 passed、6 skipped、0 failed，約 21 秒，119 deselected）。新增行為要新增測試。
+基線：`pytest` 必須 **0 failed**（測試數會隨功能增加，不要硬記數字；2026-11-17 整理測試分層後實測 1657 項通過、5 skipped，deselect 的 live 92／cloud 8／app 19）；`node --test` 0 fail（2026-11-20 前端分層整理 S0～S4 後實測 142 pass；2026-11-21 擬人化 P1～P4 後 266 pass，其中 `motion-sim.test.js` 是 T2／T3 模擬指標；pytest 1730 通過、5 skipped；同日去掉 runtime 層的空等〔關閉握手逾時、0.5 s 輪詢〕後，離線全部 37.5 s → 14.5 s，runtime 35.3 s → 12.6 s，項數不變；2026-11-21 點歌 P1～P5 後 `pytest` 2473 passed、6 skipped、0 failed，約 21 秒，119 deselected；2026-11-22 X-ASR 備用引擎後 `pytest` 2621 passed、6 skipped、0 failed，約 29 秒，126 deselected，`node --test` 266 pass）。新增行為要新增測試。
 
 ## 分層節奏：改什麼跑什麼
 
@@ -52,9 +52,10 @@ Fast Path 與正規化的改動，flow 層的整條路由都會跑到，所以 L
 | `router/pipeline.py`（主動展開） | `tests/flow/test_route_expand.py tests/unit/test_ui_contract.py` | — |
 | `stt/completeness.py`、`stt/endpoint.py`、`wake.py` | `tests/unit/test_completeness.py tests/unit/test_endpoint.py tests/unit/test_wake.py` | 調參數用 `scripts/stt_bench.py` A/B |
 | `stt/client.py`、`vad.py`、`mic.py` | `tests/runtime/test_stt_client.py tests/runtime/test_vad.py` | 語音實機（人工） |
+| `stt/xasr_server.py`、`xasr_hotwords.py`（備用辨識引擎）、`vocab/stt_hints.txt` 的熱詞編碼 | `tests/unit/test_xasr_hotwords.py tests/runtime/test_xasr_server.py`（假引擎測協定；有模型檔才多跑 1 項真模型與 `stt_hints` 快照比對，缺檔自動 skip） | 協定對照：先起 macos-stt 或 `python -m mac_ai.stt.xasr_server`，再 `pytest -m live tests/real/test_stt_protocol_live.py -v`，**兩個引擎各跑一次**，7 項都要過；準確度與延遲用 `scripts/stt_bench.py run --corpus bench/human --mode client --label <引擎>` 對照（要先手動起伺服器，gate 的定義與 bench 內建判定的差異見計畫書 `docs/plans/completed/2026-11-21-stt-engine-xasr.md` §7.2）；模擬 Windows（乾淨 venv、`sys.platform` 打樁、`win_amd64` 安裝檔）的步驟見計畫書 §7.3 W1～W5；語音實機（人工） |
 | `assistant.py` | `tests/runtime/test_assistant.py tests/runtime/test_runlog.py tests/runtime/test_ui_bus.py` | — |
 | `ui_bus.py`、UI 協定 | `tests/unit/test_ui_contract.py tests/runtime/test_ui_bus.py`＋`node --test test/ipc-channels.test.js test/protocol.test.js` | `ui_demo.py --chat-test` |
-| `services.py`、`main.py` | `tests/runtime/test_services.py tests/runtime/test_main.py` | — |
+| `services.py`、`main.py`、`config.py` 的 `STT_ENGINE`／`XASR_*` | `tests/runtime/test_services.py tests/runtime/test_main.py`（含引擎選擇、非 macOS 拒絕 macos、monkeypatch `sys.platform='win32'` 的預設引擎） | `python main.py --stt-engine xasr` 能起、`/health` 回 `engine: xasr`、Ctrl+C 收乾淨（需 `AI_models/x-asr-zh-tw-native-itn/`） |
 | `scripts/acceptance.py` | `tests/unit/test_acceptance.py` | — |
 | `desktop/` 任一檔 | `cd desktop && node --test test/<同名或相關>.test.js` | 見下一節 |
 
