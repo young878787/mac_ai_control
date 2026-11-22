@@ -1,10 +1,15 @@
-"""main.py 入口：--text、正常流程、LLM／STT／麥克風失敗、Ctrl+C、--ui"""
+"""main.py 入口：--text、正常流程、LLM／STT／麥克風失敗、Ctrl+C、--ui、語音辨識引擎選擇（含模擬 Windows）"""
+import importlib.util
+import subprocess
+import sys
+
 import main
 
 import pytest
 
 import build_vocab
-from mac_ai.services import ServiceError
+from mac_ai import config, services
+from mac_ai.services import Service, ServiceError
 
 
 class FakeService:
@@ -234,3 +239,97 @@ def test_without_ui_flag_nothing_ui_related_happens(ui_env):
     kind, kw_names, gate, bus = next(e for e in log if isinstance(e, tuple) and e[0] == "voice_loop")
     assert gate is None and bus is None
     assert ("stop_all", ["llm", "stt"]) in log
+
+
+# ---------- 語音辨識引擎選擇（--stt-engine）與模擬 Windows（X16；沒有 Windows 實機，只能這樣驗） ----------
+@pytest.fixture
+def engines(env, monkeypatch):
+    """stt_service（macos-stt）與 xasr_stt_service 都換成會記錄的假物件；log 看得出這次選了哪一個"""
+    log, cfg = env
+    monkeypatch.setattr(main, "stt_service", lambda: FakeService("stt-macos", log))
+    monkeypatch.setattr(main, "xasr_stt_service", lambda: FakeService("stt-xasr", log))
+    return log
+
+
+@pytest.mark.parametrize("argv, platform, default_engine, started", [
+    ([], "darwin", "macos", "stt-macos"),  # macOS 預設不變
+    (["--stt-engine", "xasr"], "darwin", "macos", "stt-xasr"),  # macOS 上明確選備用引擎
+    (["--stt-engine", "macos"], "darwin", "xasr", "stt-macos"),  # 明確選的蓋過預設
+    ([], "win32", "xasr", "stt-xasr"),  # Windows 預設 xasr
+])
+def test_engine_choice_follows_flag_then_config_default(engines, monkeypatch, argv, platform, default_engine, started):
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(main.config, "STT_ENGINE", default_engine)
+    assert main.main(argv) == 0
+    assert f"{started}.start" in engines and f"{started}.wait_ready" in engines
+    assert not any(isinstance(e, str) and e.startswith("stt-") and not e.startswith(started) for e in engines)
+
+
+def test_macos_engine_is_refused_off_macos_before_anything_starts(engines, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert main.main(["--stt-engine", "macos"]) == 1
+    assert engines == []  # 沒有 build_vocab、沒有任何服務被啟動
+    assert "只能在 macOS" in capsys.readouterr().out
+
+
+def test_no_stt_ignores_the_engine_check(engines, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert main.main(["--no-stt", "--stt-engine", "macos"]) == 0
+
+
+def test_xasr_model_missing_exits_with_download_hint_and_cleans_up(env, monkeypatch, tmp_path, capsys):
+    log, _ = env
+    monkeypatch.setattr(config, "XASR_MODEL_DIR", tmp_path / "nothing")
+    assert main.main(["--stt-engine", "xasr"]) == 1
+    out = capsys.readouterr().out
+    assert "找不到 X-ASR 模型檔" in out and "README" in out
+    assert log[-1] == ("stop_all", ["llm"])
+
+
+def load_config_as(platform, monkeypatch):
+    """用指定的 sys.platform 重新執行 config.py（載入成另一個模組物件，不動到真正的 mac_ai.config）"""
+    monkeypatch.setattr(sys, "platform", platform)
+    spec = importlib.util.spec_from_file_location("config_winsim", config.__file__)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("platform, engine", [("win32", "xasr"), ("darwin", "macos"), ("linux", "macos")])
+def test_platform_decides_the_default_engine(monkeypatch, platform, engine):
+    assert load_config_as(platform, monkeypatch).STT_ENGINE == engine
+
+
+def test_winsim_xasr_never_touches_macos_only_stt_machinery(env, monkeypatch, tmp_path):
+    """模擬 Windows、不帶 --stt-engine：用真的 xasr_stt_service 與 stop_all，斷言沒有讀 PID 檔、沒有呼叫 ps、沒有檢查語音辨識授權"""
+    log, _ = env
+    model = tmp_path / "x-asr"
+    model.mkdir()
+    for name in (*services.XASR_MODEL_FILES, config.XASR_TOKENS):
+        (model / name).write_text("")
+    monkeypatch.setattr(config, "XASR_MODEL_DIR", model)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(main.config, "STT_ENGINE", "xasr")
+
+    forbidden = []
+    for name in ("kill_stt_backend", "_stt_ready"):
+        monkeypatch.setattr(services, name, lambda *a, _n=name, **k: forbidden.append(_n))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: forbidden.append(("subprocess.run", a)))
+    monkeypatch.setattr(main, "xasr_stt_service", services.xasr_stt_service)
+    monkeypatch.setattr(main, "stop_all", lambda started: services.stop_all([s for s in started if isinstance(s, Service)]))  # 真的收尾邏輯；LLM 的假服務不收
+
+    class Done:  # 假的子程序：已經結束
+        pid, returncode = 1, 0
+
+        def poll(self):
+            return 0
+
+    def fake_start(self):
+        log.append(f"{self.name}.start")
+        self.proc = Done()
+
+    monkeypatch.setattr(Service, "start", fake_start)
+    monkeypatch.setattr(Service, "wait_ready", lambda self, timeout: log.append(f"{self.name}.wait_ready"))
+    assert main.main([]) == 0
+    assert "STT（X-ASR）.start" in log and "STT（X-ASR）.wait_ready" in log
+    assert forbidden == []

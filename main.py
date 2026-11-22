@@ -4,6 +4,7 @@
     python main.py --no-stt         只啟動 LLM 服務（例如跑 pytest -m live），不收音
     python main.py --text "打開小算盤"  直接送入文字指令後結束（不啟動任何服務、不檢查喚醒詞）
     python main.py --ui             同時顯示桌面角色（Electron）；此模式預設啟用喚醒詞
+    python main.py --stt-engine xasr   語音辨識改用備用引擎 X-ASR（預設：macOS 用 macos-stt，Windows 用 xasr）
 """
 import argparse
 import secrets
@@ -19,7 +20,7 @@ from mac_ai.router import (
     LEXICON, catalog, cloud_client, local_actions, music_prefs, process_choice, process_voice_command, warmup_llm,
     youtube_client,
 )
-from mac_ai.services import ServiceError, check_ui_ready, llm_service, stop_all, stt_service, ui_service
+from mac_ai.services import ServiceError, check_ui_ready, llm_service, stop_all, stt_service, ui_service, xasr_stt_service
 from mac_ai.stt.mic import MicSource
 from mac_ai.ui_bus import UiBus
 from mac_ai.wake import WakeGate
@@ -32,6 +33,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--text", nargs="+", metavar="文字",
                    help="直接送入文字指令後結束（不啟動任何服務、不檢查喚醒詞；LLM 需已在執行才會走 Slow Path）")
     p.add_argument("--no-stt", action="store_true", help="只啟動 LLM 服務，不啟動 STT、不收音")
+    p.add_argument("--stt-engine", choices=["macos", "xasr"], default=None,
+                   help=f"語音辨識引擎（預設 {config.STT_ENGINE}）：macos＝macos-stt（只能在 macOS）；xasr＝X-ASR（sherpa-onnx，比較不準的備用引擎）")
     p.add_argument("--device", type=int, default=None, help="麥克風輸入裝置編號（預設系統預設麥克風）")
     p.add_argument("--ui", action="store_true", help="顯示桌面角色（Electron）；此模式預設啟用喚醒詞")
     return p.parse_args(argv)
@@ -77,6 +80,10 @@ def run(args: argparse.Namespace) -> int:
         if problem:
             print(f"❌ {problem}")
             return 1
+    engine = args.stt_engine or config.STT_ENGINE
+    if not args.no_stt and engine == "macos" and sys.platform != "darwin":
+        print("❌ macos-stt 只能在 macOS 使用，請改用 --stt-engine xasr")
+        return 1
     build_vocab.build()  # 確保 STT 詞表與 lexicon.json 同步
     started = []
     mic = None
@@ -95,7 +102,7 @@ def run(args: argparse.Namespace) -> int:
         stt = None
         if not args.no_stt:
             try:
-                stt = stt_service()
+                stt = xasr_stt_service() if engine == "xasr" else stt_service()
                 started.append(stt)
                 stt.start()
             except ServiceError as e:
