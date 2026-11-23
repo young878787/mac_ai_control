@@ -38,13 +38,13 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 1. 常見指令先加 Fast Path 規則（`fast_path.py` 的 `_r_*`），不加 LLM 工具。Fast Path、`match()`、`completeness` 不碰網路、LLM、子程序，也不讀前景。（0001、0003）
 2. `SYSTEM_PROMPT`＋`TOOLS_SCHEMA` 逐字穩定、不增大；動態資訊只放 user 訊息；LLM 呼叫只走 `llm_client._llm`。（0002）
 3. 改 Fast Path 規則會連動端點偵測：要跑 `test_completeness.py`、`test_endpoint.py`。（0003）
-4. 安全守門在最前面：否定、敘述、提問不走 Fast；否定或敘述交給 Slow 後也不呼叫任何模型（G1）。放寬守門前先列誤觸發案例。（0007）
-5. `validate_tool_call` 是唯一的信任邊界；LLM 編出來的名稱不能直接 `open -a`。本機工具對 LLM 保持看不到（雲端只有 `front_action`、`site_search` 兩個例外）。（0011）
+4. 安全守門在最前面：否定、敘述、提問不走 Fast；否定或敘述交給 Slow 後也不呼叫任何模型（G1）。放寬守門前先列誤觸發案例。（0007；天氣窄規則只豁免提問這一關，見 0021）
+5. `validate_tool_call` 是唯一的信任邊界；LLM 編出來的名稱不能直接 `open -a`。本機工具對 LLM 保持看不到（雲端只有 `front_action`、`site_search` 兩個例外，有 `BRAVE_API_KEY` 時多 `web_answer`）。（0011、0022）
 6. 找檔案預設只在 Finder 顯示，危險檔一律只顯示，範圍限家目錄。（0005）
 7. 對象順序固定：明說 → 同句剛開 → 前景 → 預設；讀不到就退回預設，不猜。（0006）
 8. 常用功能走 `front_action`→`native.py`；送按鍵只允許 ⌘ 組合鍵與翻頁鍵，媒體鍵只允許 play／next／previous；不任意打字、不放結束程式或刪除類。（0008、0019）
-9. 雲端只用在 Slow Path 規劃，失敗退回本機；不能繞過任何守門，不能謊稱已執行。（0009）
-10. 金鑰只在 `cloud_client` 讀，不進 `os.environ`、log 或錯誤訊息。（0010）
+9. 雲端只用在 Slow Path 規劃（與長尾回答的第二次不帶工具的呼叫），失敗退回本機；不能繞過任何守門，不能謊稱已執行。（0009、0022）
+10. 金鑰只在 `cloud_client`（`AI_API_KEY`）、`search_client`（`BRAVE_API_KEY`）、`get_weather`（`CWA_API_KEY`）讀，不進 `os.environ`、log 或錯誤訊息；搜尋摘錄不寫 log、資料庫與對話記憶。（0010、0021、0022）
 11. 結果字串前綴 ✅／❌／⚠️／⏭️ 決定 status，不要把失敗寫成 ✅。送 LLM 的永遠是原句。
 12. 外部指令一律設逾時；`command_worker` 是單執行緒，不加長時間阻塞。效能主張要附實測數字。
 13. 桌面：依賴只能往下（`layers.test.js`）；匯流排只綁 127.0.0.1＋token＋不收 Origin；聊天室主動展開只用 `showInactive()`。（0012、0014）

@@ -17,6 +17,10 @@
 3. 開網站的放行只放寬原本會拒絕的呼叫，而且條件要全部成立：沒有搜尋字詞、不是資訊提問、有開啟動詞、只明說一個詞庫網站（「YouTube Music」不算）、query 的網域屬於該網站。放行時**改開網站首頁**，不用模型給的深層網址。原本就放行的呼叫不變。
 4. Fast Path `_r_site`：「動詞＋網站名稱」開首頁；同名的 App 優先於網站（「開 Google」開的是 Chrome）。
 
+## 後來的變更
+
+- 2026-11-23（[0022](0022-web-answer.md)）：有 `BRAVE_API_KEY` 時雲端多一個 `web_answer`，第 1 條的「只開放兩個工具」改成「兩個，加上有搜尋金鑰時的 `web_answer`」；其餘不變。
+
 ## 後果
 
 - 新增網站只改 `vocab/lexicon.json` 的 `sites`（`home`、`aliases`、`search_url`）。

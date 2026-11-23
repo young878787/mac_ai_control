@@ -143,9 +143,11 @@ cp .env.example .env && chmod 600 .env    # 然後編輯 .env，填入 AI_API_KE
 | `AI_API_URL` | OpenAI 相容端點，必須是 `https://`（預設 `https://chatapi.ntubimdbirc.tw`） |
 | `AI_MODEL` | 模型名稱（預設 `BIRC-LLM`） |
 | `AI_API_KEY` | 金鑰；**留空＝不使用雲端**，完全在本機執行 |
+| `BRAVE_API_KEY` | 選用：[Brave Search API](https://api-dashboard.search.brave.com) 金鑰。**要和 `AI_API_KEY` 一起填才啟用長尾問題直接回答**；留空＝這類問題照舊（雲端憑記憶回答或開搜尋網頁）。按次計費，用量上限請在 Brave 後台自己設 |
+| `CWA_API_KEY` | 選用：中央氣象署開放資料授權碼（免費）。**有填＝天氣先查氣象署，失敗改查 Open-Meteo；留空＝只用免金鑰的 Open-Meteo** |
 
 - `.env` 不入版控，程式只讀不寫；金鑰不會放進環境變數，也不會傳給 `mlx_vlm`、STT、Electron 子程序，紀錄與錯誤訊息都不含金鑰。
-- 會送到雲端的內容：Slow Path 的原句、前景 App 名稱、最近 5 輪對話摘要（60 秒內，含執行過的工具）；說「看畫面並翻譯／解釋／除錯」這類由雲端規劃的看畫面，會把縮小的**螢幕截圖**送到雲端（`config.CLOUD_VISION_ENABLED` 可關閉）。Fast Path 的指令、否定／敘述句（G1）、本機搜尋後轉交的判斷不送雲端。
+- 會送到雲端的內容：Slow Path 的原句、前景 App 名稱、最近 5 輪對話摘要（60 秒內，含執行過的工具）；說「看畫面並翻譯／解釋／除錯」這類由雲端規劃的看畫面，會把縮小的**螢幕截圖**送到雲端（`config.CLOUD_VISION_ENABLED` 可關閉）。Fast Path 的指令、否定／敘述句（G1）、本機搜尋後轉交的判斷不送雲端。長尾問題直接回答（有 `BRAVE_API_KEY` 時）另外會：把搜尋關鍵字（只有關鍵字，不含原句）送到 Brave、把搜尋結果的標題與摘要（不含網址）送到雲端。
 - `config.CLOUD_ENABLED = False` 可整個關閉雲端。啟動時會印一行雲端狀態。
 
 ### 4-1. 準備語音活動偵測模型（Silero VAD）
@@ -238,6 +240,30 @@ python main.py --stt-engine xasr  # 語音辨識改用備用引擎 X-ASR（見�
 
 否定、敘述、提問不會觸發（「我不想聽這首」「播放清單在哪」「聽我說」）；「聽說明天會下雨」「他想聽周杰倫」會交給模型判斷。搜尋用 YouTube／YouTube Music 網頁用的內部介面（InnerTube），不需要金鑰、不扣配額；搜尋失敗就改開搜尋頁並回報。只說歌手（「我想聽五月天」）會播 YouTube Music 上該歌手的第一首熱門歌曲，接著自動播合輯。偏好（聽歌紀錄、說法矯正、搜尋快取）存在本機 `data/music.sqlite3`：永久保存、不入版控、第一次啟動自動建立；結構與取捨見 [0019](docs/decisions/0019-music-play.md)。
 語音實機辨識歌名（H5）還沒有驗收；有聲自動播放、背景控制、媒體鍵（H1～H4）由使用者判定通過、沒有逐項實際執行，見 `docs/plans/completed/2026-11-21-music-play.md` §9。
+
+### 天氣
+
+問天氣直接在泡泡回答，不開網頁（Fast Path，不經 LLM）：
+
+| 說法 | 結果 |
+|---|---|
+| 台北天氣／今天高雄天氣／明天台中會下雨嗎／今晚新北幾度 | 回答今天白天、今晚、明天白天、明晚其中一段：天氣、溫度範圍、降雨機率，結尾標示來源 |
+| 今天天氣／會下雨嗎 | 沒說縣市時，用你最近最常問的縣市；還沒問過任何縣市就請你說一下縣市 |
+| 搜尋台北天氣／打開瀏覽器查台北天氣 | 照舊開網頁（明說要看畫面） |
+
+資料來源：有填 `CWA_API_KEY` 先查中央氣象署，失敗或逾時改查 Open-Meteo（免金鑰）；兩個都失敗就回「查不到」，不開網頁。否定、敘述句（「不要查天氣」「昨天天氣很好」）不會觸發；後天、週末、下週還沒支援。常問縣市只記你**明說**的縣市，存在本機 `data/music.sqlite3`。結構與取捨見 [0021](docs/decisions/0021-weather-answer.md)。
+
+### 長尾問題直接回答
+
+有 `AI_API_KEY` 與 `BRAVE_API_KEY` 時，Fast Path 沒命中的問句由雲端決定要不要上網查，查到就在泡泡回答（不開網頁）：
+
+| 說法 | 結果 |
+|---|---|
+| 周杰倫是誰／湖人最近一場比賽比數多少／全聯營業到幾點／最近有什麼新聞 | 搜尋後由雲端依摘錄回答 1～2 句，結尾問「要打開來源嗎？」 |
+| 好／要／打開來源（回答後 60 秒內，整句只有這樣） | 開第一筆來源網頁 |
+| 在 Google 搜尋周杰倫是誰／幫我上網看一下… | 明說要看畫面，照舊開網頁 |
+
+搜尋、雲端或摘錄裡沒有答案時，退回開 Google 搜尋頁並回 ⚠️，不謊稱查到。名詞片語（「故宮博物院開放時間」）沒有疑問，維持開網頁；Fast Path 命中的「查一下周杰倫是誰」「搜尋周杰倫是誰」也維持開 Google。搜尋摘錄只放在記憶體：不寫紀錄、不存資料庫（Brave 條款）。決策見 [0022](docs/decisions/0022-web-answer.md)。
 
 ## 桌面角色
 
@@ -347,6 +373,7 @@ python scripts/stt_bench.py list             # bench 一覽
 pytest              # 離線測試（預設，含錯字語料 tests/flow/test_typo.py）
 pytest -m unit      # 只跑單元層（約 1.4 秒，改程式時的快速回饋）；另有 -m flow（整條路由）、-m runtime（真執行緒／socket）
 pytest -m live      # 需要 mlx_vlm.server 已啟動並載入模型
+python bench/web_answer.py --show   # 連真的 Brave 與雲端跑 20 題長尾問題（延遲、選工具、回答與摘錄是否一致；需要兩把金鑰，會產生費用）
 pytest -m cloud -s  # 連真的雲端模型（需 .env 金鑰，約 200 次請求會產生費用）：規劃正確率／延遲、否定句、誠實、看圖、代名詞動作
 pytest -m app -v    # 真實 App 驗收：在 Safari、Finder、Terminal、VS Code 上實際執行並讀回狀態（會佔用螢幕約 2 分鐘）
 cd desktop && node --test   # 桌面角色的狀態機、聊天室紀錄、路徑白名單、分層規則與 IPC 頻道測試
@@ -367,8 +394,8 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
 | `mac_ai/wake.py` | 喚醒詞閘門與會話 |
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
-| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站；點歌：`youtube_client.py`（InnerTube 搜尋）、`music_prefs.py`（偏好、計分、拼音矯正） |
-| `mac_ai/db/` | 點歌偏好資料庫（`data/music.sqlite3`）的建立、備份與升級（Alembic migration）、從事件重算詞表（`rebuild.py`） |
+| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站；點歌：`youtube_client.py`（InnerTube 搜尋）、`music_prefs.py`（偏好、計分、拼音矯正）；天氣：`weather_client.py`（氣象署→Open-Meteo）、`weather_prefs.py`（常問縣市）；長尾回答：`search_client.py`（Brave 搜尋）、`sources.py`（來源追問） |
+| `mac_ai/db/` | 偏好資料庫（`data/music.sqlite3`，點歌與天氣常問縣市共用）的建立、備份與升級（Alembic migration）、從事件重算詞表（`rebuild.py`） |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`）；備用辨識引擎的伺服器（`xasr_server.py`）與熱詞編碼（`xasr_hotwords.py`） |
 | `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、注意力導演、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`animation/` 程序動畫、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 [ARCHITECTURE.md](ARCHITECTURE.md) |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |

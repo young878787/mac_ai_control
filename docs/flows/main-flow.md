@@ -63,7 +63,7 @@ flowchart TD
 3. 逐子句跑 `FastPathMatcher.match`。這是純比對：不執行、不讀前景、不碰網路或 LLM。順序：
    - 「讓電腦睡眠」固定句 → `canonicalize_clause`（去填充詞、「把 X 打開」改成「打開 X」）
    - → `_r_negated_command`（窄的否定即指令；含「不要再放這首」）→ `_blocked`（否定／敘述，`_narrative_exempt` 例外）→ None
-   - → `_read_screen_re` →「我最常聽什麼」（含「什麼」，所以在問句守門之前，只收這幾句）→ `_r_open_search` → `_r_search`（這三項在問句守門之前）→ `_QUESTION_RE` → None
+   - → `_read_screen_re` →「我最常聽什麼」（含「什麼」，所以在問句守門之前，只收這幾句）→ `_r_weather`（天氣窄規則，只豁免問句這一關，要在 `_blocked` 之後；[0021](../decisions/0021-weather-answer.md)）→ `_r_open_search` → `_r_search`（這幾項在問句守門之前）→ `_QUESTION_RE` → None
    - → `_r_front`（「播放」「暫停」「下一首」這類整句說法先比對）→ `_r_music_feedback`（換一首、我喜歡這首）→ `_r_music`（點歌，比對**原句**，不是 canonicalize 後的）→ `_r_tab` → `_r_project` → `_r_volume` → `_r_mute` → `_r_brightness` → `_r_dark` → `_r_lock`
    - → `_r_find` → `_r_pick` → `_r_site` → `_r_app` → `_r_front_degree`（第一個命中的規則勝出）
    - 命中 → `("fast", [子句], Match)`，各自成一步；未命中 → 併進前一個 slow 段（連續的才合併），否則新開 slow 段。
@@ -84,7 +84,7 @@ flowchart TD
 
 - `control_mac_app` 開瀏覽器或編輯器 → 記下 `last_browser`／`last_editor`，成功時重置前景快取；失敗 → `ctx.failed`。
 - `web_search`／`browser_tab`／`open_project`／`read_screen`：前置失敗就 ⏭️ 略過；對象依序是明說 → 同句剛開 → 前景 → 預設。
-- `LOCAL_TOOLS`（`open_folder`、`find_file`、`pick_choice`、`context_search`、`front_action`、`play_media`、`music_replace`、`music_feedback`、`music_top`）→ `local_actions`。
+- `LOCAL_TOOLS`（`open_folder`、`find_file`、`pick_choice`、`context_search`、`front_action`、`play_media`、`music_replace`、`music_feedback`、`music_top`、`get_weather`）→ `local_actions`。
 - `front_action` → `native.py`（視窗、選單、按鈕、App 指令；最後才送按鍵，送前重讀前景 pid）。
 - `read_screen` → `screencapture`；雲端路線且 `CLOUD_VISION_ENABLED` 時，看圖走雲端。
 
@@ -130,6 +130,55 @@ flowchart TD
 **回饋**：換一首（`music_replace`）改播同一次搜尋的下一個候選並釘選；喜歡／不要再放（`music_feedback`）讀 Safari 音樂分頁目前的 videoId；我最常聽什麼（`music_top`）把前 5 名放進 `ctx.replies`。這幾個都不連網、不呼叫 LLM。
 
 **定時整理**：`MusicMaintenance` 的計時器執行緒（`MAINT_POLL_S` 檢查一次）到期（啟動時一次、之後每 `MUSIC_MAINT_INTERVAL_S`）就把 `QueuedJob` 排進指令佇列，由 `command_worker` 做 `terms` 衰減與刪除；做完另開短命執行緒抓兩個首頁的 `clientVersion`（只做網路），結果再排回佇列寫入 `maintenance` 表。寫資料庫的永遠只有 `command_worker`。
+
+## G. 天氣
+
+決策見 [0021](../decisions/0021-weather-answer.md)。比對（`match()`）只看句子，產生 `get_weather(city, day, part)`；下面全是執行階段，在 `command_worker` 執行緒。
+
+```mermaid
+flowchart TD
+    M["Fast Path：_r_weather 命中（answer_mode＝answer）"] --> C{句子有縣市？}
+    C -- 有 --> R[記一筆 weather_queries]
+    C -- 沒有 --> D{default_city}
+    D -- 有 --> L
+    D -- 冷啟動 --> W["⚠️ 請使用者說縣市（不連網）"]
+    R --> L{有 CWA_API_KEY？}
+    L -- 有 --> G[氣象署 F-C0032-001]
+    L -- 沒有 --> O
+    G -- 成功且有這個時段 --> T[套固定模板＋標示來源]
+    G -- 失敗／逾時／沒有這個時段 --> O[Open-Meteo]
+    O -- 成功 --> T
+    O -- 失敗／逾時 --> E["❌ 查不到（不開網頁）"]
+    T --> P["ctx.replies 泡泡＋✅"]
+```
+
+- 預設縣市：最近 90 天明說次數最多（同票取最近）→ 全部歷史 → 冷啟動。用預設補上的縣市不記。
+- 氣象署的 36 小時資料在凌晨問明天、中午問明晚時沒有那個時段，視同失敗改查 Open-Meteo。
+- 錯誤只留分類（timeout、network、http_NNN、bad_json、bad_format、no_data），不含金鑰、網址與回應內容；每個來源各自逾時 `WEATHER_TIMEOUT_S`。
+- 資料庫還沒準備好：明說縣市照常回答、不記；沒說縣市當冷啟動。
+
+## H. 長尾回答與來源追問
+
+決策見 [0022](../decisions/0022-web-answer.md)。只有 `AI_API_KEY` 與 `BRAVE_API_KEY` 都有才啟用；比對（`match()`）完全不知道它。
+
+```mermaid
+flowchart TD
+    S[Fast Path 沒命中、守門沒擋的問句] --> P["雲端規劃（工具含 web_answer）"]
+    P -- 模型呼叫 web_answer --> V{validate_calls：answer_mode}
+    V -- 原句明說要看畫面 --> O["改成 web_search_or_open_url → 開 Google 頁（照舊）"]
+    V -- 原句在問事情 --> B["Brave 搜尋，只送 query（原句有「最近／今天／今年…」時加 freshness；近期沒結果就不過濾再搜一次）"]
+    B -- 失敗／逾時／沒有結果 --> F["開 Google 搜尋頁 + ⚠️"]
+    B -- 摘錄 --> A["第二次雲端呼叫（不帶工具）：依摘錄回答 1～2 句"]
+    A -- 失敗／逾時／查不到／被 max_tokens 截斷 --> F
+    A -- 答案 --> R["ctx.replies：答案＋要打開來源嗎？ + ✅；第一筆網址進 sources.STORE"]
+    R --> N{下一句}
+    N -- 單一子句且是「好／要／打開來源」，60 秒內 --> OS["open_source：開第一筆來源（不呼叫任何模型）"]
+    N -- 其他任何一句／過期 --> D[作廢]
+```
+
+- 待決來源在每句開頭 `sources.STORE.take()`（取走就清掉），所以下一句不是肯定回答就作廢；沒有待決時，「好」照平常的路由走。
+- 摘錄只在這次呼叫的記憶體裡：不寫 log、不進資料庫與對話記憶；送雲端的只有標題、摘要與網頁日期（`date` 屬性，Brave 的 `page_age`；XML 跳脫、不含網址）。回答那次推理照雲端設定（`low`），`max_tokens`＝`WEB_ANSWER_MAX_TOKENS`（4096），逾時 `WEB_ANSWER_TIMEOUT_S`。
+- 延遲與錯誤分類記在 `step["web"]`（`search_ms`、`results`、`freshness`、`fresh_retry`、`answer_ms`、`cloud`（含 `finish_reason`）、`error`），寫進 `commands.jsonl`。
 
 ## 量測鏈
 
