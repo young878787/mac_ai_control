@@ -1,4 +1,4 @@
-"""天氣偏好：記下使用者明說過的縣市，沒說縣市時用統計決定（計畫 docs/plans/active/2026-11-21-web-answer.md §4.7）。
+"""天氣偏好：記下使用者明說過的縣市，沒說縣市時用統計決定（計畫 docs/plans/completed/2026-11-21-web-answer.md §4.7）。
 本模組不碰網路與子程序。函式一律收呼叫端（command_worker 執行緒）的 sqlite3.Connection 與注入的 now（秒），
 不自己連線、不讀 time 全域；每個公開函式自己 commit；SQL 全部參數化。"""
 import sqlite3

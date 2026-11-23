@@ -94,7 +94,7 @@ CLOUD_TOOLS = _cloud_tools()
 CLOUD_SCHEMAS = {t["function"]["name"]: t["function"]["parameters"] for t in CLOUD_TOOLS}  # validate_tool_call 用
 
 
-# 長尾回答（計畫 docs/plans/active/2026-11-21-web-answer.md §4.3）：只有在 BRAVE_API_KEY 有填時才多給雲端這個工具（slow_path.plan_cloud），
+# 長尾回答（計畫 docs/plans/completed/2026-11-21-web-answer.md §4.3）：只有在 BRAVE_API_KEY 有填時才多給雲端這個工具（slow_path.plan_cloud），
 # 沒填時工具清單與以前逐字相同。模型只決定要不要查與 query；搜尋、摘錄、回答都由程式做（local_actions.web_answer），產出只是文字
 WEB_ANSWER_TOOL = {"type": "function", "function": {
     "name": "web_answer",

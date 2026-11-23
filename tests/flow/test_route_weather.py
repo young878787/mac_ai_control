@@ -1,5 +1,5 @@
 """天氣回答路由：Fast Path 窄規則 → get_weather → 氣象署（有金鑰）→ 失敗改查 Open-Meteo → 都失敗回查不到。
-計畫 docs/plans/active/2026-11-21-web-answer.md §4.1、§4.6、§4.7；驗收 A1～A5、A11～A13。語料可以加、不能刪。
+計畫 docs/plans/completed/2026-11-21-web-answer.md §4.1、§4.6、§4.7；驗收 A1～A5、A11～A13。語料可以加、不能刪。
 全部離線：網路用 tests/support/weather.py 的假 urlopen；時間固定在台北 2026-11-23 10:00。"""
 import json
 import sqlite3

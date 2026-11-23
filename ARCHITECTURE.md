@@ -15,7 +15,7 @@ Apple Silicon Mac 上的語音助手：麥克風 → 系統語音辨識（macos-
 | 點歌（`play_media`，沒快取） | 門檻 p50 ≤ 1.0 s、p95 ≤ 2.0 s | 是**驗收門檻**，2026-11-21 實測（R1，20 首、每句一個程序）p50 946 ms、p95 1175 ms；InnerTube 兩邊並行共用截止時間 `YT_TIMEOUT_S`＝2 秒，最差（兩邊都逾時）約 2 秒會擋住下一句，[0019](docs/decisions/0019-music-play.md) |
 | 點歌（有快取） | 門檻 p50 ≤ 0.3 s | 不連網；門檻實測待計畫 R2（找分頁改網址單項實測 p50 197 ms） |
 | 天氣（`get_weather`） | 驗收門檻 p50 ≤ 1.0 s、p95 ≤ 2.0 s | 2026-11-23 實測（R1，每句一個程序）：氣象署路線 p50 93 ms、p95 1117 ms；只有 Open-Meteo 路線 p50 845 ms、p95 905 ms。每個來源各 `WEATHER_TIMEOUT_S`＝2 秒，最差（兩個都逾時）實測 4.0 秒會擋住下一句，[0021](docs/decisions/0021-weather-answer.md) |
-| 長尾回答（`web_answer`） | 門檻 p50 ≤ 3.0 s、p95 ≤ 6.0 s（計畫 R2） | 規劃（雲端，`CLOUD_TIMEOUT_S`）＋Brave 搜尋（≤ `WEB_SEARCH_TIMEOUT_S`，近期沒結果時再搜一次）＋依摘錄回答（≤ `WEB_ANSWER_TIMEOUT_S`）；最差約 20 秒會擋住下一句；2026-11-23 實測 20 題（加日期、freshness、回答 `max_tokens` 4096 後）：p50 3.8 s、p95 6.5 s、最慢 7.9 s（回答呼叫逾時 6 s 後退回開搜尋頁）；同日其他輪 p50 1.65～3.17 s，雲端波動大，見計畫書 §9.5，[0022](docs/decisions/0022-web-answer.md) |
+| 長尾回答（`web_answer`） | 原門檻 p50 ≤ 3.0 s、p95 ≤ 6.0 s（計畫 R2）；實測未達，**使用者接受現況**（W27） | 規劃（雲端，`CLOUD_TIMEOUT_S`）＋Brave 搜尋（≤ `WEB_SEARCH_TIMEOUT_S`，近期沒結果時再搜一次）＋依摘錄回答（≤ `WEB_ANSWER_TIMEOUT_S`）；最差約 20 秒會擋住下一句；2026-11-23 實測 20 題（加日期、freshness、回答 `max_tokens` 4096 後）：p50 3.8 s、p95 6.5 s、最慢 7.9 s（回答呼叫逾時 6 s 後退回開搜尋頁）；同日其他輪 p50 1.65～3.17 s，雲端波動大，見計畫書 §9.5，[0022](docs/decisions/0022-web-answer.md) |
 | 端點偵測（說完到開始處理） | 完整指令靜音 0.35 秒就收句 | [0003](docs/decisions/0003-client-endpoint-detection.md) |
 
 ## 行程

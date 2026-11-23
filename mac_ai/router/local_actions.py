@@ -723,7 +723,7 @@ def music_top(ctx: Optional[ExecContext] = None) -> str:
     return f"✅ {text}"
 
 
-# ---------- 天氣（get_weather，計畫 docs/plans/active/2026-11-21-web-answer.md）----------
+# ---------- 天氣（get_weather，計畫 docs/plans/completed/2026-11-21-web-answer.md）----------
 _TAIPEI = datetime.timezone(datetime.timedelta(hours=8))  # 台灣沒有日光節約時間，不需要 zoneinfo
 
 

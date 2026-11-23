@@ -1,4 +1,4 @@
-"""長尾問題的網頁搜尋（Brave Search API）：query → 最多幾筆摘錄。計畫 docs/plans/active/2026-11-21-web-answer.md §4.3。
+"""長尾問題的網頁搜尋（Brave Search API）：query → 最多幾筆摘錄。計畫 docs/plans/completed/2026-11-21-web-answer.md §4.3。
 
 金鑰（BRAVE_API_KEY，經 config.env_value）只在這裡讀、只放 X-Subscription-Token 標頭（不放網址）；錯誤只留分類
 （timeout、network、http_429、bad_json、bad_format、no_results），例外訊息與回傳值不帶網址、金鑰或回應內容（比照 weather_client、ADR 0010）。

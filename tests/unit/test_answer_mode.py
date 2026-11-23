@@ -1,4 +1,4 @@
-"""answer_mode：開網頁還是直接回答（計畫 docs/plans/active/2026-11-21-web-answer.md §4.1、驗收 A1）。純函式，不碰 IO。
+"""answer_mode：開網頁還是直接回答（計畫 docs/plans/completed/2026-11-21-web-answer.md §4.1、驗收 A1）。純函式，不碰 IO。
 每一列至少 3 句；語料可以加、不能刪。"""
 import pytest
 

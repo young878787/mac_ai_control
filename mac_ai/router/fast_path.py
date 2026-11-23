@@ -88,7 +88,7 @@ def canonicalize_clause(clause: str) -> str:
     return s
 
 
-# ---- 查資訊：開網頁還是直接回答（計畫 docs/plans/active/2026-11-21-web-answer.md §4.1）。純比對，不碰網路、LLM、子程序，也不讀前景 ----
+# ---- 查資訊：開網頁還是直接回答（計畫 docs/plans/completed/2026-11-21-web-answer.md §4.1）。純比對，不碰網路、LLM、子程序，也不讀前景 ----
 # 明說要看畫面（瀏覽器、網站、Google、上網、給我看、顯示、在 X 搜尋、句首的搜尋）：開網頁，優先於一切（明說優先，同 0006）
 _OPEN_CUE_RE = re.compile(
     rf"瀏覽器|browser|safari|chrome|網站|網頁|官網|{_alt(SCOPE_WORDS['web'])}|給我看|讓我看|給我們看|秀出|秀給我|顯示|在.{{1,12}}?(?:搜尋|搜索)", re.IGNORECASE)
