@@ -7,7 +7,7 @@ from mac_ai.router import context
 from mac_ai.router.actions import ExecContext, run_tool
 from mac_ai.router.domain import _REALTIME_RE, SCOPE_WORDS, Intent, parse_find, resolve_intent, starts_with_find_verb
 from mac_ai.router.lexicon import (
-    APP_KIND, LEXICON, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_project,
+    APP_KIND, LEXICON, WEATHER_CITY_ALIASES, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_project,
 )
 from mac_ai.router.local_actions import plan_actions
 
@@ -86,6 +86,49 @@ def canonicalize_clause(clause: str) -> str:
         if m and not _ACTION_WORDS_RE.search(m["x"]):
             return f"{m['v']}{m['x']}"
     return s
+
+
+# ---- 查資訊：開網頁還是直接回答（計畫 docs/plans/active/2026-11-21-web-answer.md §4.1）。純比對，不碰網路、LLM、子程序，也不讀前景 ----
+# 明說要看畫面（瀏覽器、網站、Google、上網、給我看、顯示、在 X 搜尋、句首的搜尋）：開網頁，優先於一切（明說優先，同 0006）
+_OPEN_CUE_RE = re.compile(
+    rf"瀏覽器|browser|safari|chrome|網站|網頁|官網|{_alt(SCOPE_WORDS['web'])}|給我看|讓我看|給我們看|秀出|秀給我|顯示|在.{{1,12}}?(?:搜尋|搜索)", re.IGNORECASE)
+_LEAD_SEARCH_RE = re.compile(r"^(?:搜尋|搜索)")
+# 問句或要求告知：直接回答（「誰」不只收「是誰」：只收「是誰」時「勇士隊最近一場比賽誰贏了」被當成開網頁，2026-11-23 實測）
+_ASK_RE = re.compile(r"嗎|什麼|怎麼|怎樣|如何|多少|幾|會不會|誰|是不是|有沒有|哪|\?|？|告訴我|跟我說|和我說|報一下|播報|想知道|知道")
+# 有接 API 的高頻類別（目前只有天氣）；說了類別、沒說要看畫面，查／找也是要答案
+_CATEGORY_RE = re.compile(r"天氣|下雨|降雨|氣溫|溫度")
+
+
+def answer_mode(utterance: str) -> str:
+    """『open』（開網頁）或『answer』（直接回答）。依序：明說要看畫面→open；問句或要求告知→answer；
+    查／找＋高頻類別、只有類別名詞→answer；其餘（查周杰倫、查一下最近的新聞）→open（現況）。守門（否定、敘述）不在這裡，由呼叫端先擋"""
+    raw = utterance.strip()
+    s = canonicalize_clause(raw)
+    if _OPEN_CUE_RE.search(raw) or _LEAD_SEARCH_RE.match(s):
+        return "open"
+    if _ASK_RE.search(s) or _CATEGORY_RE.search(s):
+        return "answer"
+    return "open"
+
+
+# 天氣窄規則：整句要完全符合「（查／告訴我…）（縣市）（時間）（縣市）（的）主題（時間）（語尾）」才收，其餘（天氣之子是什麼電影、今天天氣好熱、打開天氣）一律不收
+_W_WHEN = {
+    "今天": ("today", ""), "今日": ("today", ""), "現在": ("today", ""), "目前": ("today", ""),
+    "今晚": ("today", "night"), "今夜": ("today", "night"), "今天晚上": ("today", "night"), "今日晚上": ("today", "night"),
+    "今早": ("today", "day"), "今天早上": ("today", "day"), "今天白天": ("today", "day"), "今天上午": ("today", "day"), "今天下午": ("today", "day"),
+    "明天": ("tomorrow", ""), "明日": ("tomorrow", ""), "隔天": ("tomorrow", ""),
+    "明晚": ("tomorrow", "night"), "明天晚上": ("tomorrow", "night"),
+    "明早": ("tomorrow", "day"), "明天早上": ("tomorrow", "day"), "明天白天": ("tomorrow", "day"), "明天上午": ("tomorrow", "day"), "明天下午": ("tomorrow", "day"),
+}
+_W_CITY = rf"(?:{_alt(list(WEATHER_CITY_ALIASES))})"
+_W_WHEN_RE = rf"(?:{_alt(list(_W_WHEN))})"
+_W_LEAD = r"(?:(?:查詢|查查|查|找找|找|看看|看|問|告訴我|跟我說|和我說|報一下|報|播報|知道|說|講)(?:一下下|一下|看看)?)?"
+# 主題：strong 單獨就算天氣（天氣、會下雨嗎、氣溫）；weak（幾度）一定要同時說了縣市或時間，不然太容易誤收
+_W_STRONG = r"(?P<strong>天氣|會不會(?:下雨|降雨)|(?:會|有)?(?:下雨|降雨)嗎|(?:下雨|降雨)機率|氣溫|溫度)"  # 下雨一定要帶疑問（嗎、會不會、機率）：『明天會下雨』可能是敘述，不收
+_W_WEAK = r"(?P<weak>幾度|多少度)"
+_W_TAIL = r"(?:預報|預測|狀況|情況|資訊|如何|怎麼樣|怎樣|嗎|多少|多高|是多少|有多高|幾度)?"
+_WEATHER_RE = re.compile(
+    rf"^{_W_LEAD}(?P<c1>{_W_CITY})?(?P<w1>{_W_WHEN_RE})?(?P<c2>{_W_CITY})?(?:的)?(?:{_W_STRONG}|{_W_WEAK})(?P<w2>{_W_WHEN_RE})?{_W_TAIL}$")
 
 
 class Match:
@@ -208,6 +251,9 @@ class FastPathMatcher:
                 return Match([("read_screen", {})])
         if self._music_top_re.match(s):  # 『我最常聽什麼』含『什麼』：要在問句守門之前判斷，只收這幾句
             return Match([("music_top", {})])
+        m = self._r_weather(raw, s)  # 天氣問句（含『會下雨嗎』『幾度』）：在問句守門與搜尋規則之前；明說要看畫面的句子這條不收，照舊走搜尋
+        if m is not None:
+            return m
         # 句首是明確的搜尋動詞：關鍵字裡的疑問詞（『搜尋台北天氣怎麼樣』）是搜尋內容，不是在問助理，所以先於問句守門
         for rule in (self._r_open_search, self._r_search):
             m = rule(s, candidates)
@@ -268,6 +314,23 @@ class FastPathMatcher:
         return Match(plan_actions(intent), intent.confidence, intent.note, intent)
 
     # ---- 規則：命中回傳 Match，否則 None ----
+    @staticmethod
+    def _r_weather(raw: str, s: str) -> Optional[Match]:
+        """『台北天氣』『明天會下雨嗎』『查一下台北天氣』『今天幾度』→ get_weather(city, day, part)；city 空字串＝用常問的縣市（執行時才查資料庫）。
+        只讀資料、不改變狀態，是 0007（提問不走 Fast）的例外；否定、敘述仍由 _blocked 先擋。
+        明說要看畫面（answer_mode＝open）、說了兩個不同縣市或時間、後天／週末（超過 36 小時）都不收，照舊走搜尋或交給 Slow Path"""
+        if not (_CATEGORY_RE.search(s) or "度" in s):  # 便宜的前置檢查
+            return None
+        m = _WEATHER_RE.match(re.sub(r"\s+", "", s))
+        if m is None:
+            return None
+        cities = {WEATHER_CITY_ALIASES[c] for c in (m["c1"], m["c2"]) if c}
+        whens = {_W_WHEN[w] for w in (m["w1"], m["w2"]) if w}
+        if len(cities) > 1 or len(whens) > 1 or (m["weak"] and not (cities or whens)) or answer_mode(raw) != "answer":
+            return None
+        day, part = next(iter(whens), ("today", ""))
+        return Match([("get_weather", {"city": next(iter(cities), ""), "day": day, "part": part})])
+
     def _r_open_search(self, s: str, candidates: bool) -> Optional[Match]:
         """『開 google 搜尋 X』→ 開瀏覽器 + 搜尋；『開瀏覽器查 X』→ 只搜尋，不另外開 App"""
         m = self._open_search_re.match(s)

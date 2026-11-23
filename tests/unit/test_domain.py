@@ -142,7 +142,7 @@ MATCH_CASES = [
     ("打開郵件", APP("Mail")),
     ("打開下載資料夾", [("open_folder", {"path_key": "Downloads"})]),
     ("找桌面", [("open_folder", {"path_key": "Desktop"})]),
-    ("幫我找一下台北天氣", [("web_search_or_open_url", {"query": "台北天氣"})]),
+    ("幫我找一下最近的新聞", [("web_search_or_open_url", {"query": "最近的新聞"})]),
     ("網路上找 Xcode", [("web_search_or_open_url", {"query": "Xcode"})]),
     ("搜尋最近的新聞", [("web_search_or_open_url", {"query": "最近的新聞"})]),
     ("找 report.pdf", FIND(name="report", kinds=["pdf"], filename="report.pdf", local_only=True, action="reveal")),

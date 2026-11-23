@@ -55,6 +55,13 @@ TERM_MISHEARD: Dict[str, str] = {e["text"].lower(): e["to"] for e in LEXICON.get
 S2T: Dict[str, str] = LEXICON.get("s2t", {})
 # 專案根目錄：第一層資料夾自動視為專案
 PROJECT_ROOTS: List[str] = list(LEXICON.get("project_roots", []))
+# 天氣縣市：別名 → 標準名稱（氣象署的 locationName）、標準名稱 → (緯度, 經度)（縣市政府所在地，Open-Meteo 查詢用）
+WEATHER_CITY_ALIASES: Dict[str, str] = {}
+WEATHER_CITY_COORDS: Dict[str, Tuple[float, float]] = {}
+for _c in LEXICON["weather"]["cities"]:
+    WEATHER_CITY_COORDS[_c["name"]] = (_c["lat"], _c["lon"])
+    for _a in [_c["name"], *_c["aliases"]]:
+        WEATHER_CITY_ALIASES[_a] = _c["name"]
 
 _VERBS = LEXICON.get("verbs", {})
 OPEN_VERBS: List[str] = _VERBS.get("open", ["打開", "開啟", "啟動", "叫出", "開"])

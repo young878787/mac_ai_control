@@ -33,7 +33,7 @@ def test_reroute_find_to_folder_and_file(monkeypatch, xcode):
 @pytest.mark.parametrize("utterance,query", [
     ("搜尋 Xcode", "Xcode"),  # 『搜尋／查』沒有範圍詞：維持網頁搜尋
     ("查一下 Xcode", "Xcode"),
-    ("幫我找一下台北天氣", "台北天氣"),  # 即時資訊維持網頁
+    ("幫我找一下最近的新聞", "最近的新聞"),  # 即時資訊維持網頁（天氣改走回答，見 test_route_weather.py）
     ("網路上找 Xcode", "Xcode"),
     ("不要找 Xcode", "Xcode"),  # 否定句不導向（維持 LLM 原本的決定）
     ("找 Xcode 嗎", "Xcode"),  # 提問不導向
@@ -86,7 +86,7 @@ NO_LLM_CASES = [
     ("找 report.pdf", "local"),
     ("找昨天下載的 PDF", "local"),
     ("搜尋一下 Xcode 是什麼", "web"),
-    ("找一下台北天氣", "web"),
+    ("找一下最近的新聞", "web"),
 ]
 
 
@@ -230,7 +230,7 @@ def test_escalation_with_two_web_searches_opens_one_page(monkeypatch, find_env):
 def test_model_search_outside_escalation_keeps_the_models_keywords(monkeypatch, sh):
     """範圍：一般由模型發起的網頁搜尋（不是本機 0 筆轉交）這次不動，仍用模型給的關鍵字"""
     llm_always(monkeypatch, [tc("web_search_or_open_url", '{"query":"台北天氣"}')])
-    r.process_voice_command("今天台北會下雨嗎")
+    r.process_voice_command("今天台北天氣會很熱嗎")
     assert sh == [["open", "https://www.google.com/search?q=%E5%8F%B0%E5%8C%97%E5%A4%A9%E6%B0%A3"]]
 
 

@@ -45,7 +45,7 @@ def test_info_question_drops_state_tools_then_chats(llm, sh):
 
 def test_info_question_keeps_search(llm, sh):
     llm.plan = [tc("system_power_action", {"action": "dark_mode_on"}), tc("web_search_or_open_url", {"query": "台北天氣"})]
-    out = r.process_voice_command("台北天氣怎麼樣")
+    out = r.process_voice_command("台北天氣怎麼這麼熱")
     assert sh == [["open", "https://www.google.com/search?q=%E5%8F%B0%E5%8C%97%E5%A4%A9%E6%B0%A3"]]
     assert out["steps"][0]["guard_dropped"] == ["system_power_action"] and llm.chats == []
 
@@ -55,7 +55,7 @@ def test_info_question_keeps_search(llm, sh):
     ("可以幫我開小算盤嗎", [tc("control_mac_app", {"app_name": "Calculator", "action": "open"})], [["open", "-a", "Calculator"]]),
     ("你可以幫我鎖定螢幕嗎", [tc("system_power_action", {"action": "lock_screen"})],
      [["osascript", "-e", 'tell application "System Events" to keystroke "q" using {control down, command down}']]),
-    ("今天台北會下雨嗎", [tc("web_search_or_open_url", {"query": "台北天氣"})],
+    ("今天台北天氣會很熱嗎", [tc("web_search_or_open_url", {"query": "台北天氣"})],
      [["open", "https://www.google.com/search?q=%E5%8F%B0%E5%8C%97%E5%A4%A9%E6%B0%A3"]]),
     ("不是啦我是說把音量調到30", [tc("set_system_volume", {"level": 30})], [["osascript", "-e", "set volume output volume 30"]]),
 ])

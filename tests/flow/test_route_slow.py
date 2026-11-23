@@ -61,9 +61,9 @@ def test_hint_injected_only_when_alias_present(monkeypatch):
 def test_pipeline_mixed_routes_unmatched_to_llm(monkeypatch, sh):
     llm = FakeLLM([tc("adjust_screen_brightness", '{"direction":"down","steps":3}'),
                    tc("web_search_or_open_url", '{"query":"台北天氣"}')]).install(monkeypatch)
-    r.process_voice_command("打開終端機，順便螢幕太亮了，還有今天台北會下雨嗎")
+    r.process_voice_command("打開終端機，順便螢幕太亮了，還有今天台北天氣會很熱嗎")
     assert sh[0] == ["open", "-a", "Terminal"]
-    assert llm.texts == ["螢幕太亮了，今天台北會下雨嗎"]
+    assert llm.texts == ["螢幕太亮了，今天台北天氣會很熱嗎"]
     assert sh[2] == ["open", "https://www.google.com/search?q=%E5%8F%B0%E5%8C%97%E5%A4%A9%E6%B0%A3"]
 
 
@@ -91,10 +91,10 @@ def test_pipeline_keeps_spoken_order(monkeypatch, sh, installed_apps):
 def test_pipeline_slow_fast_slow_splits_segments(monkeypatch, sh):
     llm = FakeLLM(by_text={
         "螢幕太亮了": [tc("adjust_screen_brightness", '{"direction":"down","steps":3}')],
-        "今天台北會下雨嗎": [tc("web_search_or_open_url", '{"query":"台北天氣"}')],
+        "今天台北天氣會很熱嗎": [tc("web_search_or_open_url", '{"query":"台北天氣"}')],
     }).install(monkeypatch)
-    out = r.process_voice_command("螢幕太亮了，靜音，今天台北會下雨嗎")
-    assert llm.texts == ["螢幕太亮了", "今天台北會下雨嗎"]  # 被 Fast Path 的『靜音』隔開 → 兩次 LLM
+    out = r.process_voice_command("螢幕太亮了，靜音，今天台北天氣會很熱嗎")
+    assert llm.texts == ["螢幕太亮了", "今天台北天氣會很熱嗎"]  # 被 Fast Path 的『靜音』隔開 → 兩次 LLM
     assert [c[2] if c[0] == "osascript" else c[0] for c in sh] == [
         sh[0][2], "set volume output muted true", "open"]
     assert "key code 145" in sh[0][2]

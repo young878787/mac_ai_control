@@ -273,7 +273,7 @@ def test_failed_editor_skips_project(sh, projects):
 def test_llm_search_uses_browser_opened_earlier(monkeypatch, sh):
     monkeypatch.setattr(llm_client, "_chat", lambda messages, **kw: {"tool_calls": [
         tc("web_search_or_open_url", '{"query":"台北天氣"}')]})
-    r.process_voice_command("開 Safari，今天台北會下雨嗎")
+    r.process_voice_command("開 Safari，今天台北天氣會很熱嗎")
     assert sh == [APP("Safari"), SEARCH("台北天氣", "Safari")]
 
 
@@ -289,7 +289,7 @@ def test_timing_structure(monkeypatch, sh):
                                tc("web_search_or_open_url", '{"query":"台北天氣"}')]}
 
     monkeypatch.setattr(llm_client, "_chat", fake)
-    out = r.process_voice_command("開 Chrome，螢幕太亮了，還有今天台北會下雨嗎，靜音")
+    out = r.process_voice_command("開 Chrome，螢幕太亮了，還有今天台北天氣會很熱嗎，靜音")
     assert set(out) == {"stages", "steps", "replies", "total_ms", "expand"}
     assert out["expand"] == "complex"  # 4 個動作
     assert set(out["stages"]) == {"normalize_ms", "split_ms", "match_ms"}

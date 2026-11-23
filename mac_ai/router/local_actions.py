@@ -3,6 +3,7 @@
 檔案搜尋用 Spotlight（mdfind），只搜家目錄且排除 ~/Library；預設只在 Finder 中顯示，
 使用者明說『打開』才開檔，而且可執行檔一律只顯示。這裡的工具只放在 LOCAL_TOOLS，
 不在 LLM 的 TOOLS_SCHEMA 裡，所以 LLM 叫不到它們。"""
+import datetime
 import os
 import random
 import re
@@ -11,6 +12,7 @@ import time
 import urllib.parse
 from typing import Callable, Dict, List, Optional, Tuple
 
+from mac_ai import config
 from mac_ai.config import CONTEXT_TIMEOUT_S, FILE_SEARCH_TIMEOUT_S, FIND_RESULTS_MAX
 from mac_ai.router import choices, context, native
 from mac_ai.router.actions import (
@@ -20,7 +22,7 @@ from mac_ai.router.actions import (
 from mac_ai.router.domain import Intent
 from mac_ai.router.lexicon import LEXICON
 from mac_ai import db as music_db
-from mac_ai.router import music_prefs, youtube_client
+from mac_ai.router import music_prefs, weather_client, weather_prefs, youtube_client
 
 _FOLDERS = {f["key"]: f for f in LEXICON["known_folders"]}
 _KINDS = LEXICON["file_kinds"]
@@ -721,8 +723,39 @@ def music_top(ctx: Optional[ExecContext] = None) -> str:
     return f"✅ {text}"
 
 
+# ---------- 天氣（get_weather，計畫 docs/plans/active/2026-11-21-web-answer.md）----------
+_TAIPEI = datetime.timezone(datetime.timedelta(hours=8))  # 台灣沒有日光節約時間，不需要 zoneinfo
+
+
+def get_weather(city: str = "", day: str = "today", part: str = "", ctx: Optional[ExecContext] = None) -> str:
+    """天氣回答（只讀資料：不開網頁、不呼叫 LLM）。city 空字串＝用資料庫統計的常問縣市，沒有紀錄就請使用者說縣市（不猜、不定位）；
+    句子明說的縣市記進資料庫（不管查不查得到）。有 CWA_API_KEY 先查氣象署，沒有金鑰或失敗改查 Open-Meteo，兩個都失敗回 ❌ 查不到。
+    資料庫還沒準備好（conn() 是 None）：明說縣市照常回答、只是不記；沒說縣市當冷啟動。結果文字放進 ctx.replies（泡泡）"""
+    t0 = time.perf_counter()
+    info: dict = ctx.step.setdefault("weather", {}) if ctx is not None and ctx.step is not None else {}
+    now = _now()
+    conn = MUSIC_DB.conn()
+    explicit = bool(city)
+    if explicit:
+        if conn is not None:
+            _db_call(info, weather_prefs.record_city, conn, city, now)
+    else:
+        city = (_db_call(info, weather_prefs.default_city, conn, now) if conn is not None else None) or ""
+        if not city:
+            info.update(city="", cold_start=True)
+            return weather_prefs.COLD_START_MESSAGE
+    res = weather_client.lookup(city, day, part, datetime.datetime.fromtimestamp(now, _TAIPEI).replace(tzinfo=None),
+                                config.env_value("CWA_API_KEY").strip())
+    info.update(city=city, explicit=explicit, source=res.source, tried=res.tried, ms=(time.perf_counter() - t0) * 1000)
+    if res.text is None:
+        return f"❌ 嗚…我查不到{city}的天氣耶，氣象服務好像沒有回應，等一下再問我一次好嗎？"
+    if ctx is not None:
+        ctx.replies.append(res.text)
+    return f"✅ {res.text}"
+
+
 LOCAL_TOOLS.update({
     "open_folder": open_folder, "find_file": find_file, "pick_choice": pick_choice,
     "context_search": context_search, "front_action": front_action, "play_media": play_media,
-    "music_replace": music_replace, "music_feedback": music_feedback, "music_top": music_top,
+    "music_replace": music_replace, "music_feedback": music_feedback, "music_top": music_top, "get_weather": get_weather,
 })

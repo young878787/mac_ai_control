@@ -105,7 +105,7 @@ HITS = [
     ("讓電腦睡眠", [SLEEP]),
     # --- 搜尋與開網站 ---
     ("搜尋台北天氣", [SEARCH("台北天氣")]),
-    ("查一下台北天氣", [SEARCH("台北天氣")]),
+    ("查一下最近的新聞", [SEARCH("最近的新聞")]),  # 查天氣改走回答（test_route_weather.py）
     ("上網查台北天氣", [SEARCH("台北天氣")]),
     ("搜索台北天氣", [SEARCH("台北天氣")]),
     ("google 一下台北天氣", [SEARCH("台北天氣")]),
@@ -172,7 +172,7 @@ def test_fast_path_hit(sh, clause, expected):
 
 
 @pytest.mark.parametrize("clause", [
-    "把音量調大一點", "今天天氣如何", "",
+    "把音量調大一點", "今天股價如何", "",
 ])
 def test_fast_path_miss(sh, clause):
     assert r.FastPathMatcher().try_execute(clause) is None
@@ -376,6 +376,6 @@ def test_open_browser_then_search_keyword_only(monkeypatch, sh):
     assert sh == [APP(CHROME), SEARCH("今天台北天氣", CHROME)]
 
 
-@pytest.mark.parametrize("text", ["搜尋", "搜尋一下", "查一下", "搜尋嗎", "可以搜尋嗎", "查看音量", "怎麼搜尋", "今天天氣如何", "什麼是搜尋"])
+@pytest.mark.parametrize("text", ["搜尋", "搜尋一下", "查一下", "搜尋嗎", "可以搜尋嗎", "查看音量", "怎麼搜尋", "今天股價如何", "什麼是搜尋"])
 def test_search_without_keyword_or_asking_about_search_is_not_fast(text):
     assert all(m is None for m in fast_matches(text)), text

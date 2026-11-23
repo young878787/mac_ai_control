@@ -25,7 +25,7 @@ def _isolate_router(request, monkeypatch, tmp_path):
     r.reset_llm_breaker()
     real_cloud = request.node.get_closest_marker("cloud") is not None  # cloud 實測要讀真的 .env、連真的雲端
     if not real_cloud:
-        for name in ("AI_API_URL", "AI_MODEL", "AI_API_KEY"):  # 雲端預設停用：不讀這台電腦的 .env 與環境變數（cloud fixture 才開）
+        for name in ("AI_API_URL", "AI_MODEL", "AI_API_KEY", "CWA_API_KEY"):  # 雲端與氣象署預設停用：不讀這台電腦的 .env 與環境變數（cloud fixture 與天氣測試的 with_key 才開）
             monkeypatch.delenv(name, raising=False)
         monkeypatch.setattr(config, "ENV_PATH", tmp_path / "no.env")
     config.reset_env_cache()

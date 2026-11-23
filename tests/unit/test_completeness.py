@@ -26,7 +26,7 @@ CASES = [
     ("打開 YouTube", COMPLETE), ("開油管", COMPLETE), ("上 YouTube", COMPLETE), ("幫我開瀏覽器看 YouTube", COMPLETE), ("開 GitHub 首頁", COMPLETE),
     ("打開 YouTube 然後", INCOMPLETE), ("打開 YouTube，", COMPLETE), ("打開 You", UNKNOWN), ("去 YouTube 看影片", UNKNOWN), ("打開 YouTube Music", UNKNOWN),
     # 半個詞、聽不懂、聊天：交給預設門檻
-    ("打開小", UNKNOWN), ("今天天氣怎麼樣", UNKNOWN), ("你好", UNKNOWN),
+    ("打開小", UNKNOWN), ("今天天氣怎麼樣", COMPLETE), ("今天天氣很好", UNKNOWN), ("你好", UNKNOWN),  # 天氣問句走 Fast Path 回答，所以完整；敘述不收
     ("", UNKNOWN), ("   ", UNKNOWN), ("，。", UNKNOWN),
 ]
 

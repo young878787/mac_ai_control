@@ -101,10 +101,16 @@ YT_WEB_HOME_URL = "https://www.youtube.com/"  # 定時整理時從首頁讀新�
 YT_MUSIC_HOME_URL = "https://music.youtube.com/"
 YT_WEB_CLIENT_VERSION = "2.20261119.07.00"  # 預設值；maintenance 表有新值時用新值
 YT_MUSIC_CLIENT_VERSION = "1.20261117.06.00"
-MUSIC_DB_PATH = ROOT / "data" / "music.sqlite3"  # 點歌偏好（永久保存、不入版控，啟動時自動建立）
+MUSIC_DB_PATH = ROOT / "data" / "music.sqlite3"  # 偏好資料庫（點歌、天氣常問縣市；永久保存、不入版控，啟動時自動建立）
 MUSIC_CACHE_TTL_S = 30 * 86400.0  # query→videoId 快取多久沒用就重新查（pinned 不過期）
 MUSIC_MAINT_INTERVAL_S = 6 * 3600.0  # 定時整理（terms 衰減與刪除、clientVersion 更新）的間隔
 MUSIC_TERMS_MAX = 500  # 點歌字詞矯正詞表上限
+
+# --- 天氣（回答不開網頁）。有 CWA_API_KEY 先用氣象署，失敗或沒有金鑰就用 Open-Meteo（免金鑰）；兩個都失敗直接回查不到
+WEATHER_TIMEOUT_S = 2.0  # 每個來源各自的逾時（最差兩個都逾時約 4 秒）
+CWA_FORECAST_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001"  # 今明 36 小時縣市預報；舊網域 opendata.cwb.gov.tw 已不存在（2026-11-23 實測）
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+WEATHER_DEFAULT_WINDOW_S = 90 * 86400.0  # 沒說縣市時，「常問縣市」統計的時間窗口
 
 # macos-stt 是獨立子專案（自己的 venv），語音辨識授權必須在它的 .app bundle 內取得，所以用 start.py serve 啟動
 STT_DIR = ROOT / "macos-stt"

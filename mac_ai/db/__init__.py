@@ -1,4 +1,4 @@
-"""點歌偏好資料庫（計畫 §4.4）。執行期只用內建 sqlite3；alembic／sqlalchemy 只在 ensure_schema 函式內 import（D6）。
+"""偏好資料庫（點歌計畫 §4.4；天氣常問縣市見 web-answer 計畫 §4.7）。執行期只用內建 sqlite3；alembic／sqlalchemy 只在 ensure_schema 函式內 import（D6）。
 
 用法：啟動時 `MusicDb(...).start()` 在背景準備 schema（不阻塞）；`command_worker` 呼叫 `db.conn()`：
 準備好之前回 None（照常播放、不寫紀錄），之後回這個執行緒專屬的連線。
@@ -14,7 +14,7 @@ from typing import Callable, Dict, Optional, Union
 
 from mac_ai import config
 
-HEAD_VERSION = 1  # 目前 migration 的 PRAGMA user_version；新增 revision 時一起改
+HEAD_VERSION = 2  # 目前 migration 的 PRAGMA user_version；新增 revision 時一起改
 DEFAULT_SCRIPT_LOCATION = Path(__file__).parent / "migrations"
 CONNECT_TIMEOUT_S = 5.0
 

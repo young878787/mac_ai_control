@@ -77,7 +77,7 @@ SEARCH_CASES = [
     ("B3", "Safari", GH, "查 mlx", [["open", "-a", "Safari", "https://github.com/search?q=mlx"]], "✅ 已在 GitHub 搜尋：mlx"),
     ("B4", "Safari", "www.google.com", "查貓咪", [["open", "-a", "Safari", URL("貓咪")]], "✅ 已在 Google 搜尋：貓咪"),
     ("B5", "Safari", "example.com", "查貓咪", [["open", "-a", "Safari", URL("貓咪")]], "✅ 已開啟瀏覽器搜尋：貓咪"),
-    ("B6", "Safari", FB, "查台北天氣", [["open", "-a", "Safari", URL("台北天氣")]], "✅ 已開啟瀏覽器搜尋：台北天氣"),
+    ("B6", "Safari", FB, "查最近的新聞", [["open", "-a", "Safari", URL("最近的新聞")]], "✅ 已開啟瀏覽器搜尋：最近的新聞"),
     ("B7", "Safari", FB, "上網查貓咪", [["open", "-a", "Safari", URL("貓咪")]], "✅ 已開啟瀏覽器搜尋：貓咪"),
     ("B7b", "Safari", FB, "google 一下貓咪", [["open", "-a", "Safari", URL("貓咪")]], "✅ 已開啟瀏覽器搜尋：貓咪"),
     ("B8", "Finder", "", "查貓咪", [["open", URL("貓咪")]], "✅ 已開啟瀏覽器搜尋：貓咪"),
@@ -99,7 +99,7 @@ def test_search_routing_table(monkeypatch, sh, front, case, front_app, host, tex
 def test_b6_b7_do_not_read_the_url(sh, front):
     """明說上網或查即時資訊：不需要知道現在在哪個網站，不花 200 ms 問網址"""
     reads = front("Safari", host=FB)
-    r.process_voice_command("查台北天氣，上網查貓咪")
+    r.process_voice_command("查最近的新聞，上網查貓咪")
     assert ("host", "Safari") not in reads
 
 
