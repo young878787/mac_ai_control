@@ -1,5 +1,5 @@
 """常搜名詞（查／找／搜尋）：記下使用者明說的範圍與從聯合清單選的那一邊，決定下次先列哪一邊、要不要直接用
-（計畫 docs/plans/active/2026-11-23-query-routing.md §4.4、U5、U6、U8）。
+（計畫 docs/plans/completed/2026-11-23-query-routing.md §4.4、U5、U6、U8）。
 本模組不碰網路與子程序。函式一律收呼叫端（command_worker 執行緒）的 sqlite3.Connection 與注入的 now（秒），
 不自己連線、不讀 time 全域；每個公開函式自己 commit；SQL 全部參數化。
 只記使用者說的詞與選了哪一邊：網路那邊不記網址、標題（Brave 條款不准把搜尋結果存成資料庫）。

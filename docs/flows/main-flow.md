@@ -17,7 +17,7 @@ flowchart TD
     PVC --> Norm[normalize_utterance] --> Split[split_clauses] --> Match{逐子句<br/>FastPathMatcher.match}
     Match -- 命中 --> Fast[fast 步驟 → Match.run → run_tool]
     Match -- 未命中 --> Slow[slow 段 → execute_slow_path_llm]
-    Fast -- find_file 0 筆且沒有本機證據 --> Esc[轉交：瀏覽器在前景 → context_search<br/>否則本機 LLM local_miss]
+    Fast -- find_file 0 筆且沒有本機證據 --> Esc[轉交：瀏覽器在前景 → context_search<br/>否則 Slow Path local_miss（雲端優先）]
     Fast & Slow & Esc & Choice --> Run[actions.run_tool → _dispatch]
     Run --> Res[result 事件＋commands.jsonl]
     Res --> Role[角色視窗＋泡泡]
@@ -63,18 +63,20 @@ flowchart TD
 3. 逐子句跑 `FastPathMatcher.match`。這是純比對：不執行、不讀前景、不碰網路或 LLM。順序：
    - 「讓電腦睡眠」固定句 → `canonicalize_clause`（去填充詞、「把 X 打開」改成「打開 X」）
    - → `_r_negated_command`（窄的否定即指令；含「不要再放這首」）→ `_blocked`（否定／敘述，`_narrative_exempt` 例外）→ None
-   - → `_read_screen_re` →「我最常聽什麼」（含「什麼」，所以在問句守門之前，只收這幾句）→ `_r_weather`（天氣窄規則，只豁免問句這一關，要在 `_blocked` 之後；[0021](../decisions/0021-weather-answer.md)）→ `_r_open_search` → `_r_search`（這幾項在問句守門之前）→ `_QUESTION_RE` → None
+   - → `_read_screen_re` →「我最常聽什麼」（含「什麼」，所以在問句守門之前，只收這幾句）→ `classify_query(stage="lead")`（天氣、會變的事實、查／搜尋＋問句或名詞、明說網路；只豁免問句這一關，要在 `_blocked` 之後；[0021](../decisions/0021-weather-answer.md)、[0023](../decisions/0023-query-routing.md)，見 I）→ `_route_query` → `_QUESTION_RE` → None
    - → `_r_front`（「播放」「暫停」「下一首」這類整句說法先比對）→ `_r_music_feedback`（換一首、我喜歡這首）→ `_r_music`（點歌，比對**原句**，不是 canonicalize 後的）→ `_r_tab` → `_r_project` → `_r_volume` → `_r_mute` → `_r_brightness` → `_r_dark` → `_r_lock`
-   - → `_r_find` → `_r_pick` → `_r_site` → `_r_app` → `_r_front_degree`（第一個命中的規則勝出）
+   - → `_r_find`（`classify_query(stage="find")`）→ `_r_pick` → `_r_site` → `_r_app` → `_r_front_degree`（第一個命中的規則勝出）
    - 命中 → `("fast", [子句], Match)`，各自成一步；未命中 → 併進前一個 slow 段（連續的才合併），否則新開 slow 段。
 4. 建立 `ExecContext`（整句共用、不跨語句），依說話順序跑每一段：
    - **fast** → `Match.run` → `run_tool`（逐個動作）
      - `find_file` 0 筆且不是 `local_only` → `ctx.escalate` → `_escalate_to_llm`（查詢用原話＋`restore_misheard`）
        - 前景是瀏覽器 → `context_search`（不問模型）
-       - 否則 → `execute_slow_path_llm(local_miss=…)`（只走本機 LLM）；LLMError → `local_miss_reply`
+       - 否則 → `execute_slow_path_llm(local_miss=…)`（有雲端金鑰走雲端規劃，否則本機 LLM）；LLMError → `local_miss_reply`
+     - `web_answer` 兩把金鑰都沒有 → `ctx.escalate`（kind slow）→ `_escalate_to_llm` 用 `match(answer=False)` 重比：命中就走舊路線（開網頁、找檔案），沒命中交給本機 Slow Path
    - **slow** → `execute_slow_path_llm`（送原句，不是 canonicalize 後的）
      - LLMError → `_recover_slow_segment`：`match(candidates=True)` 有候選才執行，否則回「AI 無法使用」
    - `step["status"] = _step_status`：`ctx.status` 優先，再看結果字串前綴（❌⚠️ → exec_failed、⏭️ → skipped）。
+   - fast 步驟成功、沒有轉交、而且有分類結果 → `record_explicit_search`（明說範圍的找／搜尋記一筆統計，見 I）。
 5. `memory.STORE.add`（原句、工具與成敗、回覆）→ 回傳 `{stages, steps, replies, total_ms}`，有 expand 才帶。
 6. `expand_reason`（聊天室主動展開，只看這一句的 ctx）：`read_screen` 成功 → screen；`ctx.ai_reply`（本機 chat call 或被採用的雲端文字）→ chat；動作數（`ctx.calls` 不含 `chat_reply`）≥ `EXPAND_MIN_ACTIONS`，或回覆總字數 > `EXPAND_REPLY_CHARS` → complex；都不是就沒有 expand。
 
@@ -84,7 +86,7 @@ flowchart TD
 
 - `control_mac_app` 開瀏覽器或編輯器 → 記下 `last_browser`／`last_editor`，成功時重置前景快取；失敗 → `ctx.failed`。
 - `web_search`／`browser_tab`／`open_project`／`read_screen`：前置失敗就 ⏭️ 略過；對象依序是明說 → 同句剛開 → 前景 → 預設。
-- `LOCAL_TOOLS`（`open_folder`、`find_file`、`pick_choice`、`context_search`、`front_action`、`play_media`、`music_replace`、`music_feedback`、`music_top`、`get_weather`）→ `local_actions`。
+- `LOCAL_TOOLS`（`open_folder`、`find_file`、`federated_search`、`pick_choice`、`context_search`、`front_action`、`play_media`、`music_replace`、`music_feedback`、`music_top`、`get_weather`）→ `local_actions`。
 - `front_action` → `native.py`（視窗、選單、按鈕、App 指令；最後才送按鍵，送前重讀前景 pid）。
 - `read_screen` → `screencapture`；雲端路線且 `CLOUD_VISION_ENABLED` 時，看圖走雲端。
 
@@ -159,11 +161,13 @@ flowchart TD
 
 ## H. 長尾回答與來源追問
 
-決策見 [0022](../decisions/0022-web-answer.md)。只有 `AI_API_KEY` 與 `BRAVE_API_KEY` 都有才啟用；比對（`match()`）完全不知道它。
+決策見 [0022](../decisions/0022-web-answer.md)、[0023](../decisions/0023-query-routing.md)。兩條入口：會變的事實與查／找＋問句由 Fast Path 直接產生 `web_answer`（不經規劃）；其他問句在雲端規劃時由模型選。`match()` 不看金鑰，缺金鑰怎麼退回由 `web_answer` 執行時決定（見 I）。
 
 ```mermaid
 flowchart TD
+    FP["Fast Path：會變的事實、查／找＋問句"] --> B
     S[Fast Path 沒命中、守門沒擋的問句] --> P["雲端規劃（工具含 web_answer）"]
+    P -- 只回文字、原句是會變的事實 --> B
     P -- 模型呼叫 web_answer --> V{validate_calls：answer_mode}
     V -- 原句明說要看畫面 --> O["改成 web_search_or_open_url → 開 Google 頁（照舊）"]
     V -- 原句在問事情 --> B["Brave 搜尋，只送 query（原句有「最近／今天／今年…」時加 freshness；近期沒結果就不過濾再搜一次）"]
@@ -179,6 +183,32 @@ flowchart TD
 - 待決來源在每句開頭 `sources.STORE.take()`（取走就清掉），所以下一句不是肯定回答就作廢；沒有待決時，「好」照平常的路由走。
 - 摘錄只在這次呼叫的記憶體裡：不寫 log、不進資料庫與對話記憶；送雲端的只有標題、摘要與網頁日期（`date` 屬性，Brave 的 `page_age`；XML 跳脫、不含網址）。回答那次推理照雲端設定（`low`），`max_tokens`＝`WEB_ANSWER_MAX_TOKENS`（4096），逾時 `WEB_ANSWER_TIMEOUT_S`。
 - 延遲與錯誤分類記在 `step["web"]`（`search_ms`、`results`、`freshness`、`fresh_retry`、`answer_ms`、`cloud`（含 `finish_reason`）、`error`），寫進 `commands.jsonl`。
+
+## I. 查詢路由與聯合搜尋
+
+決策見 [0023](../decisions/0023-query-routing.md)。分類 `query_intent.classify_query` 是純函式，Fast Path 用它決定路線；下面的聯合搜尋與統計都在執行階段（`command_worker`）。
+
+```mermaid
+flowchart TD
+    C["classify_query"] -- 明說網路 --> W["web_search_or_open_url／context_search"]
+    C -- 本機證據 --> L["find_file 等（0005）"]
+    C -- 天氣 --> G[get_weather]
+    C -- 會變的事實、查／找＋問句 --> A{web_answer：金鑰}
+    A -- 兩把都有 --> H["Brave＋雲端回答（H）"]
+    A -- 只有雲端 --> GP["開 Google 搜尋頁＋⚠️<br/>web_fallback=no_search_key"]
+    A -- 都沒有 --> E["_escalate_to_llm：match(answer=False) 舊路線或本機 AI"]
+    C -- 查／找＋名詞、沒有證據 --> F{federated_search}
+    F -- 前景是詞庫網站／同句剛開瀏覽器 --> CS[context_search]
+    F -- U8 偏本機且路徑還在 --> R[Finder 顯示記錄的路徑]
+    F -- U8 偏網路 --> CS
+    F -- 其餘 --> P["mdfind ∥ Brave（沒有金鑰＝一筆 Google 搜尋）"]
+    P -- 只剩 1 筆，或本機 1 筆＋只有 Google --> D[直接執行]
+    P -- 多筆 --> LST["choices 清單：本機 ≤ 3＋網路 ≤ 2"]
+    LST -- 第 N 個／點選 --> PK["pick_choice：本機顯示，網路用瀏覽器開；記 picked"]
+```
+
+- **統計** `search_terms`（`data/music.sqlite3`）：只記 picked（從清單選的那一邊，本機連同路徑）與 explicit（Fast Path 成功、明說範圍）。網路不記網址。`lean` 要同一個詞 90 天內同一邊 ≥ 2 次、另一邊 0 次才直接執行，沒達門檻的只決定清單順序。資料庫還沒準備好時當成沒有歷史。
+- **不寫進紀錄的**：Brave 的標題與網址只在記憶體的清單裡（60 秒）。log 的清單行只寫「（網路）」，`commands.jsonl` 不寫 `choices`，`step["federated"]` 只記筆數、毫秒、lean、錯誤分類。
 
 ## 量測鏈
 

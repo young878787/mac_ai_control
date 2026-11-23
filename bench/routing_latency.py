@@ -1,4 +1,4 @@
-"""路由判斷延遲（查詢路由計畫 docs/plans/active/2026-11-23-query-routing.md §7.2 L1）：
+"""路由判斷延遲（查詢路由計畫 docs/plans/completed/2026-11-23-query-routing.md §7.2 L1）：
 對 tests/fixtures/routing/corpus.json 每一句，先正規化、切句（不計時），再對每個子句跑 match() N 次，
 取這一句（各子句加總）的中位數，最後印全部句子的 p50／p95／最大值。
 用這台電腦真的詞庫與已安裝 App 清單（第一次掃描在計時前完成），不連網、不執行任何動作、不寫檔案。

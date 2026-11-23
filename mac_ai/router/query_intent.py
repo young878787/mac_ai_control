@@ -1,4 +1,4 @@
-"""查詢分類（計畫 docs/plans/active/2026-11-23-query-routing.md §4.1）：一句話要找什麼（target）、怎麼給（mode）。
+"""查詢分類（計畫 docs/plans/completed/2026-11-23-query-routing.md §4.1）：一句話要找什麼（target）、怎麼給（mode）。
 純函式：不碰網路、LLM、子程序、資料庫，也不讀前景；catalog 只做唯讀查詢（與 domain.resolve_intent 相同）。
 分類結果由 fast_path._route_query 依對應表（§4.2）換成動作。"""
 import re

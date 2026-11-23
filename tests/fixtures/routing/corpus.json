@@ -1,5 +1,5 @@
 {
-"說明": "查詢路由計畫 P0 的行為快照語料（docs/plans/active/2026-11-23-query-routing.md）。2026-11-23 凍結：query 是手寫的查詢句，tests 由路由相關測試的呼叫參數抽出，route_corpus／typo_corpus 抄自 tests/support/。只加不刪；加句子後要重產快照。",
+"說明": "查詢路由計畫 P0 的行為快照語料（docs/plans/completed/2026-11-23-query-routing.md）。2026-11-23 凍結：query 是手寫的查詢句，tests 由路由相關測試的呼叫參數抽出，route_corpus／typo_corpus 抄自 tests/support/。只加不刪；加句子後要重產快照。",
 "groups": {
 "query": [
 "周杰倫是誰",

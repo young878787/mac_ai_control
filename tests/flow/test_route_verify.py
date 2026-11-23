@@ -1,4 +1,4 @@
-"""會變的事實一律查證（查詢路由計畫 docs/plans/active/2026-11-23-query-routing.md U12、U13，§7.1 A15／A16）。
+"""會變的事實一律查證（查詢路由計畫 docs/plans/completed/2026-11-23-query-routing.md U12、U13，§7.1 A15／A16）。
 人物、新聞、比分、營業時間、價格由 Fast Path 直接送 web_answer（不經規劃、模型不能選憑記憶回答）；天氣走 get_weather。
 有雲端沒搜尋金鑰 → 開搜尋頁＋⚠️＋step["web_fallback"]；兩把都沒有 → 交給本機 AI（與沒有雲端時相同）。"""
 import json

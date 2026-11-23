@@ -116,7 +116,7 @@ class Match:
 
 
 def _route_query(q: QueryIntent) -> Match:
-    """查詢分類 → 動作（計畫 docs/plans/active/2026-11-23-query-routing.md §4.2 的對應表）"""
+    """查詢分類 → 動作（計畫 docs/plans/completed/2026-11-23-query-routing.md §4.2 的對應表）"""
     if q.target == "either":  # 沒說範圍的找／搜尋：本機與網路並行（§4.3）
         return Match([("federated_search", {"query": q.query})], note="聯合搜尋", intent=q.intent, query=q)
     if q.intent is not None:

@@ -1,4 +1,4 @@
-"""查／找／搜尋的常搜名詞：只追加的紀錄，聯合搜尋依它決定先列哪一邊、要不要直接用（計畫 docs/plans/active/2026-11-23-query-routing.md §4.4）"""
+"""查／找／搜尋的常搜名詞：只追加的紀錄，聯合搜尋依它決定先列哪一邊、要不要直接用（計畫 docs/plans/completed/2026-11-23-query-routing.md §4.4）"""
 from alembic import op
 
 revision = "0003"

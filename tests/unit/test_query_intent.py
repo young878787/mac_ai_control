@@ -1,4 +1,4 @@
-"""查詢分類 classify_query（計畫 docs/plans/active/2026-11-23-query-routing.md §4.1、§7.1 A2／A3）。
+"""查詢分類 classify_query（計畫 docs/plans/completed/2026-11-23-query-routing.md §4.1、§7.1 A2／A3）。
 P2：分類與既有規則相同，這裡鎖住每種結果的 target／mode／evidence；整條路由的行為由 test_routing_snapshot 鎖住"""
 import json
 import sqlite3

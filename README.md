@@ -143,11 +143,11 @@ cp .env.example .env && chmod 600 .env    # 然後編輯 .env，填入 AI_API_KE
 | `AI_API_URL` | OpenAI 相容端點，必須是 `https://`（預設 `https://chatapi.ntubimdbirc.tw`） |
 | `AI_MODEL` | 模型名稱（預設 `BIRC-LLM`） |
 | `AI_API_KEY` | 金鑰；**留空＝不使用雲端**，完全在本機執行 |
-| `BRAVE_API_KEY` | 選用：[Brave Search API](https://api-dashboard.search.brave.com) 金鑰。**要和 `AI_API_KEY` 一起填才啟用長尾問題直接回答**；留空＝這類問題照舊（雲端憑記憶回答或開搜尋網頁）。按次計費，用量上限請在 Brave 後台自己設 |
+| `BRAVE_API_KEY` | 選用：[Brave Search API](https://api-dashboard.search.brave.com) 金鑰。**要和 `AI_API_KEY` 一起填才啟用長尾問題直接回答**；只填 `AI_API_KEY` 時，會變的事實（人物、新聞、股價…）改開 Google 搜尋頁並回 ⚠️，終端機會提醒；兩把都沒填＝跟以前一樣。也用在沒說範圍的「搜尋 X」的網路結果（沒填時網路那邊只列一筆「在 Google 搜尋」）。按次計費，用量上限請在 Brave 後台自己設 |
 | `CWA_API_KEY` | 選用：中央氣象署開放資料授權碼（免費）。**有填＝天氣先查氣象署，失敗改查 Open-Meteo；留空＝只用免金鑰的 Open-Meteo** |
 
 - `.env` 不入版控，程式只讀不寫；金鑰不會放進環境變數，也不會傳給 `mlx_vlm`、STT、Electron 子程序，紀錄與錯誤訊息都不含金鑰。
-- 會送到雲端的內容：Slow Path 的原句、前景 App 名稱、最近 5 輪對話摘要（60 秒內，含執行過的工具）；說「看畫面並翻譯／解釋／除錯」這類由雲端規劃的看畫面，會把縮小的**螢幕截圖**送到雲端（`config.CLOUD_VISION_ENABLED` 可關閉）。Fast Path 的指令、否定／敘述句（G1）、本機搜尋後轉交的判斷不送雲端。長尾問題直接回答（有 `BRAVE_API_KEY` 時）另外會：把搜尋關鍵字（只有關鍵字，不含原句）送到 Brave、把搜尋結果的標題與摘要（不含網址）送到雲端。
+- 會送到雲端的內容：Slow Path 的原句、前景 App 名稱、最近 5 輪對話摘要（60 秒內，含執行過的工具）；說「看畫面並翻譯／解釋／除錯」這類由雲端規劃的看畫面，會把縮小的**螢幕截圖**送到雲端（`config.CLOUD_VISION_ENABLED` 可關閉）。「找我的 X」本機 0 筆後的轉交，有雲端金鑰時也會送原句與「本機沒有名為 X 的檔案」到雲端。Fast Path 的其他指令、否定／敘述句（G1）不送雲端。長尾問題直接回答（兩把金鑰都有時，包括 Fast Path 直接判斷的會變的事實）另外會：把搜尋關鍵字（只有關鍵字，不含原句）送到 Brave、把原句與搜尋結果的標題與摘要（不含網址）送到雲端。沒說範圍的「搜尋 X」有 `BRAVE_API_KEY` 時會把 X 送到 Brave。
 - `config.CLOUD_ENABLED = False` 可整個關閉雲端。啟動時會印一行雲端狀態。
 
 ### 4-1. 準備語音活動偵測模型（Silero VAD）
@@ -198,12 +198,16 @@ python main.py --stt-engine xasr  # 語音辨識改用備用引擎 X-ASR（見�
 | 打開下載資料夾／找桌面 | 在 Finder 開啟資料夾 |
 | 打開 YouTube／開油管／上 GitHub／開瀏覽器看 Facebook | 開網站首頁（Fast Path，不經 LLM）。網站與別名在 `vocab/lexicon.json` 的 `sites`；同名 App 已存在時 App 優先（「開 Google」＝Chrome），說「網站／首頁／官網」則一律開網站 |
 | 找 report.pdf／找昨天下載的 PDF／找桌面上的截圖 | 用 Spotlight 搜家目錄（排除 `~/Library`、隱藏資料夾、`node_modules`），預設**在 Finder 中顯示**；說「打開」才開檔，可執行檔（`.command`、`.sh`、`.app`…）一律只顯示 |
-| 找履歷、找 python 教學（沒有本機證據） | 先當檔名找；0 筆時轉交模型判斷，可能改開網頁搜尋（搜尋關鍵字用你說的原話，不用模型改寫的字）；模型也判斷不用查、或模型沒開，就回「找不到」並說明原因與下一步（說「搜尋 X」） |
+| 找履歷、搜尋履歷、找 python 教學、查周杰倫（沒說範圍） | 本機與網路同時找，合成一份清單（本機最多 3 筆、網路最多 2 筆；沒有 `BRAVE_API_KEY` 時網路只有一筆「在 Google 搜尋」）；只找到一筆就直接執行，本機只有一筆而網路只有 Google 搜尋時也直接在 Finder 顯示 |
+| 找一下我的履歷（說「我的」） | 先找本機；0 筆時轉交模型判斷（有雲端金鑰時問雲端），可能改開網頁搜尋或直接回答（搜尋關鍵字用你說的原話，不用模型改寫的字）；模型也判斷不用查、或模型沒開，就回「找不到」並說明原因與下一步 |
 | 找 report.pdf、在電腦裡找履歷、找下載的履歷（有本機證據） | 0 筆時只回「本機沒有」，不會改開網頁 |
 | 找到了、找不到我的鑰匙、找最近的電影 | 不是找檔案：直接交給模型判斷 |
-| 搜尋台北天氣／網路上找 Xcode／找台北天氣 | Google 搜尋（`搜尋`、`查` 沒帶「電腦裡」「App」「檔案」之類範圍詞時維持網頁搜尋） |
+| 網路上找 Xcode／上網查履歷／google 一下周杰倫 | Google 搜尋（明說網路） |
+| 查一下周杰倫是誰／找一下 Python 是什麼／搜尋台北天氣 | 不找檔案，直接回答（見「天氣」「長尾問題直接回答」） |
 
 找到多筆時列出前 5 筆（60 秒內有效）：說「第二個」「打開第三個」「在 Finder 顯示第一個」「最後一個」選擇；桌面角色會顯示清單，點整列執行預設動作，點列尾按鈕執行另一個動作。範圍判斷的結果會記在每一步的 `step["intent"]`，判斷錯了可以從這裡追查。
+
+沒說範圍的搜尋會越用越準：同一個詞 90 天內你從清單選了同一邊 2 次、另一邊沒選過，之後就直接用那一邊（本機會直接顯示上次選的檔案，網路直接開 Google 搜尋頁）；明說範圍的句子（「找履歷檔案」「上網查履歷」）也算一次。只記你說的詞、選了本機或網路、本機檔案路徑，不記網址與搜尋結果，存在本機 `data/music.sqlite3`。決策見 [0023](docs/decisions/0023-query-routing.md)。
 
 ### 以目前視窗為對象
 
@@ -212,7 +216,7 @@ python main.py --stt-engine xasr  # 語音辨識改用備用引擎 X-ASR（見�
 | 最前面是 | 說法 | 結果 |
 |---|---|---|
 | Safari／Chrome 停在 Facebook、YouTube、GitHub、Google | 查貓咪專頁 | 在這個瀏覽器用該網站的站內搜尋（開新分頁）；說「上網查」「google 一下」或查天氣、新聞等即時資訊仍用 Google |
-| Safari／Chrome 其他網站 | 查貓咪／找 python 教學（本機 0 筆、沒有本機證據） | 在這個瀏覽器 Google 搜尋；「找」不再先問模型 |
+| Safari／Chrome 其他網站 | 找我的履歷（本機 0 筆） | 在這個瀏覽器 Google 搜尋，不先問模型；查貓咪這類沒說範圍的照樣列本機＋網路清單，網路結果用這個瀏覽器開 |
 | VS Code／Cursor | 開 X 專案 | 用最前面的編輯器開 |
 | VS Code／Cursor | 開終端機／關終端機 | 切換內建終端機面板；說「終端機程式」「獨立終端機」「Terminal」才開 Terminal.app |
 | Terminal／iTerm | 新分頁、清除畫面 | ⌘T、⌘K |
@@ -249,21 +253,23 @@ python main.py --stt-engine xasr  # 語音辨識改用備用引擎 X-ASR（見�
 |---|---|
 | 台北天氣／今天高雄天氣／明天台中會下雨嗎／今晚新北幾度 | 回答今天白天、今晚、明天白天、明晚其中一段：天氣、溫度範圍、降雨機率，結尾標示來源 |
 | 今天天氣／會下雨嗎 | 沒說縣市時，用你最近最常問的縣市；還沒問過任何縣市就請你說一下縣市 |
-| 搜尋台北天氣／打開瀏覽器查台北天氣 | 照舊開網頁（明說要看畫面） |
+| 搜尋台北天氣／找台北天氣 | 一樣直接回答 |
+| 打開瀏覽器查台北天氣／上網查台北天氣 | 開網頁（明說要看畫面） |
 
 資料來源：有填 `CWA_API_KEY` 先查中央氣象署，失敗或逾時改查 Open-Meteo（免金鑰）；兩個都失敗就回「查不到」，不開網頁。否定、敘述句（「不要查天氣」「昨天天氣很好」）不會觸發；後天、週末、下週還沒支援。常問縣市只記你**明說**的縣市，存在本機 `data/music.sqlite3`。結構與取捨見 [0021](docs/decisions/0021-weather-answer.md)。
 
 ### 長尾問題直接回答
 
-有 `AI_API_KEY` 與 `BRAVE_API_KEY` 時，Fast Path 沒命中的問句由雲端決定要不要上網查，查到就在泡泡回答（不開網頁）：
+會變的事實（人物、新聞、比分、營業時間、價格）一律上網查證，不憑記憶回答。有 `AI_API_KEY` 與 `BRAVE_API_KEY` 時，查到就在泡泡回答（不開網頁）：
 
 | 說法 | 結果 |
 |---|---|
-| 周杰倫是誰／湖人最近一場比賽比數多少／全聯營業到幾點／最近有什麼新聞 | 搜尋後由雲端依摘錄回答 1～2 句，結尾問「要打開來源嗎？」 |
+| 周杰倫是誰／查一下周杰倫是誰／搜尋周杰倫是誰／台積電股價／全聯營業到幾點／最近有什麼新聞 | Fast Path 直接判斷，不經規劃：搜尋後由雲端依摘錄回答 1～2 句，結尾問「要打開來源嗎？」 |
+| 其他問句（Python 是什麼…） | 雲端決定要不要上網查；雲端只用文字回答會變的事實時，改成上網查證 |
 | 好／要／打開來源（回答後 60 秒內，整句只有這樣） | 開第一筆來源網頁 |
-| 在 Google 搜尋周杰倫是誰／幫我上網看一下… | 明說要看畫面，照舊開網頁 |
+| 在 Google 搜尋周杰倫是誰／上網查台積電股價／幫我上網看一下… | 明說要看畫面，照舊開網頁 |
 
-搜尋、雲端或摘錄裡沒有答案時，退回開 Google 搜尋頁並回 ⚠️，不謊稱查到。名詞片語（「故宮博物院開放時間」）沒有疑問，維持開網頁；Fast Path 命中的「查一下周杰倫是誰」「搜尋周杰倫是誰」也維持開 Google。搜尋摘錄只放在記憶體：不寫紀錄、不存資料庫（Brave 條款）。決策見 [0022](docs/decisions/0022-web-answer.md)。
+搜尋、雲端或摘錄裡沒有答案時，退回開 Google 搜尋頁並回 ⚠️，不謊稱查到。只有 `AI_API_KEY`、沒有 `BRAVE_API_KEY` 時，會變的事實開 Google 搜尋頁並回 ⚠️（終端機提醒缺 `BRAVE_API_KEY`）；兩把都沒有時跟以前一樣（查／搜尋開頭的開 Google，其他交給本機 AI）。搜尋摘錄只放在記憶體：不寫紀錄、不存資料庫（Brave 條款）。決策見 [0022](docs/decisions/0022-web-answer.md)、[0023](docs/decisions/0023-query-routing.md)。
 
 ## 桌面角色
 
@@ -294,7 +300,7 @@ ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/inst
 | 點「💬 聊天室」／右鍵「聊天室」 | 開關聊天室視窗（手動開啟不會自動收）；視窗內可看完整對話、展開每一步的狀態／路線／耗時，多行輸入框 Enter 送出、Shift+Enter 換行 |
 | 拖曳 | 只能沿螢幕下緣左右移動，位置會記住 |
 | 右鍵 | 聊天室／暫停聽指令／結束 |
-| 點搜尋結果清單的一列 | 執行清單的預設動作（顯示或打開）；列尾按鈕執行另一個 |
+| 點搜尋結果清單的一列 | 執行清單的預設動作（顯示或打開；網路結果用瀏覽器開）；列尾按鈕執行另一個 |
 
 不用麥克風也能預覽演出：`python scripts/ui_demo.py`（`--hold` 播完後保持執行，可手動操作；`--choices-test` 驗證搜尋結果清單；`--chat-test` 驗證聊天室）。效能量測：`python scripts/ui_perf.py`；動作軌跡指標（無機械感、聆聽專注）：`python scripts/ui_motion.py`（量測期間不要動滑鼠）。
 
@@ -394,8 +400,8 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
 | `mac_ai/wake.py` | 喚醒詞閘門與會話 |
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
-| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站；點歌：`youtube_client.py`（InnerTube 搜尋）、`music_prefs.py`（偏好、計分、拼音矯正）；天氣：`weather_client.py`（氣象署→Open-Meteo）、`weather_prefs.py`（常問縣市）；長尾回答：`search_client.py`（Brave 搜尋）、`sources.py`（來源追問） |
-| `mac_ai/db/` | 偏好資料庫（`data/music.sqlite3`，點歌與天氣常問縣市共用）的建立、備份與升級（Alembic migration）、從事件重算詞表（`rebuild.py`） |
+| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站；點歌：`youtube_client.py`（InnerTube 搜尋）、`music_prefs.py`（偏好、計分、拼音矯正）；天氣：`weather_client.py`（氣象署→Open-Meteo）、`weather_prefs.py`（常問縣市）；長尾回答：`search_client.py`（Brave 搜尋）、`sources.py`（來源追問）；查詢分類：`query_intent.py`（純函式）、`search_prefs.py`（常搜名詞統計） |
+| `mac_ai/db/` | 偏好資料庫（`data/music.sqlite3`，點歌、天氣常問縣市、常搜名詞共用）的建立、備份與升級（Alembic migration）、從事件重算詞表（`rebuild.py`） |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`）；備用辨識引擎的伺服器（`xasr_server.py`）與熱詞編碼（`xasr_hotwords.py`） |
 | `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、注意力導演、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`animation/` 程序動畫、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 [ARCHITECTURE.md](ARCHITECTURE.md) |
 | `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |

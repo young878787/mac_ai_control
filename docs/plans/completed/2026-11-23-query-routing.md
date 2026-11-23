@@ -1,6 +1,8 @@
 # 「查」的統一路由：一個分類點、聯合搜尋、常搜名詞統計
 
-狀態：**已定案，待開始實作（2026-11-23）**。§2 是使用者已決定的事。完成後依 ADR 0016 移到 `completed/`，並新增 ADR 取代 [0005](../../decisions/0005-local-first-find.md) 第 2、5 條與 [0021](../../decisions/0021-weather-answer.md) 第 1 條的「句首的搜尋 → open」，並修改 [0022](../../decisions/0022-web-answer.md) 第 1 條（沒有 Brave 金鑰時的行為，U13）。
+> **歸檔（2026-11-23 結案）**：P0～P6 都已實作，目前有效的決策見 [ADR 0023](../../decisions/0023-query-routing.md)（取代 0005 第 2、5 條、0021 第 1 條的「句首的搜尋 → open」，修改 0022 第 1 條）。以下內文保留結案時的樣子。**與計畫不同、使用者 2026-11-23 接受的**：§4.5 只統一了一部分（保留 4 種改寫，加上 U12 安全網）；沒說範圍的「搜尋 X」開 Google 前多一次 mdfind（100～377 ms）；聯合搜尋本機 1 筆、網路只剩 Google 搜尋時直接顯示。**結案時沒有做的**：L2（聯合搜尋含真實 Brave 的延遲，`bench/federated.py` 沒有寫）、L4（`bench/web_answer.py` 加新題的回歸，要真實雲端與 Brave、會產生費用）、H1、H2（桌面清單畫面與語音選擇，要使用者實機判定）。
+
+狀態：**已結案（2026-11-23）**。原狀態：已定案，待開始實作。§2 是使用者已決定的事。完成後依 ADR 0016 移到 `completed/`，並新增 ADR 取代 [0005](../../decisions/0005-local-first-find.md) 第 2、5 條與 [0021](../../decisions/0021-weather-answer.md) 第 1 條的「句首的搜尋 → open」，並修改 [0022](../../decisions/0022-web-answer.md) 第 1 條（沒有 Brave 金鑰時的行為，U13）。
 
 ## 0. 結論
 
@@ -158,7 +160,7 @@ QueryIntent
 | P3 | **改行為**：詞表合併成一份；U2、U3、U7；`either` 判斷（暫時仍走現有路線） | 快照差異**只出現在核准清單裡**：逐句列「舊結果 → 新結果」給使用者確認後才合併。**2026-11-23 完成（§9.4）** |
 | P4 | **聯合搜尋與統計**：migration 0003、`search_prefs`、`federated_search`、清單網路項目、UI | §7.1 A5～A10 通過。**2026-11-23 完成（§9.5）** |
 | P5 | **轉交與事後驗證**：U4、§4.5 | §7.1 A11、A12 通過；雲端與本機的 flow 測試全綠。**2026-11-23 完成（§9.6）** |
-| P6 | **實測與文件**：§7.2、§7.3；ADR、flows、ARCHITECTURE、README 同步；計畫結案 | §7 全部有結果；`pytest` 0 failed；`node --test`、`npm run typecheck` 通過 |
+| P6 | **實測與文件**：§7.2、§7.3；ADR、flows、ARCHITECTURE、README 同步；計畫結案 | §7 全部有結果；`pytest` 0 failed；`node --test`、`npm run typecheck` 通過。**2026-11-23 結案（§9.7；L2、L4、H1、H2 未做）** |
 
 ## 7. 驗收計畫
 
@@ -376,3 +378,24 @@ QueryIntent
   - `pytest` 3190 passed、6 skipped；1 error 是 `test_xasr_server.py::test_unknown_http_path_is_404` 全套負載下逾時，單獨跑兩次都通過（§9.4）。
   - `node --test` 267 pass，`npm run typecheck` 通過。
   - L1 p95 0.091～0.092 ms。
+
+### 9.7 P6 實測、文件與結案（2026-11-23）
+
+- **使用者 2026-11-23 的決定**（P5 之後提出的三個問題）：
+  - 聯合搜尋本機 1 筆、網路只剩 Google 搜尋（沒有金鑰或搜尋失敗）→ 直接在 Finder 顯示，不列清單（同以前的找檔案）。已實作，新增 2 項測試。
+  - 沒說範圍的「搜尋 X」開 Google 前多一次 mdfind（這台 Mac 100～377 ms）→ 接受，寫進 ADR。
+  - §4.5 只統一一部分 → 接受，寫進 ADR。
+- **§7.2**：
+  - L1：p50 0.013／**p95 0.090**／最大 0.380 ms，符合 U10（≤ 0.098）。
+  - L2：**未做**。`bench/federated.py` 沒有寫，需要真實 Brave 金鑰與網路。只有 mdfind 一邊實測過（§9.5）。
+  - L3：用離線 flow 測試取代實機操作（暫存資料庫、假 mdfind）。選本機 2 次後直接顯示、不跑 mdfind（`test_two_local_picks_then_the_path_is_used_directly`）；之後說過一次「上網查履歷」，第 3 次改回列清單、資料庫只多那 1 筆 explicit（`test_one_web_choice_after_two_local_picks_lists_again`，P6 新增）。
+  - L4：**未做**。要真實雲端與 Brave，會產生費用。
+- **§7.3**：H1、H2 **未做**，要使用者在桌面角色與語音實機判定。
+- **文件**：
+  - 新增 ADR 0023。
+  - 0005、0021、0022 標註被取代或修改的條文。
+  - 同步 `ARCHITECTURE.md`（模組、延遲）、`docs/flows/main-flow.md`（新增 I 節）、`docs/flows/slow-path.md`、`docs/guides/testing.md`、`docs/guides/coding-style.md`、`README.md`、`AGENTS.md`（紅線 1、4、10）。
+  - 程式與測試註解引用的計畫路徑改成 `completed/`。
+- **測試**：
+  - `pytest` 3191 passed、6 skipped、0 failed，排除已知會逾時的 `test_xasr_server.py::test_unknown_http_path_is_404`（§9.4）。這一項這次單獨跑也是 1 passed、1 error（收尾等待逾時）；把 P6 的改動 stash 掉、在 HEAD 上跑結果相同，與本計畫無關。
+  - `node --test` 267 pass，`npm run typecheck` 通過。

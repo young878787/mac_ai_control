@@ -267,7 +267,7 @@ def pick_choice(n: int, action: Optional[str] = None, list_id: Optional[int] = N
     return msg
 
 
-# ---------- 聯合搜尋（沒說範圍的找／搜尋，計畫 docs/plans/active/2026-11-23-query-routing.md §4.3）----------
+# ---------- 聯合搜尋（沒說範圍的找／搜尋，計畫 docs/plans/completed/2026-11-23-query-routing.md §4.3）----------
 def record_search(query: str, side: str, signal: str, ctx: Optional[ExecContext] = None, path: Optional[str] = None) -> None:
     """記一筆常搜名詞（search_prefs）。資料庫還沒準備好就不記；失敗只記例外類別，不影響指令"""
     conn = MUSIC_DB.conn()
@@ -897,7 +897,7 @@ def _web_fallback(query: str, ctx: Optional[ExecContext], why: str) -> str:
 
 def web_answer(query: str, ctx: Optional[ExecContext] = None) -> str:
     """長尾問題：Brave 搜尋（只送 query）→ 雲端依摘錄回答 1～2 句（不帶工具）→ 放進 ctx.replies，並記下第一筆來源供「要打開來源嗎？」。
-    Fast Path 也會直接送來（會變的事實、查／找＋問句，計畫 docs/plans/active/2026-11-23-query-routing.md U12）：
+    Fast Path 也會直接送來（會變的事實、查／找＋問句，計畫 docs/plans/completed/2026-11-23-query-routing.md U12）：
     沒有雲端 → ctx.escalate 交給本機 Slow Path；有雲端、沒有搜尋金鑰 → 開搜尋頁並記 step["web_fallback"]（U13）。
     搜尋失敗、雲端失敗、摘錄裡沒有答案都退回開搜尋頁（⚠️）。摘錄只活在這個函式裡：不寫紀錄、不進對話記憶（Brave 條款）。
     原句有時間性時只搜近期網頁（search_client.freshness_for）；近期沒有結果就不過濾再搜一次。

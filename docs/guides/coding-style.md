@@ -15,7 +15,7 @@
 9. 指令是**單執行緒依序**執行（`command_worker`）；同步操作會擋住下一句，所以不要加長時間阻塞，必要時設短逾時。
 10. 量測用既有工具：`step["ms"]`、`stages`、`logs/runtime/latency.jsonl`（收音計時）、`logs/runtime/commands.jsonl`（指令路由與各步 ms）、`scripts/stt_bench.py`（`list` 一覽、`report` 比較）、`scripts/ui_perf.py`；log 結構見 README「Logs」，`python scripts/log_view.py` 一行一筆檢視 runtime 紀錄；語音指令的 latency 與 commands 以 `utt_id` 對應（`SttClient` 編號 → `SpokenCommand` 帶進佇列 → `command_worker` 寫入），改這條鏈時要保持。**效能主張要有實測數字**，不要憑感覺。
 11. **前景視窗只在執行階段讀，而且用到才讀**（`actions.front_context`／`front_app`／`front_site`，同句快取）：`match()` 與 `completeness` 不得讀。只需要 App 用 `lsappinfo`（實測約 11 ms）；瀏覽器網址要 `osascript`（Safari 實測約 170–230 ms），只有站內搜尋與需要網站的快捷鍵才問。
-12. **雲端只在 Slow Path 的規劃步驟用**（`slow_path._execute_cloud`）：`match()`、`completeness`、Fast Path 執行、G1（`no_action` 不呼叫任何模型）、本機搜尋 0 筆後的轉交（`local_miss`）都不碰雲端。雲端呼叫一律走 `cloud_client.chat`（逾時、錯誤分類、獨立熔斷；連線／逾時／429／5xx 熔斷 30 秒，401／403 本次執行停用）；失敗同一步退回本機。**沒有金鑰、`CLOUD_ENABLED=False`、`AI_API_URL` 不是 https 時，行為必須與沒有雲端逐字相同**（`test_without_key_slow_path_is_exactly_the_local_path`）。
+12. **雲端只在 Slow Path 的規劃步驟用**（`slow_path._execute_cloud`，含本機搜尋 0 筆後的轉交 `local_miss`，[0023](../decisions/0023-query-routing.md) U4），以及長尾回答依摘錄回答的那一次（`web_answer`）：`match()`、`classify_query`、`completeness`、G1（`no_action` 不呼叫任何模型）都不碰雲端。雲端呼叫一律走 `cloud_client.chat`（逾時、錯誤分類、獨立熔斷；連線／逾時／429／5xx 熔斷 30 秒，401／403 本次執行停用）；失敗同一步退回本機。**沒有金鑰、`CLOUD_ENABLED=False`、`AI_API_URL` 不是 https 時，行為必須與沒有雲端逐字相同**（`test_without_key_slow_path_is_exactly_the_local_path`）。
 13. **本機 `SYSTEM_PROMPT`／`TOOLS_SCHEMA` 不為雲端而改**（prefix cache）。雲端有自己的 `CLOUD_SYSTEM_PROMPT`（XML、第三人稱，人格＝可愛熱情簡潔）與 `CLOUD_TOOLS`（`chat_reply` 多一個 `text`：實測這個模型只要有 `tool_calls` 就不寫文字，動作＋聊天的混合句 0/19 → 19/19；另有只給雲端的 `front_action`、`site_search`，見「準」第 19 條）。動態資訊（名稱對照、目前視窗、最近對話）放 user 訊息。
 14. **金鑰**：只在 `cloud_client` 讀（`config.env_value`）、只放 Authorization header；不得寫進 `os.environ`（`services.py` 會把它傳給子程序）、不得進任何紀錄或錯誤訊息（錯誤只記 `HTTP 401`／`timeout` 這類分類，不記回應內容）。Cloudflare 會擋 `Python-urllib` 預設 User-Agent（403 error code 1010），所以送 `CLOUD_USER_AGENT`。
 15. **雲端回覆不可謊稱已執行**：雲端的文字回覆只在「沒有工具」或「工具全部通過驗證且執行成功」時採用；有任何工具被拒絕、被提問句守門丟棄或執行失敗，就只顯示各工具的結果字串。
@@ -30,7 +30,7 @@
 2. **`validate_tool_call` 是唯一的信任邊界**：未知工具／參數、缺必填、型別錯、enum 不符一律拒絕；App 名稱必須在詞庫或已安裝清單；專案只能從白名單解析；editor 必須是編輯器類 App。**LLM 編出來的名稱不能直接拿去 `open -a`。**
 3. **LLM 看不到的工具要保持看不到**：`browser_tab`、`open_folder`、`find_file`、`pick_choice`、`context_search`、`front_action`、`play_media`（及 `music_replace`、`music_feedback`、`music_top`）刻意不在 `TOOLS_SCHEMA`（加了會讓 4bit 模型誤判，例如「開深色模式」→ `toggle_dark_mode`）。本機工具登錄在 `actions.LOCAL_TOOLS`。例外只有雲端（「準」第 19 條）。
 4. **搜尋意圖守門**（`_search_intent_error`）：句子沒有「搜／查／找／天氣…」等字，LLM 的 `web_search_or_open_url` 會被拒絕（防小模型對糾正句亂開搜尋頁）。
-5. **範圍判斷順序固定**（`domain.resolve_intent`）：網頁範圍詞 → 專案 → 資料夾 → App → 即時資訊 → 檔案 → 預設。**本機優先**。「搜尋／查」沒帶範圍詞維持網頁搜尋；「找」預設先搜本機檔案、0 筆且無本機證據才轉交 LLM。判斷結果寫入 `step["intent"]`，錯判時從這裡追查。
+5. **範圍判斷順序固定**（`domain.resolve_intent`）：網頁範圍詞 → 專案 → 資料夾 → App → 即時資訊 → 檔案 → 預設。**本機優先**。查詢句先經 `query_intent.classify_query`（[0023](../decisions/0023-query-routing.md)）：明說網路 → 網頁；有本機證據 → 本機；會變的事實、查／找＋問句 → `web_answer`；沒說範圍的找／搜尋／查 → 聯合搜尋（`federated_search`）；「找我的 X」0 筆才轉交模型。判斷結果寫入 `step["intent"]`，錯判時從這裡追查。
 6. **找檔案的安全規則不可放寬**：預設只「在 Finder 中顯示」，使用者明說「打開」才開檔；`DANGEROUS_EXT` 與無副檔名的可執行檔一律只顯示（開檔等於執行）；搜尋只限家目錄、排除 `~/Library`、隱藏資料夾、`node_modules`、`.app` 內部、符號連結逃出家目錄的結果。
 7. **多筆結果**：`pick_choice` 檢查 `list_id`、TTL、序號範圍；新搜尋取代舊清單。
 8. **模糊比對只用在拉丁字母名稱**（門檻 0.80、前兩名差 < 0.05 視為歧義、長度 ≥ 5）；中文差一字常是另一個詞，不做模糊。歧義時 Fast 不執行，只在 LLM 不可用的補救路徑當候選。

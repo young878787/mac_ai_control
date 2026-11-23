@@ -1,4 +1,4 @@
-"""路由行為快照（查詢路由計畫 P0，docs/plans/active/2026-11-23-query-routing.md §7.1 A1）。
+"""路由行為快照（查詢路由計畫 P0，docs/plans/completed/2026-11-23-query-routing.md §7.1 A1）。
 
 語料 tests/fixtures/routing/corpus.json 每句照 pipeline 的順序跑：正規化 → 切句 → 每個子句 match()；
 未命中的子句另記 match(candidates=True)（LLM 不可用時的補救候選）；整句記 intent_guard 與 answer_mode。

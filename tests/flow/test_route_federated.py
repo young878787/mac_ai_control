@@ -1,4 +1,4 @@
-"""聯合搜尋（查詢路由計畫 docs/plans/active/2026-11-23-query-routing.md §4.3、§4.4、U5、U6、U8、U9、U11，§7.1 A5～A8、A10）。
+"""聯合搜尋（查詢路由計畫 docs/plans/completed/2026-11-23-query-routing.md §4.3、§4.4、U5、U6、U8、U9、U11，§7.1 A5～A8、A10）。
 沒說範圍的『搜尋履歷』『找周杰倫』：本機（假 mdfind）與網路（假 Brave；沒有金鑰就是一筆 Google 搜尋）並行，合併成一份清單。"""
 import json
 import subprocess
@@ -209,6 +209,20 @@ def test_two_local_picks_then_the_path_is_used_directly(find_env, music_db):
     (step,) = say("搜尋履歷")["steps"]
     assert find_env.mdfinds() == [] and find_env.opens() == [["open", "-R", str(b)]] and step["federated"]["used"] == "path"
     assert len(terms(music_db)) == 2  # 統計決定的不記（不會越記越偏）
+
+
+def test_one_web_choice_after_two_local_picks_lists_again(find_env, music_db):
+    """§7.2 L3：另一邊不是 0 次，U8 不成立 → 照常查兩邊、列清單（本機仍排前面）"""
+    files(find_env, "履歷A.pdf", "履歷B.pdf")
+    for _ in range(2):
+        say("搜尋履歷")
+        say("第二個")
+    say("上網查履歷")
+    find_env.calls.clear()
+    (step,) = say("搜尋履歷")["steps"]
+    assert len(find_env.mdfinds()) == 1 and find_env.opens() == []
+    assert kinds(step) == ["pdf", "pdf", "web"] and step["federated"]["lean"] == "local" and "used" not in step["federated"]
+    assert [(s, sig) for _, s, sig, _ in terms(music_db)] == [("local", "picked")] * 2 + [("web", "explicit")]
 
 
 def test_recorded_path_gone_searches_local_only_again(find_env, brave, music_db):  # noqa: F811

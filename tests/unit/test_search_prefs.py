@@ -1,4 +1,4 @@
-"""常搜名詞統計 search_prefs（查詢路由計畫 docs/plans/active/2026-11-23-query-routing.md §4.4、U8，§7.1 A9）。
+"""常搜名詞統計 search_prefs（查詢路由計畫 docs/plans/completed/2026-11-23-query-routing.md §4.4、U8，§7.1 A9）。
 用暫存目錄的真資料庫（ensure_schema 建到 head），不寫專案的 data/"""
 import pytest
 
