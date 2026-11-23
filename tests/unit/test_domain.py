@@ -133,7 +133,7 @@ def FIND(**args):
 MATCH_CASES = [
     ("找一下 Xcode", APP("Xcode")),
     ("打開 Xcode", APP("Xcode")),
-    ("搜尋 Xcode", [("context_search", {"query": "Xcode"})]),  # 沒指定瀏覽器：執行時看前景（站內搜尋或 Google）
+    ("搜尋 Xcode", [("federated_search", {"query": "Xcode"})]),  # 沒說範圍：聯合搜尋（U5），執行時前景停在詞庫網站照舊站內搜尋
     ("搜尋 Xcode 這個 App", APP("Xcode")),
     ("在電腦裡搜尋 Xcode", APP("Xcode")),
     ("查一下 mac_ai_control 專案", [("open_project", {"project_name": "mac_ai_control"})]),
@@ -147,13 +147,15 @@ MATCH_CASES = [
     ("搜尋最近的新聞", [("web_answer", {"query": "最近的新聞"})]),
     ("找 report.pdf", FIND(name="report", kinds=["pdf"], filename="report.pdf", local_only=True, action="reveal")),
     ("找昨天下載的 PDF", FIND(kinds=["pdf"], since="yesterday", location="Downloads", local_only=True, action="reveal")),
-    ("找履歷", FIND(name="履歷", action="reveal")),
+    ("找履歷", [("federated_search", {"query": "履歷"})]),  # 沒有本機證據：聯合搜尋（U6）
+    ("找我的履歷", FIND(name="履歷", action="reveal")),
     ("找照片", FIND(kinds=["image"], local_only=True, action="reveal")),
     ("打開照片", APP("Photos")),
     ("打開履歷.pdf", FIND(name="履歷", kinds=["pdf"], filename="履歷.pdf", local_only=True, action="open")),
     ("搜尋 report.pdf", FIND(name="report", kinds=["pdf"], filename="report.pdf", local_only=True, action="reveal")),
     ("找桌面上的截圖", FIND(kinds=["image"], location="Desktop", local_only=True, action="reveal")),
-    ("找 python 教學", FIND(name="python 教學", action="reveal")),  # 沒有本機證據：不帶 local_only，0 筆會轉交模型
+    ("找 python 教學", [("federated_search", {"query": "python 教學"})]),  # 沒有本機證據：聯合搜尋（U6）
+    ("找我的 python 教學", FIND(name="python 教學", action="reveal")),  # 『我的』：找檔案，不帶 local_only，0 筆會轉交模型
     ("第二個", [("pick_choice", {"n": 2})]),
     ("打開第三個", [("pick_choice", {"n": 3, "action": "open"})]),
     ("在 Finder 顯示第一個", [("pick_choice", {"n": 1, "action": "reveal"})]),
@@ -336,5 +338,5 @@ def test_ext_grading(utterance, expected):
 
 def test_ext_grading_fast_path_actions():
     matcher = FastPathMatcher(catalog=FakeCatalog())
-    assert matcher.match("搜尋 node.js").actions == [("context_search", {"query": "node.js"})]
+    assert matcher.match("搜尋 node.js").actions == [("federated_search", {"query": "node.js"})]
     assert matcher.match("找 node.js").actions == [("find_file", {"name": "node.js", "filename": "node.js", "action": "reveal"})]

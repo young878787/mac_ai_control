@@ -5,7 +5,7 @@ import pytest
 
 import mac_ai.router as r
 from mac_ai.router import llm_client
-from support.expect import APP, BRIGHT, CHROME, DARK, LOCK, MUTE, QUIT, SEARCH, SLEEP, TOGGLE_DARK, VOL, VSCODE, fast_matches
+from support.expect import APP, BRIGHT, CHROME, DARK, LOCK, MDFIND, MUTE, QUIT, SEARCH, SLEEP, TOGGLE_DARK, VOL, VSCODE, fast_matches
 from support.llm import forbid_llm, llm_always
 
 HITS = [
@@ -107,7 +107,7 @@ HITS = [
     ("上網查台北天氣", [SEARCH("台北天氣")]),  # 「搜尋台北天氣」改走天氣回答（U7）
     ("查一下股票走勢", [SEARCH("股票走勢")]),  # 查天氣、新聞改走回答（test_route_weather.py、test_route_verify.py）
     ("上網查台北天氣", [SEARCH("台北天氣")]),
-    ("搜索台北美食", [SEARCH("台北美食")]),
+    ("搜索台北美食", [MDFIND("台北美食"), SEARCH("台北美食")]),  # 沒說範圍：聯合搜尋，本機 0 筆、沒有 Brave 金鑰 → 只剩 Google（U6、U9）
     ("google 一下台北天氣", [SEARCH("台北天氣")]),
     ("用 google 查台北天氣", [SEARCH("台北天氣")]),
     ("開瀏覽器查一下台北天氣", [SEARCH("台北天氣")]),          # 只搜尋，不另外開 App
@@ -366,7 +366,8 @@ def test_site_open_target_browser_priority(front, sh, text):
 def test_search_extracts_keyword_only(monkeypatch, sh, text, query):
     forbid_llm(monkeypatch)
     out = r.process_voice_command(text)
-    assert sh == [SEARCH(query)]
+    federated = not text.startswith(("上網", "google"))  # 沒說範圍的走聯合搜尋：本機也用同一個關鍵字（U6）
+    assert sh == ([MDFIND(query)] if federated else []) + [SEARCH(query)]
     assert all(s["kind"] == "fast" for s in out["steps"])
 
 

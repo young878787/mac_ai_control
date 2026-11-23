@@ -14,7 +14,7 @@ from typing import Callable, Dict, Optional, Union
 
 from mac_ai import config
 
-HEAD_VERSION = 2  # 目前 migration 的 PRAGMA user_version；新增 revision 時一起改
+HEAD_VERSION = 3  # 目前 migration 的 PRAGMA user_version；新增 revision 時一起改
 DEFAULT_SCRIPT_LOCATION = Path(__file__).parent / "migrations"
 CONNECT_TIMEOUT_S = 5.0
 

@@ -39,7 +39,8 @@ def test_corrected_negative_sentence_still_runs_nothing(sh, native_calls, front,
 
 def test_term_misheard_also_rewrites_search_keywords(sh, front):
     """已知副作用（記錄現況）：指令詞誤聽是整句替換，直接搜尋時關鍵字也會被改字（『話面』→『畫面』）；
-    只有本機 0 筆轉交模型的路徑會用 restore_misheard 還原原話"""
+    只有本機 0 筆轉交模型的路徑會用 restore_misheard 還原原話（聯合搜尋也是直接搜尋，同樣不還原）"""
     front(None)
     r.process_voice_command("搜尋話面設計")
-    assert sh == [["open", "https://www.google.com/search?q=%E7%95%AB%E9%9D%A2%E8%A8%AD%E8%A8%88"]]
+    assert [c for c in sh if c[0] == "open"] == [["open", "https://www.google.com/search?q=%E7%95%AB%E9%9D%A2%E8%A8%AD%E8%A8%88"]]
+    assert [c[-1] for c in sh if c[0] == "mdfind"] == ['kMDItemFSName == "*畫面設計*"cd']

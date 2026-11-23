@@ -67,8 +67,8 @@ def test_read_front_failure_is_none(kw):
 
 def test_default_front_is_unreadable_in_offline_tests(sh):
     """conftest：沒有用 front fixture 時讀不到前景，而且不會真的跑 lsappinfo"""
-    r.process_voice_command("搜尋貓咪")
-    assert sh == [["open", URL("貓咪")]]
+    r.process_voice_command("搜尋貓咪")  # 聯合搜尋（U6）：本機 mdfind、沒有 Brave 金鑰 → 開 Google；兩者都不讀前景
+    assert [c[0] for c in sh] == ["mdfind", "open"] and sh[-1] == ["open", URL("貓咪")]
 
 
 # ---------- A1（網址）：只留 host ----------

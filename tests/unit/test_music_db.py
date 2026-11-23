@@ -99,7 +99,7 @@ def _seed_v1_with_events(tmp_path: Path, path: Path, n: int = 10) -> Path:
 
 
 def test_head_version_matches_migration():
-    assert db.HEAD_VERSION == 2
+    assert db.HEAD_VERSION == 3
 
 
 def test_d1_first_run_creates_folder_file_and_schema(tmp_path):
@@ -114,8 +114,8 @@ def test_d1_first_run_creates_folder_file_and_schema(tmp_path):
             assert got == cols, table
         names = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='index'")}
         assert {"events_ts", "terms_pinyin"} <= names
-        assert c.execute("SELECT version_num FROM alembic_version").fetchall() == [("0002",)]
-        assert c.execute("PRAGMA user_version").fetchone()[0] == db.HEAD_VERSION == 2
+        assert c.execute("SELECT version_num FROM alembic_version").fetchall() == [("0003",)]
+        assert c.execute("PRAGMA user_version").fetchone()[0] == db.HEAD_VERSION == 3
     finally:
         c.close()
     assert not list(path.parent.glob("*.bak-*"))
@@ -126,7 +126,7 @@ def test_v1_database_upgrades_to_weather_queries_with_backup(tmp_path):
     path = tmp_path / "music.sqlite3"
     assert db.ensure_schema(path).ok
     c = sqlite3.connect(str(path))
-    c.executescript("DROP TABLE weather_queries; UPDATE alembic_version SET version_num='0001'; PRAGMA user_version=1;")
+    c.executescript("DROP TABLE search_terms; DROP TABLE weather_queries; UPDATE alembic_version SET version_num='0001'; PRAGMA user_version=1;")
     c.executemany("INSERT INTO events (ts, kind, ok) VALUES (?, 'play', 1)", [(float(i),) for i in range(5)])
     c.commit()
     c.close()
@@ -134,13 +134,38 @@ def test_v1_database_upgrades_to_weather_queries_with_backup(tmp_path):
     r = db.ensure_schema(path)
     assert r.ok and r.backup is not None and r.backup.name == "music.sqlite3.bak-1"
     assert _scalar(r.backup, "PRAGMA user_version") == 1 and _scalar(r.backup, "SELECT COUNT(*) FROM events") == before == 5
-    assert _scalar(path, "PRAGMA user_version") == 2 and _scalar(path, "SELECT COUNT(*) FROM events") == 5
-    assert _scalar(path, "SELECT version_num FROM alembic_version") == "0002"
+    assert _scalar(path, "PRAGMA user_version") == 3 and _scalar(path, "SELECT COUNT(*) FROM events") == 5
+    assert _scalar(path, "SELECT version_num FROM alembic_version") == "0003"
     c = sqlite3.connect(str(path))
     try:
         assert [(n, t, nn, pk) for _, n, t, nn, d, pk in c.execute("PRAGMA table_info(weather_queries)")] == [
             ("id", "INTEGER", 0, 1), ("ts", "REAL", 1, 0), ("city", "TEXT", 1, 0)]
         assert "weather_queries_ts" in {x[0] for x in c.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    finally:
+        c.close()
+
+
+def test_v2_database_upgrades_to_search_terms_with_backup(tmp_path):
+    """版本 2 → 3：先備份成 .bak-2、既有資料（點歌、天氣）不變、多一張 search_terms（查詢路由計畫 §4.4、A13）"""
+    path = tmp_path / "music.sqlite3"
+    assert db.ensure_schema(path).ok
+    c = sqlite3.connect(str(path))
+    c.executescript("DROP TABLE search_terms; UPDATE alembic_version SET version_num='0002'; PRAGMA user_version=2;")
+    c.executemany("INSERT INTO events (ts, kind, ok) VALUES (?, 'play', 1)", [(float(i),) for i in range(5)])
+    c.executemany("INSERT INTO weather_queries (ts, city) VALUES (?, '臺北市')", [(float(i),) for i in range(3)])
+    c.commit()
+    c.close()
+    r = db.ensure_schema(path)
+    assert r.ok and r.backup is not None and r.backup.name == "music.sqlite3.bak-2"
+    assert _scalar(r.backup, "PRAGMA user_version") == 2 and _scalar(r.backup, "SELECT COUNT(*) FROM weather_queries") == 3
+    assert _scalar(path, "PRAGMA user_version") == 3 and _scalar(path, "SELECT version_num FROM alembic_version") == "0003"
+    assert _scalar(path, "SELECT COUNT(*) FROM events") == 5 and _scalar(path, "SELECT COUNT(*) FROM weather_queries") == 3
+    c = sqlite3.connect(str(path))
+    try:
+        assert [(n, t, nn, pk) for _, n, t, nn, d, pk in c.execute("PRAGMA table_info(search_terms)")] == [
+            ("id", "INTEGER", 0, 1), ("ts", "REAL", 1, 0), ("term", "TEXT", 1, 0), ("side", "TEXT", 1, 0),
+            ("signal", "TEXT", 1, 0), ("path", "TEXT", 0, 0)]
+        assert "search_terms_term" in {x[0] for x in c.execute("SELECT name FROM sqlite_master WHERE type='index'")}
     finally:
         c.close()
 
@@ -216,7 +241,7 @@ def test_d5_corrupt_file_is_renamed_and_recreated(tmp_path):
     assert r.ok and r.message.startswith("⚠️")
     assert r.corrupt is not None and r.corrupt.name.startswith("music.sqlite3.corrupt-")
     assert r.corrupt.read_bytes() == garbage         # 原檔沒刪、沒改
-    assert _scalar(path, "PRAGMA user_version") == 2  # 新庫可用
+    assert _scalar(path, "PRAGMA user_version") == db.HEAD_VERSION  # 新庫可用
     assert _scalar(path, "SELECT COUNT(*) FROM events") == 0
 
 
@@ -225,7 +250,7 @@ def test_empty_file_is_treated_as_new(tmp_path):
     path.write_bytes(b"")
     r = db.ensure_schema(path)
     assert r.ok and r.message == "" and r.corrupt is None
-    assert _scalar(path, "PRAGMA user_version") == 2
+    assert _scalar(path, "PRAGMA user_version") == db.HEAD_VERSION
 
 
 def test_connect_uses_wal(tmp_path):

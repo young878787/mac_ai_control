@@ -105,23 +105,25 @@ def test_requests_with_clear_scope_never_call_the_llm(monkeypatch, find_env, utt
 
 
 # ---------- 閉環：本機 0 筆、沒有本機證據 → 轉交模型判斷 → 開網頁／確認找不到 ----------
+# 沒說範圍的『找 X』改走聯合搜尋（查詢路由 U6，test_route_federated.py）；轉交只剩『找我的 X』與模型自己選 find_file，這裡用『找我的 X』
+
 def test_escalated_query_can_become_a_web_search(monkeypatch, find_env):
     llm = FakeLLM([tc("web_search_or_open_url", '{"query":"python 教學"}')]).install(monkeypatch)
-    out = r.process_voice_command("找 python 教學")
+    out = r.process_voice_command("找我的 python 教學")
     (step,) = out["steps"]
     assert len(find_env.mdfinds()) == 1  # 先搜本機一次；模型的搜尋不會再被導回本機（不繞圈）
     assert any("google.com/search" in " ".join(c) for c in find_env.opens())
-    assert step["escalated"] == {"label": "python 教學", "scope": "家目錄，不含 ~/Library", "query": "python 教學"}
+    assert step["escalated"] == {"label": "python 教學", "scope": "家目錄，不含 ~/Library", "query": "我的 python 教學"}
     assert step["status"] == "ok" and step["llm_ms"] >= 0
     assert step["logs"][0].startswith("🔎 本機沒有符合「python 教學」")
     system, user = llm.calls[0][0]["content"], llm.calls[0][-1]["content"]
     assert "本機沒有名為" not in system  # 放在使用者訊息：system＋工具定義的前綴快取才不會失效（實測差 2 秒）
-    assert user == "找 python 教學\n\n## 本機搜尋結果\n本機沒有名為「python 教學」的檔案。"
+    assert user == "找我的 python 教學\n\n## 本機搜尋結果\n本機沒有名為「python 教學」的檔案。"
 
 
 def test_escalated_query_without_any_action_confirms_not_found(monkeypatch, find_env):
     llm = FakeLLM("好").install(monkeypatch)  # 模型沒有選任何工具
-    out = r.process_voice_command("找履歷")
+    out = r.process_voice_command("找我的履歷")
     (step,) = out["steps"]
     assert len(llm.calls) == 1  # 不另外觸發 chat call 閒聊
     assert out["replies"] == ["⚠️ 找不到「履歷」：本機沒有符合的檔案（範圍：家目錄，不含 ~/Library）；AI 沒有選擇上網搜尋。要上網查請說「搜尋 履歷」"]
@@ -130,7 +132,7 @@ def test_escalated_query_without_any_action_confirms_not_found(monkeypatch, find
 
 def test_escalation_when_llm_is_unavailable_still_answers(monkeypatch, find_env):
     FakeLLM(error=True).install(monkeypatch)
-    out = r.process_voice_command("找 python 教學")
+    out = r.process_voice_command("找我的 python 教學")
     (step,) = out["steps"]
     assert step["status"] == "llm_unavailable" and find_env.opens() == []
     assert out["replies"][0].startswith("⚠️ 找不到「python 教學」：本機沒有符合的檔案") and "AI 目前無法判斷要不要上網找" in out["replies"][0] and out["replies"][0].endswith("要上網查請說「搜尋 python 教學」")
@@ -138,7 +140,7 @@ def test_escalation_when_llm_is_unavailable_still_answers(monkeypatch, find_env)
 
 def test_escalation_chat_reply_is_told_nothing_was_found(monkeypatch, find_env):
     llm = FakeLLM([tc("chat_reply", "{}")], {"content": "電腦裡沒有這份檔案喔"}).install(monkeypatch)
-    out = r.process_voice_command("找履歷")
+    out = r.process_voice_command("找我的履歷")
     assert out["replies"] == ["電腦裡沒有這份檔案喔"]
     chat_system = llm.calls[1][0]["content"]
     assert "本機沒有名為「履歷」的檔案" in chat_system and "不得聲稱已經找到" in chat_system
@@ -146,7 +148,7 @@ def test_escalation_chat_reply_is_told_nothing_was_found(monkeypatch, find_env):
 
 def test_escalation_with_rejected_tool_still_confirms_not_found(monkeypatch, find_env):
     FakeLLM([tc("control_mac_app", '{"app_name":"Photoshop","action":"open"}')]).install(monkeypatch)
-    out = r.process_voice_command("找履歷")
+    out = r.process_voice_command("找我的履歷")
     (step,) = out["steps"]
     assert any("找不到 App：Photoshop" in log for log in step["logs"])
     assert out["replies"][-1].startswith("⚠️ 找不到「履歷」") and find_env.opens() == []
@@ -156,14 +158,14 @@ def test_found_locally_does_not_call_the_llm(monkeypatch, find_env):
     forbid_llm(monkeypatch, "本機找得到就不該呼叫 LLM")
     path = find_env.touch("docs/履歷.pdf")
     find_env.mdfind_paths = [path]
-    out = r.process_voice_command("找履歷")
+    out = r.process_voice_command("找我的履歷")
     assert find_env.opens() == [["open", "-R", str(path)]] and "escalated" not in out["steps"][0]
 
 
 def test_search_failure_is_reported_not_escalated(monkeypatch, find_env):
     forbid_llm(monkeypatch, "搜尋失敗不該轉交 LLM")
     find_env.mdfind_error = subprocess.TimeoutExpired("mdfind", 3)
-    out = r.process_voice_command("找履歷")
+    out = r.process_voice_command("找我的履歷")
     assert out["steps"][0]["logs"][0].startswith("❌ 檔案搜尋失敗") and out["steps"][0]["status"] == "exec_failed"
 
 
@@ -178,7 +180,7 @@ def test_exception_sentences_go_straight_to_the_model(monkeypatch, find_env, utt
 
 def test_escalation_keeps_spoken_order_with_other_clauses(monkeypatch, find_env):
     FakeLLM([tc("web_search_or_open_url", '{"query":"python 教學"}')]).install(monkeypatch)
-    out = r.process_voice_command("找 python 教學，靜音")
+    out = r.process_voice_command("找我的 python 教學，靜音")
     assert [s["kind"] for s in out["steps"]] == ["fast", "fast"]
     kinds = [c[0] for c in find_env.calls]
     assert kinds == ["mdfind", "open", "osascript"]  # 搜本機 → 轉交後開網頁 → 靜音，照說話順序
@@ -205,11 +207,11 @@ def google_queries(find_env):
 
 
 @pytest.mark.parametrize("spoken,model_query,expected", [
-    ("找蘋果官網", "Apple official website", "蘋果官網"),  # 模型翻成英文
-    ("找天文望遠鏡推薦", "天文望遠鏡推薦 2025", "天文望遠鏡推薦"),  # 模型憑空加年份
-    ("找台中的早午餐", "早午餐 地點", "台中的早午餐"),  # 模型丟掉『台中』
-    ("找靈感", "灵感 概念 灵感 想法", "靈感"),  # 模型混進簡體
-    ("找 python 教學", "Python 教學", "python 教學"),  # 只差大小寫也一律用原話
+    ("找我的蘋果官網", "Apple official website", "我的蘋果官網"),  # 模型翻成英文
+    ("找我的天文望遠鏡推薦", "天文望遠鏡推薦 2025", "我的天文望遠鏡推薦"),  # 模型憑空加年份
+    ("找我的台中早午餐", "早午餐 地點", "我的台中早午餐"),  # 模型丟掉『台中』
+    ("找我的靈感", "灵感 概念 灵感 想法", "我的靈感"),  # 模型混進簡體
+    ("找我的 python 教學", "Python 教學", "我的 python 教學"),  # 只差大小寫也一律用原話
 ])
 def test_escalated_web_search_uses_original_words(monkeypatch, find_env, spoken, model_query, expected):
     FakeLLM([tc("web_search_or_open_url", json.dumps({"query": model_query}))]).install(monkeypatch)
@@ -223,8 +225,8 @@ def test_escalated_web_search_uses_original_words(monkeypatch, find_env, spoken,
 def test_escalation_with_two_web_searches_opens_one_page(monkeypatch, find_env):
     two = {"tool_calls": [tc("web_search_or_open_url", '{"query":"A 一"}'), tc("web_search_or_open_url", '{"query":"A 二"}')]}
     FakeLLM(two).install(monkeypatch)
-    r.process_voice_command("找附近的餐廳")
-    assert google_queries(find_env) == ["附近的餐廳"]
+    r.process_voice_command("找我的附近的餐廳")
+    assert google_queries(find_env) == ["我的附近的餐廳"]
 
 
 def test_model_search_outside_escalation_keeps_the_models_keywords(monkeypatch, sh):
@@ -245,8 +247,8 @@ def test_normalize_records_each_misheard_replacement_in_order():
 
 def test_misheard_word_in_a_query_is_restored_to_what_the_user_said(monkeypatch, find_env):
     FakeLLM([tc("web_search_or_open_url", '{"query":"x"}')]).install(monkeypatch)
-    r.process_voice_command("找谷哥的評價")
-    assert google_queries(find_env) == ["谷哥的評價"]  # 不是「Google Chrome的評價」
+    r.process_voice_command("找我的谷哥評價")
+    assert google_queries(find_env) == ["我的谷哥評價"]  # 不是「Google Chrome的評價」
 
 
 def test_misheard_word_still_opens_the_app_when_it_is_a_command(find_env):
@@ -256,9 +258,9 @@ def test_misheard_word_still_opens_the_app_when_it_is_a_command(find_env):
 
 def test_restore_picks_the_right_occurrence_across_clauses(monkeypatch, find_env):
     FakeLLM([tc("web_search_or_open_url", '{"query":"x"}')]).install(monkeypatch)
-    r.process_voice_command("開谷哥瀏覽器，找谷哥的評價")  # 兩個子句各有一個替換：第二句要對到第二筆（谷哥），不是第一筆（谷哥瀏覽器）
+    r.process_voice_command("開谷哥瀏覽器，找我的谷哥評價")  # 兩個子句各有一個替換：第二句要對到第二筆（谷哥），不是第一筆（谷哥瀏覽器）
     assert find_env.opens()[0] == ["open", "-a", "Google Chrome"]
-    assert google_queries(find_env) == ["谷哥的評價"]
+    assert google_queries(find_env) == ["我的谷哥評價"]
 
 
 def test_restore_is_skipped_when_it_cannot_be_matched():
@@ -274,7 +276,7 @@ def test_restore_is_skipped_when_it_cannot_be_matched():
 # ---------- 運算時間記錄 ----------
 def test_escalation_records_stage_timings(monkeypatch, find_env):
     FakeLLM([tc("web_search_or_open_url", '{"query":"x"}')]).install(monkeypatch)
-    out = r.process_voice_command("找 python 教學")
+    out = r.process_voice_command("找我的 python 教學")
     (step,) = out["steps"]
     assert {"find_ms", "extract_ms", "llm_ms", "validate_ms", "ms"} <= set(step)
     assert 0 <= step["extract_ms"] < 5 and step["find_ms"] >= 0  # 原話查詢（含誤聽還原）的運算時間
@@ -287,11 +289,12 @@ def test_pipeline_find_then_pick(find_env):
     t = 1_700_000_000
     paths = [find_env.touch(f"macai_find_test/驗收報告{c}.pdf", mtime=t - i) for i, c in enumerate("ABC")]
     find_env.mdfind_paths = paths
-    out = r.process_voice_command("找驗收報告")
+    out = r.process_voice_command("找驗收報告")  # 沒說範圍：聯合搜尋，本機 3 筆＋一筆 Google 搜尋（U6、U9，沒有 Brave 金鑰）
     (step,) = out["steps"]
     assert step["kind"] == "fast" and step["status"] == "ok"
     assert step["intent"]["domain"] == "file" and step["intent"]["slots"]["name"] == "驗收報告"
-    assert step["choices"]["total"] == 3 and find_env.opens() == []
+    assert step["choices"]["total"] == 4 and [i["kind"] for i in step["choices"]["items"]] == ["pdf", "pdf", "pdf", "web"]
+    assert find_env.opens() == []
     out = r.process_voice_command("第二個")
     assert find_env.opens() == [["open", "-R", str(paths[1])]]
     assert out["steps"][0]["status"] == "ok" and out["steps"][0]["choices"]["closed"] is True

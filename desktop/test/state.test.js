@@ -497,6 +497,13 @@ test('result 帶 choices → 清單開啟，倒數照後端給的秒數', () => 
   assert.equal(createController().snapshot(T0).choices, null);
 });
 
+test('聯合搜尋的網路項目（kind＝web）照樣進清單：只有標題與網域', () => {
+  const web = { n: 4, name: '周杰倫 - 維基百科', dir: 'zh.wikipedia.org', kind: 'web' };
+  const c = createController();
+  c.handle(withChoices({ items: [...ITEMS, web], total: 4 }), T0);
+  assert.deepEqual(c.snapshot(T0).choices.items.at(-1), web);
+});
+
 test('清單到期就關閉', () => {
   const c = createController();
   c.handle(withChoices({ expires_in_s: 30 }), T0);

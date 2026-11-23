@@ -6,7 +6,7 @@ import pytest
 import mac_ai.router as r
 from mac_ai.router import context, llm_client
 from mac_ai.router.fast_path import FastPathMatcher
-from support.expect import URL, VSCODE
+from support.expect import MDFIND, URL, VSCODE
 from support.llm import FakeLLM, forbid_llm
 
 
@@ -92,7 +92,9 @@ def test_search_routing_table(monkeypatch, sh, front, case, front_app, host, tex
     forbid_llm(monkeypatch)
     front(front_app, host=host)
     out = r.process_voice_command(text)
-    assert sh == expected_calls
+    federated = case in ("B5", "B8", "B9")  # 前景不在詞庫網站：沒說範圍的查走聯合搜尋，本機 0 筆、沒有 Brave 金鑰 → 開 Google（U6）
+    assert [c for c in sh if c[0] == "mdfind"] == ([MDFIND("貓咪")] if federated else [])
+    assert [c for c in sh if c[0] != "mdfind"] == expected_calls
     assert out["steps"][-1]["logs"][-1] == expected_log and out["steps"][-1]["status"] == "ok"
 
 
@@ -126,10 +128,20 @@ def test_site_search_failure_is_reported(monkeypatch, front):
 
 
 def test_b12_find_miss_with_browser_in_front_searches_web_without_llm(monkeypatch, find_env, front):
+    """沒說範圍的『找 X』走聯合搜尋（U6）：本機 0 筆、沒有 Brave 金鑰 → 只剩 Google，用前景瀏覽器開"""
     forbid_llm(monkeypatch)
     front("Safari", host="example.com")
     step = r.process_voice_command("找 python 教學")["steps"][0]
     assert find_env.opens() == [["open", "-a", "Safari", URL("python 教學")]]
+    assert step["federated"]["local"] == 0 and "escalated" not in step and step["status"] == "ok"
+
+
+def test_b12_my_file_miss_with_browser_in_front_searches_web_without_llm(monkeypatch, find_env, front):
+    """『找我的 X』仍是找檔案：0 筆而且前景是瀏覽器 → 直接上網找，不問模型"""
+    forbid_llm(monkeypatch)
+    front("Safari", host="example.com")
+    step = r.process_voice_command("找我的 python 教學")["steps"][0]
+    assert find_env.opens() == [["open", "-a", "Safari", URL("我的 python 教學")]]
     assert step["escalated"]["to"] == "web" and "llm_ms" not in step and step["status"] == "ok"
 
 
@@ -148,7 +160,7 @@ def test_b13_find_miss_without_browser_still_asks_the_model(monkeypatch, find_en
         raise llm_client.LLMUnavailable("offline")
     monkeypatch.setattr(llm_client, "_chat", fake_chat)
     front("Finder")
-    step = r.process_voice_command("找 python 教學")["steps"][0]
+    step = r.process_voice_command("找我的 python 教學")["steps"][0]  # 沒說『我的』的走聯合搜尋（U6），不問模型
     assert asked and find_env.opens() == [] and "to" not in step["escalated"]
 
 

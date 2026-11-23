@@ -23,7 +23,8 @@ def classify(text, stage="lead"):
 @pytest.mark.parametrize("text, target, mode, evidence, extra", [
     ("查一下台北天氣", "knowledge", "answer", "category", {"category": "weather", "slots": {"city": "臺北市", "day": "today", "part": ""}}),
     ("明天會下雨嗎", "knowledge", "answer", "category", {"category": "weather"}),
-    ("搜尋履歷", "knowledge", "show", "verb", {"slots": {"where": "context"}, "query": "履歷"}),
+    ("搜尋履歷", "either", "show", "verb", {"slots": {"where": "context"}, "query": "履歷"}),  # 沒說範圍：聯合搜尋（U5）
+    ("查周杰倫", "either", "show", "verb", {"query": "周杰倫"}),
     ("查一下周杰倫是誰", "knowledge", "answer", "verify", {"category": "verify", "query": "周杰倫是誰"}),
     ("周杰倫是誰", "knowledge", "answer", "verify", {"query": "周杰倫是誰"}),
     ("台積電股價", "knowledge", "answer", "verify", {"query": "台積電股價"}),
@@ -49,7 +50,10 @@ def test_lead_stage_labels(text, target, mode, evidence, extra):
 @pytest.mark.parametrize("text, target, domain", [
     ("找一下我的履歷", "local", "file"),
     ("找昨天下載的 PDF", "local", "file"),
-    ("找一下周杰倫是誰", "local", "file"),  # 現況：當成檔名（U3 在 P3 改成直接回答）
+    ("找一下周杰倫", "either", "file"),  # 沒有本機證據：聯合搜尋（U6）
+    ("找 python 教學", "either", "file"),
+    ("找一下我的履歷", "local", "file"),  # 『我的』算本機證據
+    ("找履歷檔案", "local", "file"),
     ("上網找履歷範本", "knowledge", "web"),
 ])
 def test_find_stage_labels(text, target, domain):

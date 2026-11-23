@@ -42,6 +42,12 @@ def SEARCH(q, browser=None):
     return ["open", "-a", browser, URL(q)] if browser else ["open", URL(q)]
 
 
+def MDFIND(q):
+    """聯合搜尋的本機那一邊（家目錄、檔名每個詞各自比對；查詢路由 U6）"""
+    import os
+    return ["mdfind", "-onlyin", os.path.expanduser("~"), " && ".join(f'kMDItemFSName == "*{w}*"cd' for w in q.split())]
+
+
 CHROME, SAFARI, VSCODE = "Google Chrome", "Safari", "Visual Studio Code"
 
 

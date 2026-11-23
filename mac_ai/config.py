@@ -90,6 +90,11 @@ WAKE_SESSION_S = 60.0  # 喚醒後的會話長度：這段時間內每一句都�
 FIND_RESULTS_MAX = 5  # 多筆結果最多列幾筆（也是語音／UI 可選的最大序號）
 FIND_CHOICE_TTL_S = 60.0  # 結果清單有效時間，與喚醒會話一致
 FILE_SEARCH_TIMEOUT_S = 3.0  # mdfind 逾時
+# 聯合搜尋（沒說範圍的『找周杰倫』『搜尋履歷』：本機與網路並行，計畫 docs/plans/active/2026-11-23-query-routing.md §4.3、U8、U9）
+FEDERATED_LOCAL_MAX = 3  # 清單裡本機最多幾筆
+FEDERATED_WEB_MAX = 2  # 清單裡網路最多幾筆（合計不超過 FIND_RESULTS_MAX）
+SEARCH_LEAN_WINDOW_S = 90 * 86400.0  # 常搜名詞統計的時間窗口
+SEARCH_LEAN_MIN = 2  # 同一邊至少這麼多次、另一邊 0 次，才直接用那一邊（U8）
 APP_INDEX_REFRESH_S = 60.0  # 已安裝 App 清單：查不到時，最短隔這麼久才重掃一次
 CONTEXT_TIMEOUT_S = 1.0  # 讀前景 App（lsappinfo，實測約 15 ms）的逾時；逾時視為沒有上下文
 

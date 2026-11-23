@@ -156,7 +156,7 @@ QueryIntent
 | P1 | **詞表搬家**：問句、明說網路、類別詞搬到 `query_cues`，各呼叫點用與現在**相同**的集合 | 快照 0 差異；`pytest` 0 failed。**2026-11-23 完成（§9.2）** |
 | P2 | **加入 `classify_query`**，Fast Path 的搜尋、找、天氣規則改用它，規則的實際結果不變 | 快照 0 差異；`test_completeness.py`、`test_endpoint.py` 通過；`match()` 延遲符合 U10。**2026-11-23 完成（§9.3）** |
 | P3 | **改行為**：詞表合併成一份；U2、U3、U7；`either` 判斷（暫時仍走現有路線） | 快照差異**只出現在核准清單裡**：逐句列「舊結果 → 新結果」給使用者確認後才合併。**2026-11-23 完成（§9.4）** |
-| P4 | **聯合搜尋與統計**：migration 0003、`search_prefs`、`federated_search`、清單網路項目、UI | §7.1 A5～A10 通過 |
+| P4 | **聯合搜尋與統計**：migration 0003、`search_prefs`、`federated_search`、清單網路項目、UI | §7.1 A5～A10 通過。**2026-11-23 完成（§9.5）** |
 | P5 | **轉交與事後驗證**：U4、§4.5 | §7.1 A11、A12 通過；雲端與本機的 flow 測試全綠 |
 | P6 | **實測與文件**：§7.2、§7.3；ADR、flows、ARCHITECTURE、README 同步；計畫結案 | §7 全部有結果；`pytest` 0 failed；`node --test`、`npm run typecheck` 通過 |
 
@@ -312,3 +312,46 @@ QueryIntent
   - 改成每子句只解析一次、確定是查證或問句才做範圍判斷，判斷結果共用（`_Local`）；`verify` 詞表不再用 `.*?` 前綴。
   - 與 P2 交替跑 3 次：P2 0.089～0.090，P3 **0.091～0.093 ms**，符合 U10（≤ 0.098）。
 - **已知、不在本階段**：「勇士隊昨天贏了嗎」被敘述守門（昨天）擋下，維持現況。
+
+### 9.5 P4 聯合搜尋與常搜名詞統計（2026-11-23）
+
+- **分類**：
+  - 「搜尋／查＋名詞」沒有範圍證據（即時資訊仍直接 Google）→ `either`。
+  - 「找 X」範圍判斷是檔案、`source` 為 default、沒有副檔名／類型／時間／位置 → `either`。
+  - 「我的…」算本機證據（找我的履歷仍是找檔案，0 筆照舊轉交模型）。
+  - 同一句有其他子句明說要看畫面時照舊開網頁。
+- **執行**（`local_actions.federated_search`）：
+  - 前景瀏覽器停在詞庫網站、或同句剛開了瀏覽器 → 照舊 `context_search`（站內搜尋不變）。
+  - 否則 `ThreadPoolExecutor` 並行：本機 `mdfind`（同 `find_file` 的範圍與排序），網路有 Brave 金鑰就搜尋、沒有就一筆「在 Google 搜尋『X』」。
+  - 清單本機最多 3 筆、網路最多 2 筆；只剩一筆就直接執行。只剩 Google 那一筆時走原本的 `web_search_or_open_url`，log 與沒有這個功能時逐字相同。
+  - 統計（`search_prefs.lean`）：U8 成立且偏本機、記錄的路徑還在 → 直接顯示；路徑不在 → 只查本機，0 筆才查網路；偏網路 → 直接 `context_search`（開 Google 搜尋頁，不另外呼叫 Brave）。未達 U8 的偏好只決定清單先列哪一邊。
+- **清單**：`choices.ChoiceList.items` 可放 `WebItem(title, url)`；`payload()` 的網路項目是 `{name: 標題, dir: 網域, kind: "web"}`。`pick_choice` 選網路項目時用前景瀏覽器或預設瀏覽器開網址（U11）；本機項目照 0005 第 3 條。
+- **統計**：
+  - migration `0003_search_terms`，`HEAD_VERSION` 3。
+  - 寫入只有兩種：
+    - 從聯合清單選了哪一邊（picked；本機連同路徑，網路 `path` 為 NULL）。
+    - Fast Path 執行成功、明說範圍的找／搜尋（explicit）：「找履歷檔案」「找下載裡的履歷」→ 本機，「上網查履歷」「google 一下 X」→ 網路。
+  - 列出清單、統計自動決定、0 筆、轉交的都不記。
+  - `web_answer` 的句子不記：它們不會走到聯合搜尋。
+  - 「單筆直接顯示後沒有改選」也不記：要等下一句才知道有沒有改選，先不做。
+- **桌面**：網路項目顯示標題＋網域，不顯示「打開／顯示」切換鈕。
+- **資料安全（A10）**：
+  - log 的清單行只寫「（網路）」。
+  - 開網路項目的結果是「✅ 已用瀏覽器打開網路結果」，不帶標題與網址。
+  - `commands.jsonl` 照舊不寫 `choices`。
+  - 測試確認標題、網址、金鑰不在紀錄、終端輸出、對話記憶、資料庫。
+- **快照差異 41 句，全部是 `federated_search`**（U5、U6）：
+  - 搜尋／查／找＋名詞，例如履歷、周杰倫、python 教學、Xcode、貓咪。
+  - 原本走轉交的「找蘋果官網」等。
+  - 既有的誤判「查不到」「查不到這個人的資料」原本就被當成搜尋（`context_search`），現在一樣被當成搜尋，沒有變好也沒有變差。
+- **測試**：
+  - 新增 `tests/flow/test_route_federated.py`（25 項，A5～A8、A10、統計）。A5 用兩邊各 0.4 秒的延遲取代計畫寫的 2 秒，以免拖慢測試；門檻是整步 < 0.64 秒。
+  - 新增 `tests/unit/test_search_prefs.py`（14 項，A9）與 `test_music_db.py` 的 2 → 3 升級（A13）。
+  - 轉交機制的測試改用「找我的…」。
+  - `pytest` 3171 passed、6 skipped、0 failed。
+  - `node --test` 267 pass，`npm run typecheck` 通過。
+- **實測（這台 Mac）**：
+  - `lean` 在 2 萬筆紀錄上 p95 0.013 ms，`record` p95 0.095 ms（< 5 ms）。
+  - 真實 `mdfind` 5 個詞 100～377 ms。
+  - L1 `match()` p95 0.092～0.093 ms。
+- **未驗證**：L2 聯合搜尋含真實 Brave 的延遲（U10 p50 ≤ 1.5 s、p95 ≤ 3.5 s）需要真金鑰與網路，未執行；桌面清單畫面沒有實機看過。

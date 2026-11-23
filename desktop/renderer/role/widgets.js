@@ -58,7 +58,8 @@ export function createQuick(box, button, { onOpen, onHover }) {
   };
 }
 
-/** 搜尋結果清單：每列一筆（序號、檔名、所在資料夾）。點整列＝預設動作，右邊按鈕＝另一個動作。文字一律 textContent */
+/** 搜尋結果清單：每列一筆（序號、檔名、所在資料夾）。點整列＝預設動作，右邊按鈕＝另一個動作。文字一律 textContent。
+ *  聯合搜尋的網路項目（kind＝web）：名稱是標題、dir 是網域，點了用瀏覽器開，沒有另一個動作 */
 export function createChoices(panel, title, list, closeButton, { onChoose, onClose }) {
   let shownKey = '';
   const verb = (action) => (action === 'open' ? '打開' : '顯示');
@@ -81,16 +82,20 @@ export function createChoices(panel, title, list, closeButton, { onChoose, onClo
       for (const item of choices.items) {
         const li = document.createElement('li');
         li.className = 'choice';
-        li.title = `${item.dir}/${item.name}`;
+        const web = item.kind === 'web';
+        li.title = web ? `${item.name}（${item.dir}）` : `${item.dir}/${item.name}`;
         const n = document.createElement('span'); n.className = 'n'; n.textContent = String(item.n);
         const text = document.createElement('span'); text.className = 'text';
         const name = document.createElement('span'); name.className = 'name'; name.textContent = item.name;
         const dir = document.createElement('span'); dir.className = 'dir'; dir.textContent = item.dir;
         text.append(name, dir);
-        const alt = document.createElement('button'); alt.type = 'button'; alt.textContent = verb(other);
-        alt.addEventListener('click', (e) => { e.stopPropagation(); onChoose(item.n, other); });
         li.addEventListener('click', () => onChoose(item.n, null));
-        li.append(n, text, alt);
+        li.append(n, text);
+        if (!web) {
+          const alt = document.createElement('button'); alt.type = 'button'; alt.textContent = verb(other);
+          alt.addEventListener('click', (e) => { e.stopPropagation(); onChoose(item.n, other); });
+          li.append(alt);
+        }
         list.appendChild(li);
       }
     },

@@ -7,6 +7,7 @@ from mac_ai.router import catalog, memory, sources
 from mac_ai.router.actions import ExecContext, front_app, run_tool
 from mac_ai.router.fast_path import FastPathMatcher, Match
 from mac_ai.router.llm_client import LLMError, LLMUnavailable
+from mac_ai.router.local_actions import record_explicit_search
 from mac_ai.router.normalize import log_normalization, normalize_utterance, restore_misheard
 from mac_ai.router.slow_path import execute_slow_path_llm, local_miss_reply
 
@@ -175,6 +176,8 @@ def process_voice_command(stt_text: str) -> dict:
             for log in logs:
                 print(f"   {log}")
         step["status"] = _step_status(ctx)
+        if kind == "fast" and run.query is not None and step["status"] == "ok" and "escalated" not in step:
+            record_explicit_search(run.query, ctx)  # 明說範圍的找／搜尋記常搜名詞（0 筆、失敗、轉交的不記）
         step["logs"] = logs
         steps.append(step)
     ctx.step = None

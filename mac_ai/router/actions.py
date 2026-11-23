@@ -81,12 +81,16 @@ def adjust_screen_brightness(direction: str, steps: int = 3) -> str:
     return f"✅ 已將螢幕{action_text} {steps} 格" if ok else f"❌ 調整亮度失敗（{err}）"
 
 
+def google_search_url(query: str) -> str:
+    return f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+
+
 def web_search_or_open_url(query: str, browser: Optional[str] = None) -> str:
     """使用瀏覽器開啟網址或進行 Google 搜尋；browser 由執行上下文帶入（剛開啟的瀏覽器），未指定則用預設瀏覽器"""
     if query.startswith("http://") or query.startswith("https://"):
         url = query
     else:
-        url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+        url = google_search_url(query)
     ok, err = _run(["open", "-a", browser, url] if browser else ["open", url])
     return f"✅ 已開啟瀏覽器搜尋：{query}" if ok else f"❌ 開啟瀏覽器失敗（{err}）"
 

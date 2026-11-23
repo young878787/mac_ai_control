@@ -100,11 +100,12 @@ class Match:
     """Fast Path 比對結果：可呼叫（執行全部動作）。比對與執行分開，路由器才能依說話順序決定何時執行"""
 
     def __init__(self, actions: List[Tuple[str, dict]], confidence: str = "exact", note: str = "",
-                 intent: Optional[Intent] = None):
+                 intent: Optional[Intent] = None, query: Optional[QueryIntent] = None):
         self.actions = actions
         self.confidence = confidence  # exact／fuzzy／candidate
         self.note = note
         self.intent = intent  # 範圍判斷的結果（找／搜尋／打開走這條路時才有），給 step["intent"] 追查用
+        self.query = query  # 查詢分類（查／找／搜尋走這條路時才有）：執行成功後記常搜名詞（pipeline）
 
     def run(self, ctx: Optional[ExecContext] = None) -> List[str]:
         ctx = ctx or ExecContext()
@@ -116,16 +117,18 @@ class Match:
 
 def _route_query(q: QueryIntent) -> Match:
     """查詢分類 → 動作（計畫 docs/plans/active/2026-11-23-query-routing.md §4.2 的對應表）"""
+    if q.target == "either":  # 沒說範圍的找／搜尋：本機與網路並行（§4.3）
+        return Match([("federated_search", {"query": q.query})], note="聯合搜尋", intent=q.intent, query=q)
     if q.intent is not None:
-        return Match(plan_actions(q.intent), q.intent.confidence, q.intent.note, q.intent)
+        return Match(plan_actions(q.intent), q.intent.confidence, q.intent.note, q.intent, query=q)
     if q.category == "weather":
         return Match([("get_weather", dict(q.slots))])
     if q.mode == "answer":  # 會變的事實、查／找＋問句：查證後回答；金鑰不齊時怎麼退回由 web_answer 在執行時決定（U13）
         return Match([("web_answer", {"query": q.query})], note=f"直接回答（{q.evidence}）")
     search = ("web_search_or_open_url" if q.slots["where"] == "google" else "context_search", {"query": q.query})
     if q.slots.get("app"):
-        return Match([("control_mac_app", {"app_name": q.slots["app"], "action": "open"}), search], q.confidence, q.note)
-    return Match([search])
+        return Match([("control_mac_app", {"app_name": q.slots["app"], "action": "open"}), search], q.confidence, q.note, query=q)
+    return Match([search], query=q)
 
 
 _TAB = r"(?:分頁|標籤頁|標籤|頁籤)"

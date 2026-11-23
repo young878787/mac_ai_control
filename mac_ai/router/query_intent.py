@@ -228,8 +228,9 @@ def _question(raw: str, s: str, local: _Local) -> Optional[QueryIntent]:
     return q
 
 
-def _search(s: str) -> Optional[QueryIntent]:
-    """沒說範圍、也不是問句的搜尋（搜尋履歷、查周杰倫）：即時資訊直接 Google，其餘看前景（停在 FB 就站內搜尋）"""
+def _search(s: str, either: bool = True) -> Optional[QueryIntent]:
+    """沒說範圍、也不是問句的搜尋（搜尋履歷、查周杰倫）：即時資訊直接 Google；其餘聯合搜尋（either，U1、U5），
+    執行時前景停在詞庫網站（FB）照舊站內搜尋。either=False（同一句明說要看畫面）→ 看前景開網頁"""
     m = _SEARCH_RES[0].match(s)
     if not m:
         return None
@@ -238,7 +239,17 @@ def _search(s: str) -> Optional[QueryIntent]:
         return None
     if _REALTIME_RE.search(query):
         return QueryIntent("knowledge", "show", "realtime", query, slots={"where": "google"})
-    return QueryIntent("knowledge", "show", "verb", query, slots={"where": "context"})
+    return QueryIntent("either" if either else "knowledge", "show", "verb", query, slots={"where": "context"})
+
+
+def _find(s: str, catalog, candidates: bool) -> Optional[QueryIntent]:
+    """『找 X』：範圍判斷（本機優先）。檔案而且沒有任何本機證據（找周杰倫、找 python 教學）→ 聯合搜尋（either，U6）；
+    『我的…』、副檔名（找 node.js）算本機證據（我的履歷是自己的檔案）"""
+    q = _scope(s, catalog, candidates, ("find",))
+    if (q is None or q.intent.domain != "file" or q.intent.source != "default" or q.intent.query.startswith("我的")
+            or any(q.intent.slots.get(k) for k in ("filename", "kinds", "since", "location"))):
+        return q
+    return QueryIntent("either", "show", "default", q.intent.query, intent=q.intent)
 
 
 def classify_query(s: str, catalog, *, raw: str = "", whole: str = "", candidates: bool = False,
@@ -249,10 +260,10 @@ def classify_query(s: str, catalog, *, raw: str = "", whole: str = "", candidate
     stage＝find：『找 X』，排在其他指令規則之後（沒有更具體的指令才當成找東西），本機優先。
     answer=False：跳過直接回答（_question），等於加入 U2、U3、U7、U12 之前的路線（沒有雲端時用）"""
     if stage == "find":
-        return _scope(s, catalog, candidates, ("find",))
+        return _find(s, catalog, candidates)
     raw = raw or s
     local = _Local(s, parse_find(s), catalog, candidates)
     if whole and _OPEN_CUE_RE.search(whole):  # 同一句的其他子句明說要看畫面：這個子句也是要開網頁，不直接回答
-        return _open_search(s, catalog, candidates) or _explicit(s, local) or _search(s)
+        return _open_search(s, catalog, candidates) or _explicit(s, local) or _search(s, either=False)
     return (_weather(raw, s) or _open_search(s, catalog, candidates) or _explicit(s, local)
             or (_question(raw, s, local) if answer else None) or _search(s))

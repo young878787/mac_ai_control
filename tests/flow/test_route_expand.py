@@ -60,7 +60,7 @@ def test_many_local_matches_reply_is_long_enough_to_expand(find_env):
     t = 1_700_000_000
     find_env.mdfind_paths = [find_env.touch(f"macai_find_test/驗收報告{c}.pdf", mtime=t - i) for i, c in enumerate("ABC")]
     out = r.process_voice_command("找驗收報告")
-    assert expand(out) == "complex" and out["steps"][0]["choices"]["total"] == 3  # 清單仍在角色視窗，聊天室只是多一處看
+    assert expand(out) == "complex" and out["steps"][0]["choices"]["total"] == 4  # 本機 3 筆＋Google 1 筆（聯合搜尋 U9）；清單仍在角色視窗，聊天室只是多一處看
 
 
 # ---------- 看畫面 ----------
