@@ -154,7 +154,7 @@ QueryIntent
 |---|---|---|
 | P0 | **行為快照與基線**：把現有測試裡的句子＋§1 的句子做成語料（`tests/fixtures/routing/corpus.json`），記下每句目前的 Fast Path 結果（工具＋參數）或「交給 Slow Path」＋`intent_guard`；量 `match()` 在語料上的 p50／p95 | 快照測試全綠；基線數字寫進 §9。**2026-11-23 完成（§9.1）** |
 | P1 | **詞表搬家**：問句、明說網路、類別詞搬到 `query_cues`，各呼叫點用與現在**相同**的集合 | 快照 0 差異；`pytest` 0 failed。**2026-11-23 完成（§9.2）** |
-| P2 | **加入 `classify_query`**，Fast Path 的搜尋、找、天氣規則改用它，規則的實際結果不變 | 快照 0 差異；`test_completeness.py`、`test_endpoint.py` 通過；`match()` 延遲符合 U10 |
+| P2 | **加入 `classify_query`**，Fast Path 的搜尋、找、天氣規則改用它，規則的實際結果不變 | 快照 0 差異；`test_completeness.py`、`test_endpoint.py` 通過；`match()` 延遲符合 U10。**2026-11-23 完成（§9.3）** |
 | P3 | **改行為**：詞表合併成一份；U2、U3、U7；`either` 判斷（暫時仍走現有路線） | 快照差異**只出現在核准清單裡**：逐句列「舊結果 → 新結果」給使用者確認後才合併 |
 | P4 | **聯合搜尋與統計**：migration 0003、`search_prefs`、`federated_search`、清單網路項目、UI | §7.1 A5～A10 通過 |
 | P5 | **轉交與事後驗證**：U4、§4.5 | §7.1 A11、A12 通過；雲端與本機的 flow 測試全綠 |
@@ -261,3 +261,24 @@ QueryIntent
   - `pytest -m "unit or flow"` 2740 passed；`pytest` 3041 passed、6 skipped、0 failed。
   - L1：p50 0.011／p95 0.087／最大 0.375 ms，符合 U10。
 - 各組內容仍各自不同，P3 才合併，見 §6。
+
+### 9.3 P2 加入 classify_query（2026-11-23）
+
+- **新模組** `mac_ai/router/query_intent.py`：`QueryIntent`（target、mode、evidence、query、category、slots、intent）與 `classify_query(s, catalog, raw=, candidates=, stage=)`。
+- **從 `fast_path.py` 原文搬過來**（用腳本搬，沒有手抄）：
+  - `answer_mode` 的正規表示式；判斷本身改成 `answer_mode_of(raw, s)`，`fast_path.answer_mode` 只剩包裝。
+  - 天氣窄規則、搜尋句型、開瀏覽器搜尋句型。
+  - `_r_weather`、`_r_open_search`、`_r_search` 三條規則的邏輯。
+- **為什麼 `answer_mode` 要拆成兩層**：新模組不能 import `fast_path`，否則循環匯入。改成接收已經 `canonicalize_clause` 過的句子後，新模組就用不到 `fast_path`。
+- **Fast Path 呼叫方式**：
+  - `match()` 在原本天氣與搜尋規則的位置呼叫 `classify_query(stage="lead")`。
+  - `_r_find` 在原本的位置呼叫 `stage="find"`。
+  - 規則順序不變；「找」仍排在其他指令規則之後，不提前。
+  - 分類結果由 `fast_path._route_query` 換成動作（§4.2 的對應表；P2 只對應到現有動作）。
+- **結果**：
+  - 快照 0 差異。
+  - `fast_path.py` 少 112 行、多 25 行。
+  - 新測試 `tests/unit/test_query_intent.py`：25 項，含 A3 純粹性。跑整份語料的兩個階段時，把 `subprocess.run`／`Popen`、`urlopen`、`sqlite3.connect` 換成一呼叫就失敗的假物件，全部沒有被呼叫。
+  - `pytest` 3066 passed、6 skipped、0 failed。
+  - L1：p50 0.011／p95 0.089／最大 0.381 ms，符合 U10（≤ 0.098）。
+- **測試預期寫錯過一次**：「google 周杰倫」原本預期是明說網路，實際現況是交給 Slow Path（Google 句型要求後面接「一下」或搜尋動詞）。已改正預期，程式沒有改。
