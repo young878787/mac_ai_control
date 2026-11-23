@@ -312,7 +312,7 @@ def federated_search(query: str, ctx: Optional[ExecContext] = None) -> str:
     """沒說範圍的『找周杰倫』『搜尋履歷』：本機（mdfind）與網路（Brave；沒有金鑰就是一筆 Google 搜尋）並行，合併成一份清單（U1、U5、U6、U9）。
     前景瀏覽器停在詞庫網站、或同句剛開了瀏覽器 → 照舊站內搜尋（context_search）。
     統計（search_prefs.lean）：U8 成立時只查偏好的那一邊，偏本機而且記錄的路徑還在 → 直接顯示那個路徑；清單依偏好決定先列哪一邊。
-    只有一邊有結果而且只有 1 筆 → 直接執行。各階段記在 ctx.step["federated"]（筆數、毫秒、lean；不記標題與網址）"""
+    只有一邊有結果而且只有 1 筆 → 直接執行；本機 1 筆而網路只剩 Google 搜尋（沒有金鑰或搜尋失敗）也直接顯示。各階段記在 ctx.step["federated"]（筆數、毫秒、lean；不記標題與網址）"""
     ctx = ctx or ExecContext()
     if ctx.last_browser or front_site(ctx) is not None:
         return context_search(query, ctx)
@@ -343,6 +343,8 @@ def federated_search(query: str, ctx: Optional[ExecContext] = None) -> str:
     if web_error:
         info["web_error"] = web_error
     local_items, web_items = paths[:config.FEDERATED_LOCAL_MAX], web[:config.FEDERATED_WEB_MAX]
+    if len(local_items) == 1 and web_error:  # 本機 1 筆、網路只剩 Google 搜尋：直接顯示（同以前的找檔案，使用者 2026-11-23 決定）
+        return _act(local_items[0], "reveal")[1]
     if len(local_items) + len(web_items) == 1:  # 只有一邊、只有 1 筆：直接執行
         if local_items:
             return _act(local_items[0], "reveal")[1]

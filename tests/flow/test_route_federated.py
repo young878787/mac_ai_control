@@ -91,12 +91,18 @@ def test_only_one_web_result_and_no_local_hit_opens_it_directly(find_env, brave)
     assert find_env.opens() == [["open", WIKI]] and "choices" not in step and step["status"] == "ok"
 
 
-def test_brave_zero_results_falls_back_to_one_google_item(find_env, brave):  # noqa: F811
+def test_one_local_hit_and_only_google_left_reveals_it(find_env, brave):  # noqa: F811
+    """Brave 0 筆 → 網路只剩 Google 搜尋：本機 1 筆就直接顯示，不列清單（使用者 2026-11-23 決定）"""
     brave.value = {"web": {"results": []}}
     (path,) = files(find_env, "周杰倫.txt")
-    data_step = say("找周杰倫")["steps"][0]
-    # Brave 0 筆 → 網路那邊退回一筆 Google 搜尋，所以仍是清單（本機 1 筆＋Google）
-    assert kinds(data_step) == ["txt", "web"] and data_step["federated"]["web_error"] == "no_results" and path
+    (step,) = say("找周杰倫")["steps"]
+    assert find_env.opens() == [["open", "-R", str(path)]] and "choices" not in step and step["federated"]["web_error"] == "no_results"
+
+
+def test_one_local_hit_without_search_key_reveals_it_as_before(find_env):
+    (path,) = files(find_env, "履歷.pdf")
+    (step,) = say("找履歷")["steps"]
+    assert find_env.opens() == [["open", "-R", str(path)]] and "choices" not in step
 
 
 def test_front_site_keeps_site_search(find_env, front, brave):  # noqa: F811
