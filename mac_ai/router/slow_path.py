@@ -9,7 +9,7 @@ from mac_ai.router import cloud_client, context, memory, search_client
 from mac_ai.router.actions import _FAIL_PREFIXES, ExecContext, chat_reply, front_context, run_tool
 from mac_ai.router.cloud_client import CloudError
 from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match, answer_mode, canonicalize_clause
-from mac_ai.router.lexicon import _OPEN, _alias_index, _compact, build_hint_lines, project_index
+from mac_ai.router.lexicon import QUERY_CUES, _OPEN, _alias_index, _alt, _compact, build_hint_lines, project_index
 from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
 from mac_ai.router.tools import validate_tool_call
 
@@ -27,7 +27,7 @@ SYSTEM_PROMPT = (
 
 # 搜尋意圖：句子裡要有這些詞（動詞，或天氣、新聞這類 prompt 明確要求要搜尋的即時資訊），LLM 才能開搜尋頁。
 # 實測：『沒有我說的是這網頁』這類糾正句，小模型會編出『台北天氣 2025-09-27』之類的 query 亂開搜尋頁
-_SEARCH_INTENT_RE = re.compile(r"搜|查|找|google|谷歌|上網|天氣|下雨|氣溫|新聞|股價|股票|匯率", re.IGNORECASE)
+_SEARCH_INTENT_RE = re.compile(_alt(QUERY_CUES["search_intent"]), re.IGNORECASE)
 _URL_RE = re.compile(r"^(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:[/?#]\S*)?$", re.IGNORECASE)
 
 
@@ -65,7 +65,7 @@ def _search_intent_error(utterance: str, query: str, name: str = "web_search_or_
 # 否定、敘述、提問（『什麼』除外，『寫什麼』本身就是看畫面的問法）不算，避免『網頁是什麼』『怎麼看螢幕亮度』被當成要讀畫面
 _LOOK_AT_SCREEN_RE = re.compile(
     r"(?:看|讀|念|辨識|解讀|截).{0,6}(?:畫面|螢幕|網頁|頁面|圖片)|(?:畫面|螢幕|網頁|頁面|圖片)(?:上)?(?:在)?(?:寫|說|講|有|顯示)(?:了)?什麼")
-_NOT_A_REQUEST_RE = re.compile(r"嗎|怎麼|為什麼|為何|如何|是不是|有沒有|哪|幾|多少|\?")
+_NOT_A_REQUEST_RE = re.compile(_alt(QUERY_CUES["not_a_request"]))
 
 
 def _is_look_at_screen(text: str) -> bool:
@@ -76,7 +76,7 @@ def _is_look_at_screen(text: str) -> bool:
 # 『不要鎖定螢幕』『別讓電腦睡眠』『剛剛鎖定螢幕了』都照做，63 次不該動作中 27 次是睡眠／鎖定／關 App；改提示詞無效）。
 # 所以否定／敘述句不讓 LLM 規劃工具，只回話；資訊提問只保留不改變狀態的工具。
 # 『可以幫我開小算盤嗎』『今天台北會下雨嗎』這類只有『嗎』的是非問句／客氣請求不擋（實測 AI 都做對）。
-_INFO_QUESTION_RE = re.compile(r"什麼|怎麼|為什麼|為何|如何|哪|幾|多少|是不是|有沒有")
+_INFO_QUESTION_RE = re.compile(_alt(QUERY_CUES["info_question"]))
 # front_action 只有雲端會呼叫（『怎麼全螢幕』『關閉視窗要按什麼』是在問，不是要做）
 # 說『關掉／關閉…』就一定是關閉：雲端的 front_action 不能把它換成最小化（『收起來』→ 最小化可以）
 _CLOSE_RE = re.compile(r"關掉|關閉|關起來|關上|退出|結束|關$")

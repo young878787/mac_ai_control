@@ -153,7 +153,7 @@ QueryIntent
 | 步驟 | 內容 | 完成條件 |
 |---|---|---|
 | P0 | **行為快照與基線**：把現有測試裡的句子＋§1 的句子做成語料（`tests/fixtures/routing/corpus.json`），記下每句目前的 Fast Path 結果（工具＋參數）或「交給 Slow Path」＋`intent_guard`；量 `match()` 在語料上的 p50／p95 | 快照測試全綠；基線數字寫進 §9。**2026-11-23 完成（§9.1）** |
-| P1 | **詞表搬家**：問句、明說網路、類別詞搬到 `query_cues`，各呼叫點用與現在**相同**的集合 | 快照 0 差異；`pytest` 0 failed |
+| P1 | **詞表搬家**：問句、明說網路、類別詞搬到 `query_cues`，各呼叫點用與現在**相同**的集合 | 快照 0 差異；`pytest` 0 failed。**2026-11-23 完成（§9.2）** |
 | P2 | **加入 `classify_query`**，Fast Path 的搜尋、找、天氣規則改用它，規則的實際結果不變 | 快照 0 差異；`test_completeness.py`、`test_endpoint.py` 通過；`match()` 延遲符合 U10 |
 | P3 | **改行為**：詞表合併成一份；U2、U3、U7；`either` 判斷（暫時仍走現有路線） | 快照差異**只出現在核准清單裡**：逐句列「舊結果 → 新結果」給使用者確認後才合併 |
 | P4 | **聯合搜尋與統計**：migration 0003、`search_prefs`、`federated_search`、清單網路項目、UI | §7.1 A5～A10 通過 |
@@ -246,3 +246,18 @@ QueryIntent
   - 最慢的是「打開 YouTube Music」「打開 github.com」這類 App 與網站比對。
   - **U10 門檻：P2、P3 的 p95 ≤ 0.098 ms。**
 - **全部離線測試**：`pytest`，3041 passed、6 skipped、126 deselected、0 failed，29.3 秒。
+
+### 9.2 P1 詞表搬家（2026-11-23）
+
+- **搬了哪些**：9 組詞從程式搬到 `vocab/lexicon.json` 的 `query_cues`，程式用 `lexicon.QUERY_CUES` 取用。
+  - `question`、`question_end`、`ask`、`open_cue`、`lead_search`、`answer_category`：`fast_path`。
+  - `info_question`、`not_a_request`、`search_intent`：`slow_path`。
+  - `realtime_words` 原本就在詞庫，沒有動。
+  - `open_cue` 的「在…搜尋」是正規表示式結構，留在程式，改用 `lead_search` 組成。
+- **搬家前確認**：用一次性腳本比對每一組詞與原本正規表示式的交替項，8 組逐詞相同。
+  - 這些正規表示式全部只拿來判斷有沒有命中（`search`／`match` 的布林值），`_alt` 把長詞排前面不影響結果。
+- **結果**：
+  - 快照 0 差異。
+  - `pytest -m "unit or flow"` 2740 passed；`pytest` 3041 passed、6 skipped、0 failed。
+  - L1：p50 0.011／p95 0.087／最大 0.375 ms，符合 U10。
+- 各組內容仍各自不同，P3 才合併，見 §6。

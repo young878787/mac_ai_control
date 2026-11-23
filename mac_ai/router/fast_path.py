@@ -7,7 +7,7 @@ from mac_ai.router import context
 from mac_ai.router.actions import ExecContext, run_tool
 from mac_ai.router.domain import _REALTIME_RE, SCOPE_WORDS, Intent, parse_find, resolve_intent, starts_with_find_verb
 from mac_ai.router.lexicon import (
-    APP_KIND, LEXICON, WEATHER_CITY_ALIASES, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_project,
+    APP_KIND, LEXICON, QUERY_CUES, WEATHER_CITY_ALIASES, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_project,
 )
 from mac_ai.router.local_actions import plan_actions
 
@@ -21,7 +21,7 @@ _TOPIC_RE = re.compile(rf"^(?P<x>.+?)\s*(?P<v>{_LONG_VERB})$")
 # 安全守門：否定、敘述、提問一律不走 Fast（交給 LLM）
 _NEG_RE = re.compile(r"不要|不用|不必|不想|不能|不可以|不行|不需要|別|勿|沒有|先不")
 _NARR_RE = re.compile(rf"昨天|前天|剛剛|剛才|之前|已經|以前|上次|曾經|本來|原本|(?:{_VERB})了")
-_QUESTION_RE = re.compile(r"嗎|什麼|怎麼|為什麼|為何|如何|是不是|有沒有|哪|幾|多少|\?")
+_QUESTION_RE = re.compile(_alt(QUERY_CUES["question"]))
 
 # 點歌句型（詞庫 music；規則見 docs/plans/completed/2026-11-21-music-play.md §4.1）：只比對原句，不碰 IO
 _MUSIC = LEXICON["music"]
@@ -91,12 +91,12 @@ def canonicalize_clause(clause: str) -> str:
 # ---- 查資訊：開網頁還是直接回答（計畫 docs/plans/completed/2026-11-21-web-answer.md §4.1）。純比對，不碰網路、LLM、子程序，也不讀前景 ----
 # 明說要看畫面（瀏覽器、網站、Google、上網、給我看、顯示、在 X 搜尋、句首的搜尋）：開網頁，優先於一切（明說優先，同 0006）
 _OPEN_CUE_RE = re.compile(
-    rf"瀏覽器|browser|safari|chrome|網站|網頁|官網|{_alt(SCOPE_WORDS['web'])}|給我看|讓我看|給我們看|秀出|秀給我|顯示|在.{{1,12}}?(?:搜尋|搜索)", re.IGNORECASE)
-_LEAD_SEARCH_RE = re.compile(r"^(?:搜尋|搜索)")
+    rf"{_alt(QUERY_CUES['open_cue'] + SCOPE_WORDS['web'])}|在.{{1,12}}?(?:{_alt(QUERY_CUES['lead_search'])})", re.IGNORECASE)
+_LEAD_SEARCH_RE = re.compile(rf"^(?:{_alt(QUERY_CUES['lead_search'])})")
 # 問句或要求告知：直接回答（「誰」不只收「是誰」：只收「是誰」時「勇士隊最近一場比賽誰贏了」被當成開網頁，2026-11-23 實測）
-_ASK_RE = re.compile(r"嗎|什麼|怎麼|怎樣|如何|多少|幾|會不會|誰|是不是|有沒有|哪|\?|？|告訴我|跟我說|和我說|報一下|播報|想知道|知道")
+_ASK_RE = re.compile(_alt(QUERY_CUES["ask"]))
 # 有接 API 的高頻類別（目前只有天氣）；說了類別、沒說要看畫面，查／找也是要答案
-_CATEGORY_RE = re.compile(r"天氣|下雨|降雨|氣溫|溫度")
+_CATEGORY_RE = re.compile(_alt(QUERY_CUES["answer_category"]))
 
 
 def answer_mode(utterance: str) -> str:
@@ -153,7 +153,7 @@ _SEARCH = "(?:" + _alt(["搜尋", "搜索", "查詢", "查一下", "查查", "�
 _TAB = r"(?:分頁|標籤頁|標籤|頁籤)"
 _THIS_TAB = r"(?:這個|目前的?|現在的?|當前的?)?"
 # 疑問句尾：『搜尋嗎』這種不是搜尋指令
-_QUESTION_END_RE = re.compile(r"[嗎呢?]$")
+_QUESTION_END_RE = re.compile(rf"(?:{_alt(QUERY_CUES['question_end'])})$")
 _WEB_LEAD_RE = re.compile(rf"^(?:{_alt(SCOPE_WORDS['web'])})", re.IGNORECASE)
 _DARK = "(?:深色|暗黑|夜間|暗色|黑暗)"
 _LIGHT = "(?:淺色|亮色|日間)"

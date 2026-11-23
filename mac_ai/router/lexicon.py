@@ -63,6 +63,10 @@ for _c in LEXICON["weather"]["cities"]:
     for _a in [_c["name"], *_c["aliases"]]:
         WEATHER_CITY_ALIASES[_a] = _c["name"]
 
+# 查詢判斷用的詞（問句、要求告知、明說要看畫面、類別、搜尋意圖）：集中在詞庫 query_cues，各呼叫點用名稱取用
+# （計畫 docs/plans/active/2026-11-23-query-routing.md §4.1；P1 只搬家，每一組與原本的正規表示式內容相同）
+QUERY_CUES: Dict[str, List[str]] = LEXICON["query_cues"]
+
 _VERBS = LEXICON.get("verbs", {})
 OPEN_VERBS: List[str] = _VERBS.get("open", ["打開", "開啟", "啟動", "叫出", "開"])
 QUIT_VERBS: List[str] = _VERBS.get("quit", ["關掉", "關閉", "退出", "結束", "關"])
