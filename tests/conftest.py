@@ -25,7 +25,7 @@ def _isolate_router(request, monkeypatch, tmp_path):
     r.reset_llm_breaker()
     real_cloud = request.node.get_closest_marker("cloud") is not None  # cloud 實測要讀真的 .env、連真的雲端
     if not real_cloud:
-        for name in ("AI_API_URL", "AI_MODEL", "AI_API_KEY", "CWA_API_KEY"):  # 雲端與氣象署預設停用：不讀這台電腦的 .env 與環境變數（cloud fixture 與天氣測試的 with_key 才開）
+        for name in ("AI_API_URL", "AI_MODEL", "AI_API_KEY", "CWA_API_KEY", "BRAVE_API_KEY"):  # 雲端、氣象署與搜尋預設停用：不讀這台電腦的 .env 與環境變數（cloud fixture 與天氣測試的 with_key 才開）
             monkeypatch.delenv(name, raising=False)
         monkeypatch.setattr(config, "ENV_PATH", tmp_path / "no.env")
     config.reset_env_cache()
@@ -83,10 +83,11 @@ def cloud(monkeypatch, tmp_path):
 def _isolate_catalog(monkeypatch):
     """離線測試不能依賴這台電腦裝了哪些 App，也不能真的跑 mdfind：已安裝 App 清單固定為空（只剩詞庫），
     選擇清單每個測試各自獨立。需要已安裝 App 的測試用 installed_apps fixture 加。"""
-    from mac_ai.router import catalog, choices
+    from mac_ai.router import catalog, choices, sources
     monkeypatch.setattr(catalog, "_scan_installed", lambda: {})
     monkeypatch.setattr(catalog, "DEFAULT", catalog.Catalog())
     monkeypatch.setattr(choices, "STORE", choices.ChoiceStore())
+    monkeypatch.setattr(sources, "STORE", sources.SourceStore())
     yield
 
 

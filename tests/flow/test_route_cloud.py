@@ -251,7 +251,7 @@ def test_key_never_appears_in_output_results_or_logs(cloud, local, capsys, name,
     event = {"command": "x", "ok": True, "total_ms": 1.0, "replies": out["replies"]}
     blob = capsys.readouterr().out + json.dumps(out, ensure_ascii=False, default=str) + json.dumps(command_record(event, out), ensure_ascii=False)
     assert KEY not in blob and "Bearer" not in blob
-    assert set(step.get("cloud", {})) <= {"model", "status", "total_ms", "prompt_tokens", "completion_tokens"}
+    assert set(step.get("cloud", {})) <= {"model", "status", "total_ms", "prompt_tokens", "completion_tokens", "finish_reason"}
 
 
 # ---------- 記錄欄位 ----------

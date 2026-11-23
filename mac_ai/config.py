@@ -112,6 +112,17 @@ CWA_FORECAST_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-00
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 WEATHER_DEFAULT_WINDOW_S = 90 * 86400.0  # 沒說縣市時，「常問縣市」統計的時間窗口
 
+# --- 長尾問題回答（搜尋 → 雲端摘要 1～2 句）。要有 BRAVE_API_KEY 與 AI_API_KEY 才啟用；少一個就照舊開搜尋網頁。數值是建議值，實測後在 §9 定案
+BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
+BRAVE_COUNTRY = "TW"  # 搜尋結果偏向臺灣
+BRAVE_SEARCH_LANG = "zh-hant"
+WEB_SEARCH_TIMEOUT_S = 3.0  # Brave 單次逾時
+WEB_SEARCH_COUNT = 5  # 摘錄筆數
+WEB_SNIPPET_CHARS = 300  # 每筆摘錄送雲端的字數上限
+WEB_ANSWER_TIMEOUT_S = 6.0  # 依摘錄回答的那次雲端呼叫的逾時（規劃那次仍是 CLOUD_TIMEOUT_S）
+WEB_ANSWER_MAX_TOKENS = 4096  # 依摘錄回答那次的上限（含推理；推理維持 CLOUD_REASONING_EFFORT）。600 時摘錄互相矛盾會推理到上限、答案空白或被截斷（2026-11-23 實測），使用者 2026-11-23 定 4096
+SOURCE_FOLLOWUP_TTL_S = 60.0  # 回答後「要打開來源嗎？」說「好」有效的時間，與喚醒會話一致
+
 # macos-stt 是獨立子專案（自己的 venv），語音辨識授權必須在它的 .app bundle 內取得，所以用 start.py serve 啟動
 STT_DIR = ROOT / "macos-stt"
 STT_PYTHON = STT_DIR / ".venv" / "bin" / "python"

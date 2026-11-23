@@ -5,10 +5,10 @@ import time
 from typing import List, Optional, Set, Tuple
 
 from mac_ai.config import PLAN_TIMEOUT_S, WARMUP_TIMEOUT_S
-from mac_ai.router import cloud_client, context, memory
+from mac_ai.router import cloud_client, context, memory, search_client
 from mac_ai.router.actions import _FAIL_PREFIXES, ExecContext, chat_reply, front_context, run_tool
 from mac_ai.router.cloud_client import CloudError
-from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match, canonicalize_clause
+from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match, answer_mode, canonicalize_clause
 from mac_ai.router.lexicon import _OPEN, _alias_index, _compact, build_hint_lines, project_index
 from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
 from mac_ai.router.tools import validate_tool_call
@@ -30,6 +30,8 @@ SYSTEM_PROMPT = (
 _SEARCH_INTENT_RE = re.compile(r"搜|查|找|google|谷歌|上網|天氣|下雨|氣溫|新聞|股價|股票|匯率", re.IGNORECASE)
 _URL_RE = re.compile(r"^(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:[/?#]\S*)?$", re.IGNORECASE)
 
+
+_WEB_TOOLS = ("web_answer", "web_search_or_open_url", "site_search")  # 開網頁或回答由原句決定的幾個工具（validate_calls）
 
 # 『打開 YouTube』『上 YouTube』『去 GitHub』：句子明說了詞庫裡的網站、也有開啟的動詞，模型給的網址又屬於那個網站時，放行並改成網站首頁
 # （實測雲端對這類說法都回正確的網址，卻被 _search_intent_error 全部擋下：9 種說法 0 通過）。改成首頁而不用模型的網址：模型可能編出深層連結
@@ -181,7 +183,9 @@ def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict],
                    targets: Set[str], schemas: Optional[dict] = None) -> Tuple[List[Tuple[str, dict]], List[str], List[str]]:
     """模型回傳的 tool_calls（本機、雲端共用）→ (通過驗證的 [(工具, 參數)], 被拒絕的原因, 導向本機的紀錄)。
     依序：格式 → validate_tool_call → 對象守門 → 搜尋意圖守門 → 轉交時用原話 → 本機優先導向。
-    schemas：雲端傳 CLOUD_SCHEMAS（多了 front_action、site_search）；site_search 通過後換成本機的 context_search 執行"""
+    schemas：雲端傳 CLOUD_SCHEMAS（多了 front_action、site_search；有搜尋金鑰時再多 web_answer）；site_search 通過後換成本機的 context_search 執行。
+    開網頁或回答由原句決定、不由模型決定（answer_mode，計畫 §4.1）：模型呼叫 web_answer 但原句明說要看畫面 → 改成開網頁；
+    模型要開網頁搜尋（web_search_or_open_url、site_search）但原句是在問事情，而且這次有 web_answer → 改成 web_answer。query 沿用模型給的"""
     calls: List[Tuple[str, dict]] = []
     rejected: List[str] = []
     reroutes: List[str] = []
@@ -196,29 +200,38 @@ def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict],
         except json.JSONDecodeError:
             rejected.append(f"{func.get('name')} 參數不是合法 JSON")
             continue
-        clean, err = validate_tool_call(func.get("name", ""), args, schemas)
+        name = func.get("name", "")
+        clean, err = validate_tool_call(name, args, schemas)
         if not err:
-            err = target_error(func["name"], clean, utterance, targets)
-        if not err and func["name"] == "web_search_or_open_url":
+            err = target_error(name, clean, utterance, targets)
+        if not err and name in _WEB_TOOLS and schemas and "web_answer" in schemas:
+            mode = answer_mode(utterance)
+            if name == "web_answer" and mode == "open":
+                name = "web_search_or_open_url"
+                reroutes.append(f"[Answer 導向] web_answer「{clean['query']}」→ 開網頁（原句要看畫面）")
+            elif name != "web_answer" and mode == "answer":
+                reroutes.append(f"[Answer 導向] {name}「{clean['query']}」→ web_answer（原句是在問事情）")
+                name = "web_answer"
+        if not err and name == "web_search_or_open_url":
             err = _search_intent_error(utterance, clean["query"])
             home = site_open_home(utterance, clean["query"]) if err else None  # 只放寬原本會拒絕的；原本放行的（有搜尋字詞、字面網址）維持不變
             if home:
                 clean, err = {**clean, "query": home}, None
-        if not err and func["name"] == "front_action" and clean["id"] == "minimize" and _CLOSE_RE.search(utterance):
+        if not err and name == "front_action" and clean["id"] == "minimize" and _CLOSE_RE.search(utterance):
             err = "front_action 被略過：句子說的是關閉，不是最小化"
-        if not err and func["name"] == "site_search":
+        if not err and name == "site_search":
             err = _search_intent_error(utterance, clean["query"], "site_search")
         if err:
             rejected.append(err)
             continue
-        if func["name"] == "web_search_or_open_url" and local_miss is not None and local_miss.get("query"):
+        if name == "web_search_or_open_url" and local_miss is not None and local_miss.get("query"):
             # 轉交：模型只決定要不要上網，關鍵字用使用者的原話（實測模型會加年份、翻成英文、丟字）
             if meta is not None:
                 meta["model_query"], meta["used_query"] = clean["query"], local_miss["query"]
             clean = {**clean, "query": local_miss["query"]}
-            if (func["name"], clean) in calls:
+            if (name, clean) in calls:
                 continue
-        if func["name"] in ("web_search_or_open_url", "site_search") and local_miss is None:
+        if name in ("web_search_or_open_url", "site_search") and local_miss is None:
             local = _local_reroute(utterance, clean["query"])
             if local is not None:
                 calls.extend(local.actions)
@@ -226,7 +239,7 @@ def validate_calls(tool_calls: list, utterance: str, local_miss: Optional[dict],
                 if meta is not None:
                     meta["intent"] = local.intent.to_log()
                 continue
-        calls.append((cloud_client.CLOUD_TOOL_TARGETS.get(func["name"], func["name"]), clean))
+        calls.append((cloud_client.CLOUD_TOOL_TARGETS.get(name, name), clean))
     return calls, rejected, reroutes
 
 
@@ -254,7 +267,7 @@ def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Opti
 
 
 def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str]) -> Tuple[List[Tuple[str, dict]], str, List[str]]:
-    """雲端規劃：工具＝TOOLS_SCHEMA（chat_reply 多一個 text 參數）＋front_action、site_search，同一套驗證（validate_calls）。user 訊息＝本機的 build_user_message＋最近對話。
+    """雲端規劃：工具＝TOOLS_SCHEMA（chat_reply 多一個 text 參數）＋front_action、site_search（有 BRAVE_API_KEY 再加 web_answer），同一套驗證（validate_calls）。user 訊息＝本機的 build_user_message＋最近對話（有 web_answer 時再加今天日期）。
     回傳 (通過驗證的呼叫, 文字回覆, 被拒絕的原因)；雲端不可用時拋 CloudError（呼叫端退回本機）"""
     user = build_user_message(utterance, front=front_hint(ctx))
     mem = memory.STORE.render(ctx.calls)
@@ -262,13 +275,17 @@ def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str]) 
         user += "\n\n## 最近對話\n" + mem
         step["memory_turns"] = len(memory.STORE.recent())
     meta: dict = {}
+    web = search_client.available()  # 有搜尋金鑰才多給 web_answer；沒有時工具清單與以前逐字相同
+    if web:  # 不給日期時模型會把「今年」「最近」編成訓練資料的年份（2026-11-23 實測，計畫 §9.5）；沒有金鑰時訊息不變
+        from mac_ai.router.local_actions import today_taipei  # 與回答那次同一個時鐘（local_actions._now，測試可注入）；函式內 import 不改變模組載入順序
+        user += "\n\n## 今天日期\n" + today_taipei()
     try:
         message = cloud_client.chat([{"role": "system", "content": cloud_client.CLOUD_SYSTEM_PROMPT},
-                                     {"role": "user", "content": user}], tools=cloud_client.CLOUD_TOOLS, meta=meta)
+                                     {"role": "user", "content": user}], tools=cloud_client.cloud_tools(web), meta=meta)
     finally:
         step["cloud"] = meta
     tool_calls, say = cloud_client.split_chat_texts(message.get("tool_calls") or [])  # chat_reply(text)：伴隨工具的文字回覆
-    calls, rejected, reroutes = validate_calls(tool_calls, utterance, None, step, targets, cloud_client.CLOUD_SCHEMAS)
+    calls, rejected, reroutes = validate_calls(tool_calls, utterance, None, step, targets, cloud_client.cloud_schemas(web))
     step["reroutes"] = reroutes
     return calls, message.get("content") or " ".join(say), rejected
 
@@ -304,7 +321,7 @@ def _execute_cloud(utterance: str, step: dict, ctx: ExecContext, guard: Optional
             return logs + [f"[Slow Path - 補救] read_screen({{}}) -> {run_tool('read_screen', {}, ctx)}"]
         return logs + [chat_reply(ctx)]
     all_ok = not rejected and not dropped and not any(r.startswith(_FAIL_PREFIXES) for r in ctx.results)
-    if content and all_ok and "read_screen" not in {n for n, _ in calls}:  # 看畫面的結果本身就是回覆
+    if content and all_ok and not {"read_screen", "web_answer"} & {n for n, _ in calls}:  # 看畫面、長尾回答的結果本身就是回覆
         ctx.replies.append(content)
         ctx.ai_reply = True
         logs.append(f"☁️ AI 回覆：{content}")

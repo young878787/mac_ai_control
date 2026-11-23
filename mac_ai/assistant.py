@@ -24,7 +24,7 @@ MAINT_POLL_S = 60.0  # 點歌定時整理的計時器多久看一次有沒有到
 WORKER_POLL_S = 0.2  # 指令執行緒等佇列時每隔多久檢查一次 stop（測試調小，避免停止時空等）
 _FAILED_STEP_STATUS = ("exec_failed", "llm_unavailable", "llm_error")
 _LOGGED_STEP_KEYS = ("kind", "text", "status", "ms", "llm_ms", "intent", "match", "route", "cloud", "cloud_fallback",
-                     "vision_cloud", "memory_turns", "music")  # 寫進 commands.jsonl 的 step 欄位
+                     "vision_cloud", "memory_turns", "music", "web")  # 寫進 commands.jsonl 的 step 欄位
 
 
 def _ignore(event: dict) -> None:

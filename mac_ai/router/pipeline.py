@@ -3,7 +3,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from mac_ai import config
-from mac_ai.router import catalog, memory
+from mac_ai.router import catalog, memory, sources
 from mac_ai.router.actions import ExecContext, front_app, run_tool
 from mac_ai.router.fast_path import FastPathMatcher, Match
 from mac_ai.router.llm_client import LLMError, LLMUnavailable
@@ -98,6 +98,7 @@ def process_voice_command(stt_text: str) -> dict:
     log_normalization(stt_text, normalized)
     stt_text = normalized
 
+    pending_source = sources.STORE.take()  # 每一句開頭取走：上一句回答後的「要打開來源嗎？」只有緊接著的這一句能回答
     matcher = FastPathMatcher()
     t = time.perf_counter()
     clauses = matcher.split_clauses(stt_text)
@@ -111,7 +112,10 @@ def process_voice_command(stt_text: str) -> dict:
         pos = stt_text.find(clause, cursor)  # 子句在整句中的位置（還原誤聽詞時用）
         if pos >= 0:
             cursor = pos + len(clause)
-        run = matcher.match(clause)
+        if pending_source and len(clauses) == 1 and sources.is_yes(clause):
+            run = Match([("open_source", {"url": pending_source})], note="打開上一個回答的來源")  # match() 看不到待決狀態，所以不在 Fast Path 規則裡
+        else:
+            run = matcher.match(clause)
         if run:
             run.start = max(pos, 0)
             segments.append(("fast", [clause], run))

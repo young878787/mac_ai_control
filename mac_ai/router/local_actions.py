@@ -16,13 +16,13 @@ from mac_ai import config
 from mac_ai.config import CONTEXT_TIMEOUT_S, FILE_SEARCH_TIMEOUT_S, FIND_RESULTS_MAX
 from mac_ai.router import choices, context, native
 from mac_ai.router.actions import (
-    LOCAL_TOOLS, POLL_TIMEOUT_S, ExecContext, _dispatch, _skipped, front_context, front_site, mark_page, _run,
-    open_music_video, open_search_page,
+    LOCAL_TOOLS, POLL_TIMEOUT_S, _FAIL_PREFIXES, ExecContext, _dispatch, _skipped, front_app, front_context, front_site, mark_page, _run,
+    open_music_video, open_search_page, web_search_or_open_url,
 )
 from mac_ai.router.domain import Intent
 from mac_ai.router.lexicon import LEXICON
 from mac_ai import db as music_db
-from mac_ai.router import music_prefs, weather_client, weather_prefs, youtube_client
+from mac_ai.router import cloud_client, music_prefs, search_client, sources, weather_client, weather_prefs, youtube_client
 
 _FOLDERS = {f["key"]: f for f in LEXICON["known_folders"]}
 _KINDS = LEXICON["file_kinds"]
@@ -727,6 +727,11 @@ def music_top(ctx: Optional[ExecContext] = None) -> str:
 _TAIPEI = datetime.timezone(datetime.timedelta(hours=8))  # 台灣沒有日光節約時間，不需要 zoneinfo
 
 
+def today_taipei() -> str:
+    """台北時間的今天（YYYY-MM-DD）；長尾回答的規劃與回答兩次呼叫都用它（模型不知道今天幾號）"""
+    return datetime.datetime.fromtimestamp(_now(), _TAIPEI).strftime("%Y-%m-%d")
+
+
 def get_weather(city: str = "", day: str = "today", part: str = "", ctx: Optional[ExecContext] = None) -> str:
     """天氣回答（只讀資料：不開網頁、不呼叫 LLM）。city 空字串＝用資料庫統計的常問縣市，沒有紀錄就請使用者說縣市（不猜、不定位）；
     句子明說的縣市記進資料庫（不管查不查得到）。有 CWA_API_KEY 先查氣象署，沒有金鑰或失敗改查 Open-Meteo，兩個都失敗回 ❌ 查不到。
@@ -754,8 +759,84 @@ def get_weather(city: str = "", day: str = "today", part: str = "", ctx: Optiona
     return f"✅ {res.text}"
 
 
+# ---------- 長尾回答（搜尋 → 雲端依摘錄回答）----------
+_WHY = {"search": "搜尋服務沒有回應", "cloud": "AI 沒有回應", "no_answer": "搜尋結果裡沒有答案", "truncated": "AI 的回答不完整"}
+
+
+def _web_fallback(query: str, ctx: Optional[ExecContext], why: str) -> str:
+    """搜尋、雲端摘要任何一步失敗或沒有答案：開 Google 搜尋頁（與沒有這個功能時一樣）並回 ⚠️，不謊稱查到（W4、紅線 9、11）"""
+    browser = (ctx.last_browser or front_app(ctx, "browser")) if ctx is not None else None
+    res = web_search_or_open_url(query, browser=browser)
+    if ctx is not None:
+        mark_page(ctx, res)
+    if res.startswith(_FAIL_PREFIXES):
+        return f"❌ 沒辦法直接回答（{_WHY[why]}），開啟瀏覽器也失敗了：{query}"
+    return f"⚠️ 沒辦法直接回答（{_WHY[why]}），已經幫你開 Google 搜尋「{query}」"
+
+
+def web_answer(query: str, ctx: Optional[ExecContext] = None) -> str:
+    """長尾問題：Brave 搜尋（只送 query）→ 雲端依摘錄回答 1～2 句（不帶工具）→ 放進 ctx.replies，並記下第一筆來源供「要打開來源嗎？」。
+    搜尋失敗、雲端失敗、摘錄裡沒有答案都退回開搜尋頁（⚠️）。摘錄只活在這個函式裡：不寫紀錄、不進對話記憶（Brave 條款）。
+    原句有時間性時只搜近期網頁（search_client.freshness_for）；近期沒有結果就不過濾再搜一次。
+    各階段記在 ctx.step["web"]：search_ms、results、freshness、fresh_retry、answer_ms、cloud（雲端呼叫的 meta）、error（分類）"""
+    info: dict = ctx.step.setdefault("web", {}) if ctx is not None and ctx.step is not None else {}
+    utterance = (ctx.utterance if ctx is not None else "") or query
+    fresh = search_client.freshness_for(utterance)
+    if fresh:
+        info["freshness"] = fresh
+    t = time.perf_counter()
+    try:
+        try:
+            results = search_client.search(query, freshness=fresh)
+        except search_client.SearchError as e:
+            if not (fresh and e.kind == "no_results"):
+                raise
+            info["fresh_retry"] = True
+            results = search_client.search(query)
+    except search_client.SearchError as e:
+        info.update(search_ms=(time.perf_counter() - t) * 1000, error=f"search:{e.kind}")
+        return _web_fallback(query, ctx, "search")
+    info.update(search_ms=(time.perf_counter() - t) * 1000, results=len(results))
+    today = today_taipei()
+    meta: dict = {}
+    t = time.perf_counter()
+    try:
+        message = cloud_client.chat(cloud_client.web_answer_messages(utterance, results, today), tools=None,
+                                    timeout=config.WEB_ANSWER_TIMEOUT_S, max_tokens=config.WEB_ANSWER_MAX_TOKENS, meta=meta)
+    except cloud_client.CloudError as e:
+        info.update(error=f"cloud:{e}")
+        return _web_fallback(query, ctx, "cloud")
+    finally:
+        info.update(answer_ms=(time.perf_counter() - t) * 1000, cloud=meta)
+    answer = message.get("content") or ""
+    if meta.get("finish_reason") == "length":  # 碰到上限：內容可能只有半句，不當成答案
+        info["error"] = "truncated"
+        return _web_fallback(query, ctx, "truncated")
+    if cloud_client.is_no_answer(answer):
+        info["error"] = "no_answer"
+        return _web_fallback(query, ctx, "no_answer")
+    sources.STORE.put(results[0].url)
+    if ctx is not None:
+        ctx.replies.append(f"{answer} {sources.FOLLOWUP}")
+        ctx.ai_reply = True
+    return f"✅ {answer}"
+
+
+def open_source(url: str, ctx: Optional[ExecContext] = None) -> str:
+    """「要打開來源嗎？」說好：開 web_answer 記下的那筆來源。網址來自搜尋服務、不是模型編的，仍照紅線 5 只收 http／https"""
+    if not url.startswith(("http://", "https://")):
+        return "❌ 來源網址不合法，沒有開啟"
+    browser = (ctx.last_browser or front_app(ctx, "browser")) if ctx is not None else None
+    res = web_search_or_open_url(url, browser=browser)
+    if ctx is not None:
+        mark_page(ctx, res)
+    host = urllib.parse.urlsplit(url).hostname or ""
+    return f"❌ 開啟來源失敗（{host}）" if res.startswith(_FAIL_PREFIXES) else f"✅ 已打開來源：{host}"
+
+
 LOCAL_TOOLS.update({
     "open_folder": open_folder, "find_file": find_file, "pick_choice": pick_choice,
     "context_search": context_search, "front_action": front_action, "play_media": play_media,
     "music_replace": music_replace, "music_feedback": music_feedback, "music_top": music_top, "get_weather": get_weather,
+    "web_answer": web_answer, "open_source": open_source,
 })

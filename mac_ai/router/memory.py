@@ -37,7 +37,9 @@ class MemoryStore:
 
     def add(self, user: str, calls: List[Call], replies: List[str]) -> None:
         reply = " ".join(replies).strip()
-        self._items.append({"t": self.clock(), "user": user, "calls": list(calls),
+        # 參數只留 render／targets 用得到的（TOOLS_SCHEMA 的工具、front_action 的 id）；其餘本機工具的搜尋字、路徑、來源網址不進記憶（0009 第 6 條）
+        kept = [(n, a if n in _SCHEMA_TOOLS or n == "front_action" else {}, ok) for n, a, ok in calls]
+        self._items.append({"t": self.clock(), "user": user, "calls": kept,
                             "reply": reply[:REPLY_MAX_CHARS] + ("…" if len(reply) > REPLY_MAX_CHARS else "")})
         self._items = self._items[-self.turns:]
 

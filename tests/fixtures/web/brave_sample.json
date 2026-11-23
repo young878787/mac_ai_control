@@ -1,0 +1,16 @@
+{
+  "type": "search",
+  "query": {"original": "周杰倫 是誰", "more_results_available": true},
+  "web": {
+    "type": "search",
+    "results": [
+      {"title": "周杰倫 - 維基百科，自由的百科全書", "url": "https://zh.wikipedia.org/wiki/%E5%91%A8%E6%9D%B0%E5%80%AB",
+       "description": "周杰倫（<strong>Jay Chou</strong>，1979年1月18日－），臺灣華語流行音樂創作歌手、音樂製作人、導演，出生於新北市。&nbsp;2000年發行首張專輯《Jay》。"},
+      {"title": "周杰倫 Jay Chou 官方網站", "url": "https://www.jaychou.example/about",
+       "description": "周杰倫，華語流行音樂代表人物之一，代表作包括〈晴天〉〈七里香〉〈告白氣球〉。"},
+      {"title": "周杰倫 - 百度百科", "url": "http://baike.example/item/jay",
+       "description": "周杰倫（Jay Chou），1979年1月18日出生於臺灣省新北市，華語流行樂男歌手、音樂人、演員、導演。"}
+    ]
+  },
+  "mixed": {"type": "mixed", "main": [{"type": "web", "index": 0, "all": false}]}
+}
