@@ -77,6 +77,16 @@ def _clean_question(s: str) -> str:
     return _ASK_TAIL_RE.sub("", _TELL_LEAD_RE.sub("", s.strip(), count=1)).strip()
 
 
+def verify_query(raw: str, s: str) -> Optional[str]:
+    """會變的事實（U12）→ 查證用的查詢字；不是（或明說要看畫面）回 None。raw＝原句，s＝canonicalize_clause(raw)。
+    給 Slow Path 的安全網用：雲端只回文字、原句卻在問會變的事實時，改成查證（計畫 §4.5）"""
+    if _OPEN_CUE_RE.search(raw) or not _verify_cue(s):
+        return None
+    req = parse_find(s)
+    verb = req is not None and req.verb_class in ("find", "search")
+    return _clean_question(req.query or req.target if verb else s) or None
+
+
 def answer_mode_of(raw: str, s: str) -> str:
     """『open』（開網頁）或『answer』（直接回答）。raw＝原句（去頭尾空白），s＝canonicalize_clause(raw)。
     依序：明說要看畫面→open；問句或要求告知、天氣、會變的事實（U12：股價、新聞…）→answer；其餘（查周杰倫）→open。

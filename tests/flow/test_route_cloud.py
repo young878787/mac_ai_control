@@ -226,10 +226,69 @@ def test_auth_error_disables_cloud_for_the_run_and_warns_once(cloud, local, caps
     assert out.count("金鑰錯誤或被拒") == 1 and KEY not in out
 
 
-def test_local_miss_escalation_stays_local(cloud, local):
+# ---------- 本機 0 筆轉交也走雲端（查詢路由 U4，§7.1 A11）----------
+MISS = {"label": "python 教學", "scope": "家目錄", "query": "我的 python 教學"}
+
+
+def test_local_miss_escalation_goes_to_the_cloud_with_the_local_result(cloud, local, sh):
+    cloud.reply = {"content": "x"}
+    out = r.execute_slow_path_llm("找我的 python 教學", {}, ExecContext(), local_miss=MISS)
+    assert local.calls == [] and len(cloud.requests) == 1
+    user = cloud.requests[0]["messages"][1]["content"]
+    assert user.startswith("找我的 python 教學\n\n") and "## 本機搜尋結果\n本機沒有名為「python 教學」的檔案。" in user
+    assert out[-1].startswith("⚠️ 找不到「python 教學」") and "AI 沒有選擇上網搜尋" in out[-1]  # 只回文字：保底的找不到（同本機）
+
+
+def test_local_miss_cloud_web_search_uses_the_original_words(cloud, local, sh):
+    cloud.reply = {"tool_calls": [tc("web_search_or_open_url", '{"query":"Python tutorial 2025"}')]}
+    step: dict = {}
+    r.execute_slow_path_llm("找我的 python 教學", step, ExecContext(), local_miss=MISS)
+    assert sh == [["open", "https://www.google.com/search?q=%E6%88%91%E7%9A%84%20python%20%E6%95%99%E5%AD%B8"]]
+    assert step["model_query"] == "Python tutorial 2025" and step["used_query"] == "我的 python 教學" and step["route"] == "cloud"
+
+
+def test_local_miss_with_search_key_offers_web_answer(cloud, local, sh, monkeypatch):
+    monkeypatch.setenv("BRAVE_API_KEY", "BSA-TEST-x")
+    cloud.reply = {"content": "x"}
+    r.execute_slow_path_llm("找我的 python 教學", {}, ExecContext(), local_miss=MISS)
+    assert cloud.requests[0]["tools"][-1]["function"]["name"] == "web_answer"
+
+
+def test_local_miss_pipeline_without_browser_asks_the_cloud(cloud, local, find_env):
+    cloud.reply = {"content": "x"}
+    out = r.process_voice_command("找我的 python 教學")
+    (step,) = out["steps"]
+    assert step["escalated"]["query"] == "我的 python 教學" and step["route"] == "cloud" and local.calls == []
+
+
+def test_local_miss_without_cloud_key_stays_local(local):
     local.plan = {"content": "x"}
-    r.execute_slow_path_llm("找 python 教學", {}, ExecContext(), local_miss={"label": "python 教學", "scope": "家目錄", "query": "python 教學"})
-    assert cloud.requests == [] and len(local.calls) >= 1
+    r.execute_slow_path_llm("找我的 python 教學", {}, ExecContext(), local_miss=MISS)
+    assert len(local.calls) >= 1  # 沒有雲端金鑰：與現況相同（本機規劃）
+
+
+# ---------- U12 安全網：雲端只回文字的會變事實改成查證（§4.5，§7.1 A15）----------
+@pytest.mark.parametrize("text, query", [
+    ("欸你知道台積電現在股價多少嗎", "台積電現在股價多少"),
+    ("那個周杰倫到底是誰啊", "周杰倫到底是誰"),
+    ("最近有什麼重大新聞啊", "最近有什麼重大新聞"),
+])
+def test_cloud_text_only_for_changing_facts_is_replaced_by_web_answer(cloud, local, sh, text, query):
+    cloud.reply = {"content": "憑記憶的答案"}
+    step: dict = {}
+    out = r.execute_slow_path_llm(text, step, ExecContext())
+    assert any(log.startswith("[Route 導向] 不憑記憶回答") for log in out)
+    import urllib.parse
+    assert sh == [["open", "https://www.google.com/search?q=" + urllib.parse.quote(query)]]  # 沒有搜尋金鑰：web_answer 照 U13 開搜尋頁
+    assert "憑記憶的答案" not in " ".join(out) and any("⚠️ 沒辦法直接回答（沒有設定搜尋金鑰）" in log for log in out)
+
+
+@pytest.mark.parametrize("text", ["你今天好嗎", "講個笑話", "Python 是什麼"])
+def test_cloud_text_only_for_other_sentences_is_kept(cloud, local, sh, text):
+    cloud.reply = {"content": "好的～"}
+    ctx = ExecContext()
+    out = r.execute_slow_path_llm(text, {}, ctx)
+    assert not any("不憑記憶" in log for log in out) and ctx.replies == ["好的～"] and sh == []
 
 
 # ---------- 金鑰不外洩 ----------

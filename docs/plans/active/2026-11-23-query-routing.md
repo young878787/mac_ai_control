@@ -157,7 +157,7 @@ QueryIntent
 | P2 | **加入 `classify_query`**，Fast Path 的搜尋、找、天氣規則改用它，規則的實際結果不變 | 快照 0 差異；`test_completeness.py`、`test_endpoint.py` 通過；`match()` 延遲符合 U10。**2026-11-23 完成（§9.3）** |
 | P3 | **改行為**：詞表合併成一份；U2、U3、U7；`either` 判斷（暫時仍走現有路線） | 快照差異**只出現在核准清單裡**：逐句列「舊結果 → 新結果」給使用者確認後才合併。**2026-11-23 完成（§9.4）** |
 | P4 | **聯合搜尋與統計**：migration 0003、`search_prefs`、`federated_search`、清單網路項目、UI | §7.1 A5～A10 通過。**2026-11-23 完成（§9.5）** |
-| P5 | **轉交與事後驗證**：U4、§4.5 | §7.1 A11、A12 通過；雲端與本機的 flow 測試全綠 |
+| P5 | **轉交與事後驗證**：U4、§4.5 | §7.1 A11、A12 通過；雲端與本機的 flow 測試全綠。**2026-11-23 完成（§9.6）** |
 | P6 | **實測與文件**：§7.2、§7.3；ADR、flows、ARCHITECTURE、README 同步；計畫結案 | §7 全部有結果；`pytest` 0 failed；`node --test`、`npm run typecheck` 通過 |
 
 ## 7. 驗收計畫
@@ -355,3 +355,24 @@ QueryIntent
   - 真實 `mdfind` 5 個詞 100～377 ms。
   - L1 `match()` p95 0.092～0.093 ms。
 - **未驗證**：L2 聯合搜尋含真實 Brave 的延遲（U10 p50 ≤ 1.5 s、p95 ≤ 3.5 s）需要真金鑰與網路，未執行；桌面清單畫面沒有實機看過。
+
+### 9.6 P5 轉交走雲端與事後驗證（2026-11-23）
+
+- **U4**：
+  - 本機 0 筆轉交（現在只剩「找我的 X」）有雲端金鑰時改走雲端規劃。
+  - `plan_cloud`／`_execute_cloud` 收 `local_miss`：附本機搜尋結果、網頁搜尋用原話、不導回本機。
+  - 有 Brave 金鑰時工具含 `web_answer`；模型沒有選任何動作時回保底的「找不到」（同本機）。
+  - 沒有雲端金鑰時與現況相同。前景是瀏覽器時照舊直接上網找、不問模型。
+- **U12 安全網**：
+  - 觸發條件：雲端只回文字（沒有工具、沒有被拒絕），而原句是會變的事實（`query_intent.verify_query`）。
+  - 處理：不採用那段文字，改執行 `web_answer`（查詢字用原話），記 `[Route 導向] 不憑記憶回答`。
+  - 沒有 Brave 金鑰時照 U13 開搜尋頁＋⚠️。
+- **§4.5 只做了一部分（偏離計畫）**：`validate_calls` 原本的 4 種改寫維持原樣，沒有改成「用 `classify_query` 比對 target／mode」。這 4 種是 `answer_mode` 兩個方向、`_local_reroute`、`site_open_home`。
+  - `answer_mode` 已經會判斷會變的事實（P3），所以「模型開網頁、原句問會變的事實 → `web_answer`」已經成立。
+  - 改成整套比對會改變既有改寫的邊界，與 A12「行為等價」衝突；留到 P6 再決定。
+- **測試**：
+  - `test_route_cloud.py`：`test_local_miss_escalation_stays_local` 改寫成 U4 的 5 項；另加安全網 3 句正例、3 句反例。
+  - `test_route_web_answer.py`：模型選錯對象三類各 3 句（A12）。
+  - `pytest` 3190 passed、6 skipped；1 error 是 `test_xasr_server.py::test_unknown_http_path_is_404` 全套負載下逾時，單獨跑兩次都通過（§9.4）。
+  - `node --test` 267 pass，`npm run typecheck` 通過。
+  - L1 p95 0.091～0.092 ms。

@@ -475,3 +475,32 @@ def test_key_read_from_dotenv_is_never_written_back_to_the_environment(cloud, lo
     say(ASK)
     assert fake.calls and fake.calls[0]["headers"]["x-subscription-token"] == BRAVE_KEY
     assert "BRAVE_API_KEY" not in os.environ and BRAVE_KEY not in "".join(os.environ.values())
+
+
+# ---------- 模型選錯對象：改回路由表的工具（查詢路由計畫 §4.5，§7.1 A12）----------
+def _validated(name, query, utterance):
+    calls, rejected, reroutes = slow_path.validate_calls([tc(name, {"query": query})], utterance, None, {}, set(),
+                                                         cloud_client.cloud_schemas(True))
+    return calls, rejected, reroutes
+
+
+@pytest.mark.parametrize("utterance", ["打開網頁查台積電股價", "在瀏覽器查美元匯率", "上網查周杰倫是誰"])
+def test_model_answers_but_sentence_wants_the_page(utterance):
+    calls, _, reroutes = _validated("web_answer", "q", utterance)
+    assert [n for n, _ in calls] == ["web_search_or_open_url"] and reroutes[0].startswith("[Answer 導向]")
+
+
+@pytest.mark.parametrize("utterance", ["台積電股價多少", "那個周杰倫到底是誰啊", "故宮幾點關門"])
+def test_model_opens_the_page_but_sentence_asks_a_changing_fact(utterance):
+    calls, _, reroutes = _validated("web_search_or_open_url", "q", utterance)
+    assert [n for n, _ in calls] == ["web_answer"] and reroutes[0].startswith("[Answer 導向]")
+
+
+@pytest.mark.parametrize("utterance, query, tool", [
+    ("找一下下載資料夾", "下載", "open_folder"),
+    ("找下載裡的履歷", "履歷", "find_file"),
+    ("在電腦裡找履歷", "履歷", "find_file"),
+])  # 只有『找／打開』句會導回本機（_local_reroute 現況；『搜尋 report.pdf』Fast Path 已經直接找檔案，不會到這裡）
+def test_model_searches_the_web_but_sentence_is_local(utterance, query, tool):
+    calls, _, reroutes = _validated("web_search_or_open_url", query, utterance)
+    assert [n for n, _ in calls] == [tool] and reroutes[0].startswith("[Domain 導向]")

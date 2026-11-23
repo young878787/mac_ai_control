@@ -11,6 +11,7 @@ from mac_ai.router.cloud_client import CloudError
 from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match, answer_mode, canonicalize_clause
 from mac_ai.router.lexicon import QUERY_CUES, _OPEN, _alias_index, _alt, _compact, build_hint_lines, project_index
 from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
+from mac_ai.router.query_intent import verify_query
 from mac_ai.router.tools import validate_tool_call
 
 
@@ -266,10 +267,12 @@ def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Opti
     return calls, message.get("content"), rejected
 
 
-def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str]) -> Tuple[List[Tuple[str, dict]], str, List[str]]:
+def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str],
+               local_miss: Optional[dict] = None) -> Tuple[List[Tuple[str, dict]], str, List[str]]:
     """雲端規劃：工具＝TOOLS_SCHEMA（chat_reply 多一個 text 參數）＋front_action、site_search（有 BRAVE_API_KEY 再加 web_answer），同一套驗證（validate_calls）。user 訊息＝本機的 build_user_message＋最近對話（有 web_answer 時再加今天日期）。
+    local_miss：本機 0 筆轉交過來（U4）→ 與本機規劃相同：附本機搜尋結果、網頁搜尋用原話、不導回本機。
     回傳 (通過驗證的呼叫, 文字回覆, 被拒絕的原因)；雲端不可用時拋 CloudError（呼叫端退回本機）"""
-    user = build_user_message(utterance, front=front_hint(ctx))
+    user = build_user_message(utterance, local_miss, front=front_hint(ctx))
     mem = memory.STORE.render(ctx.calls)
     if mem:
         user += "\n\n## 最近對話\n" + mem
@@ -285,18 +288,21 @@ def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str]) 
     finally:
         step["cloud"] = meta
     tool_calls, say = cloud_client.split_chat_texts(message.get("tool_calls") or [])  # chat_reply(text)：伴隨工具的文字回覆
-    calls, rejected, reroutes = validate_calls(tool_calls, utterance, None, step, targets, cloud_client.cloud_schemas(web))
+    calls, rejected, reroutes = validate_calls(tool_calls, utterance, local_miss, step, targets, cloud_client.cloud_schemas(web))
     step["reroutes"] = reroutes
     return calls, message.get("content") or " ".join(say), rejected
 
 
-def _execute_cloud(utterance: str, step: dict, ctx: ExecContext, guard: Optional[str], targets: Set[str]) -> Optional[List[str]]:
+def _execute_cloud(utterance: str, step: dict, ctx: ExecContext, guard: Optional[str], targets: Set[str],
+                   local_miss: Optional[dict] = None) -> Optional[List[str]]:
     """雲端規劃並在本機執行；雲端不可用回傳 None（呼叫端改走本機）。
-    文字回覆只在「沒有工具」或「工具全部通過驗證且執行成功」時採用（避免回『已幫你打開』但其實被拒絕）"""
+    文字回覆只在「沒有工具」或「工具全部通過驗證且執行成功」時採用（避免回『已幫你打開』但其實被拒絕）。
+    U12 安全網：雲端只回文字、原句卻在問會變的事實 → 不採用那段文字，改成 web_answer（查詢字用原話）。
+    local_miss（U4）：模型沒有選任何動作 → 保底的『找不到』（與本機相同）"""
     step["route"] = "cloud"
     t0 = time.perf_counter()
     try:
-        calls, content, rejected = plan_cloud(utterance, ctx, step, targets)
+        calls, content, rejected = plan_cloud(utterance, ctx, step, targets, local_miss)
     except CloudError as e:
         step["route"], step["cloud_fallback"] = "local", str(e)
         print(f"☁️ 雲端無法使用（{e}），改用本機")
@@ -304,6 +310,18 @@ def _execute_cloud(utterance: str, step: dict, ctx: ExecContext, guard: Optional
     finally:
         step["llm_ms"] = (time.perf_counter() - t0) * 1000
     logs = [f"⚠️ 已拒絕不合法的工具呼叫：{r}" for r in rejected] + list(step.get("reroutes") or [])
+    if not calls and not rejected and content and local_miss is None:
+        query = verify_query(utterance.strip(), canonicalize_clause(utterance.strip()))
+        if query:
+            calls, content = [("web_answer", {"query": query})], None
+            note = f"[Route 導向] 不憑記憶回答：「{query}」→ web_answer"
+            step.setdefault("reroutes", []).append(note)
+            logs.append(note)
+    if local_miss is not None and not calls:  # 模型判斷不是網路查詢、也沒有別的事要做：確認找不到（同本機）
+        text = local_miss_reply(local_miss, "AI 沒有選擇上網搜尋")
+        ctx.replies.append(text)
+        ctx.results.append(text)
+        return logs + [text]
     dropped = False
     if guard == "info_question":
         drop = [(n, a) for n, a in calls if n in STATE_TOOLS]
@@ -346,9 +364,9 @@ def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Op
         ctx.replies.append(NO_ACTION_REPLY)
         return ["🛡️ 這句是否定或敘述，不執行任何電腦操作", f"💬 {NO_ACTION_REPLY}"]
     targets = memory.STORE.targets() | memory.targets_of(ctx.calls)  # 「它」可以指的對象：最近幾輪＋這一句前面幾步
-    # 雲端優先（計畫 §13：P0 實測雲端規劃比本機快又準）；轉交（local_miss）只問要不要上網，維持本機
-    if local_miss is None and cloud_client.available():
-        logs = _execute_cloud(utterance, step, ctx, guard, targets)
+    # 雲端優先（計畫 §13：P0 實測雲端規劃比本機快又準）；轉交（local_miss）也走雲端，有搜尋金鑰時可以直接回答（查詢路由 U4）
+    if cloud_client.available():
+        logs = _execute_cloud(utterance, step, ctx, guard, targets, local_miss)
         if logs is not None:
             return logs
     step.setdefault("route", "local")
