@@ -60,11 +60,29 @@ def _recover_slow_segment(clauses: List[str], matcher: FastPathMatcher, ctx: Exe
     return logs
 
 
-def _escalate_to_llm(text: str, step: dict, ctx: ExecContext, run: Match) -> List[str]:
-    """本機搜尋 0 筆、又沒有明確的本機證據（例如『找 python 教學』）：同一步把原句交給模型判斷。
+def _escalate_to_llm(text: str, step: dict, ctx: ExecContext, run: Match, matcher: FastPathMatcher) -> List[str]:
+    """ctx.escalate 有兩種：{"kind": "slow"}（web_answer 沒有雲端可用）→ 照沒有雲端時的路線：
+    不做直接回答判斷再比對一次（查一下周杰倫是誰 → 開網頁），沒命中才整句交給本機 Slow Path；
+    其餘是本機搜尋 0 筆、又沒有明確的本機證據（例如『打開 python 教學』）：同一步把原句交給模型判斷。
     模型只決定要不要上網；網頁搜尋的關鍵字一律用使用者的原話（不用模型改寫的字）。
     沒有選任何動作或 LLM 不可用，都回保底的『找不到』並說明原因"""
     miss, ctx.escalate = ctx.escalate, None
+    if miss.get("kind") == "slow":  # web_answer 沒有雲端可用：行為與沒有雲端時相同（U13、A16）
+        legacy = matcher.match(text, whole=ctx.normalized, answer=False)
+        if legacy is not None:
+            print("↩️ [沒有雲端，照原本的路線]")
+            logs = legacy.run(ctx)
+            if ctx.escalate is not None:  # 原本的路線也可能轉交（例如找檔案 0 筆）
+                logs = logs + _escalate_to_llm(text, step, ctx, legacy, matcher)
+            return logs
+        print("🧠 [沒有雲端，交給本機 AI]")
+        try:
+            return execute_slow_path_llm(text, step, ctx)
+        except LLMError as e:
+            ctx.status = "llm_unavailable" if isinstance(e, LLMUnavailable) else "llm_error"
+            msg = f"⚠️ AI 服務無法使用（{e}），這句沒有處理：「{text}」"
+            ctx.replies.append(msg)
+            return [msg]
     t = time.perf_counter()
     query = run.intent.query if run.intent is not None and run.intent.query else miss["label"]
     miss["query"] = restore_misheard(ctx.normalized, query, ctx.misheard, getattr(run, "start", 0))
@@ -115,7 +133,7 @@ def process_voice_command(stt_text: str) -> dict:
         if pending_source and len(clauses) == 1 and sources.is_yes(clause):
             run = Match([("open_source", {"url": pending_source})], note="打開上一個回答的來源")  # match() 看不到待決狀態，所以不在 Fast Path 規則裡
         else:
-            run = matcher.match(clause)
+            run = matcher.match(clause, whole=stt_text)  # 整句：其他子句明說要看畫面時，查詢子句也開網頁
         if run:
             run.start = max(pos, 0)
             segments.append(("fast", [clause], run))
@@ -141,7 +159,7 @@ def process_voice_command(stt_text: str) -> dict:
             for log in logs:
                 print(f"⚡ [Fast Path | {(time.perf_counter() - step_start) * 1000:.2f}ms] 「{text}」 -> {log}")
             if ctx.escalate is not None:
-                more = _escalate_to_llm(text, step, ctx, run)
+                more = _escalate_to_llm(text, step, ctx, run, matcher)
                 for log in more:
                     print(f"   {log}")
                 logs = logs + more

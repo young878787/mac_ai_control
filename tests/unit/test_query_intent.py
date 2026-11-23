@@ -24,10 +24,16 @@ def classify(text, stage="lead"):
     ("查一下台北天氣", "knowledge", "answer", "category", {"category": "weather", "slots": {"city": "臺北市", "day": "today", "part": ""}}),
     ("明天會下雨嗎", "knowledge", "answer", "category", {"category": "weather"}),
     ("搜尋履歷", "knowledge", "show", "verb", {"slots": {"where": "context"}, "query": "履歷"}),
-    ("查一下周杰倫是誰", "knowledge", "show", "verb", {"slots": {"where": "context"}, "query": "周杰倫是誰"}),
+    ("查一下周杰倫是誰", "knowledge", "answer", "verify", {"category": "verify", "query": "周杰倫是誰"}),
+    ("周杰倫是誰", "knowledge", "answer", "verify", {"query": "周杰倫是誰"}),
+    ("台積電股價", "knowledge", "answer", "verify", {"query": "台積電股價"}),
+    ("搜尋周杰倫是誰", "knowledge", "answer", "verify", {"query": "周杰倫是誰"}),
+    ("找一下 Python 是什麼", "knowledge", "answer", "question", {"query": "Python 是什麼"}),
+    ("查一下 Python 怎麼安裝", "knowledge", "answer", "question", {"query": "Python 怎麼安裝"}),
+    ("查股票走勢", "knowledge", "show", "realtime", {"slots": {"where": "google"}}),
     ("上網查周杰倫", "knowledge", "show", "explicit_web", {"slots": {"where": "google"}}),
     ("google 一下周杰倫", "knowledge", "show", "explicit_web", {"slots": {"where": "google"}}),
-    ("查台積電股價", "knowledge", "show", "realtime", {"slots": {"where": "google"}}),
+    ("查台積電股價", "knowledge", "answer", "verify", {"query": "台積電股價"}),
     ("打開瀏覽器查台北天氣", "knowledge", "show", "explicit_web", {"slots": {"where": "google"}}),
     ("打開 Safari 搜尋貓咪", "knowledge", "show", "explicit_web", {"slots": {"where": "google", "app": "Safari"}}),
     ("搜尋 report.pdf", "local", "show", "file_hint", {}),
@@ -52,7 +58,8 @@ def test_find_stage_labels(text, target, domain):
 
 
 @pytest.mark.parametrize("text, stage", [
-    ("打開小算盤", "lead"), ("音量調到 30", "lead"), ("周杰倫是誰", "lead"), ("台積電股價", "lead"),
+    ("打開小算盤", "lead"), ("音量調到 30", "lead"), ("Python 是什麼", "lead"), ("你是誰", "lead"), ("這個多少錢", "lead"),
+    ("新聞", "lead"), ("播放新聞", "lead"), ("打開股票", "lead"),
     ("搜尋嗎", "lead"), ("google 周杰倫", "lead"),  # 現況：google 後面要接「一下」或搜尋動詞
     ("找一下周杰倫", "lead"),  # 「找」不在 lead 階段判斷
     ("搜尋履歷", "find"), ("打開小算盤", "find"),

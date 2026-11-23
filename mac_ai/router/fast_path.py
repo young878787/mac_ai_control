@@ -120,6 +120,8 @@ def _route_query(q: QueryIntent) -> Match:
         return Match(plan_actions(q.intent), q.intent.confidence, q.intent.note, q.intent)
     if q.category == "weather":
         return Match([("get_weather", dict(q.slots))])
+    if q.mode == "answer":  # 會變的事實、查／找＋問句：查證後回答；金鑰不齊時怎麼退回由 web_answer 在執行時決定（U13）
+        return Match([("web_answer", {"query": q.query})], note=f"直接回答（{q.evidence}）")
     search = ("web_search_or_open_url" if q.slots["where"] == "google" else "context_search", {"query": q.query})
     if q.slots.get("app"):
         return Match([("control_mac_app", {"app_name": q.slots["app"], "action": "open"}), search], q.confidence, q.note)
@@ -201,10 +203,11 @@ class FastPathMatcher:
         pattern = r"[，。、；,;！!？?]+|(?:然後|接著|再幫我|順便|還有|並且|以及)"
         return [c.strip() for c in re.split(pattern, text) if c.strip()]
 
-    def match(self, clause: str, candidates: bool = False) -> Optional[Match]:
+    def match(self, clause: str, candidates: bool = False, whole: str = "", answer: bool = True) -> Optional[Match]:
         """以 Fast Path 比對單一子句；命中回傳「尚未執行」的 Match，未命中回傳 None。
         candidates=True 時，歧義（兩個 App 相似度太接近）的第 1 名也會回傳（信心 candidate），
-        供 LLM 不可用時補救；被安全守門擋下的句子永遠回傳 None。"""
+        供 LLM 不可用時補救；被安全守門擋下的句子永遠回傳 None。
+        answer=False：不做直接回答的判斷（會變的事實、查／找＋問句），給沒有雲端時退回原本的路線用"""
         raw = clause.strip()
         if raw == "讓電腦睡眠":  # 睡眠誤觸成本高：只接受這個固定句，不做放寬
             return Match([("system_power_action", {"action": "sleep"})])
@@ -221,7 +224,7 @@ class FastPathMatcher:
             return Match([("music_top", {})])
         # 查詢分類：天氣問句（含『會下雨嗎』『幾度』）、開瀏覽器搜尋、句首是搜尋動詞。在問句守門之前：
         # 關鍵字裡的疑問詞（『搜尋台北天氣怎麼樣』）是搜尋內容，不是在問助理；明說要看畫面的天氣句照舊走搜尋
-        q = classify_query(s, self.catalog, raw=raw, candidates=candidates)
+        q = classify_query(s, self.catalog, raw=raw, whole=whole, candidates=candidates, answer=answer)
         if q is not None:
             return _route_query(q)
         if _QUESTION_RE.search(s):

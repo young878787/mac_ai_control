@@ -33,7 +33,7 @@ def _route(m: FastPathMatcher, text: str) -> dict:
     normalized = normalize_utterance(text)
     clauses = []
     for clause in m.split_clauses(normalized):
-        hit = m.match(clause)
+        hit = m.match(clause, whole=normalized)  # 與 pipeline 相同
         row = {"clause": clause, "fast": _fast(hit)}
         if hit is None:
             row["candidate"] = _fast(m.match(clause, candidates=True))

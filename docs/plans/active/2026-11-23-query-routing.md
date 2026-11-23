@@ -155,7 +155,7 @@ QueryIntent
 | P0 | **行為快照與基線**：把現有測試裡的句子＋§1 的句子做成語料（`tests/fixtures/routing/corpus.json`），記下每句目前的 Fast Path 結果（工具＋參數）或「交給 Slow Path」＋`intent_guard`；量 `match()` 在語料上的 p50／p95 | 快照測試全綠；基線數字寫進 §9。**2026-11-23 完成（§9.1）** |
 | P1 | **詞表搬家**：問句、明說網路、類別詞搬到 `query_cues`，各呼叫點用與現在**相同**的集合 | 快照 0 差異；`pytest` 0 failed。**2026-11-23 完成（§9.2）** |
 | P2 | **加入 `classify_query`**，Fast Path 的搜尋、找、天氣規則改用它，規則的實際結果不變 | 快照 0 差異；`test_completeness.py`、`test_endpoint.py` 通過；`match()` 延遲符合 U10。**2026-11-23 完成（§9.3）** |
-| P3 | **改行為**：詞表合併成一份；U2、U3、U7；`either` 判斷（暫時仍走現有路線） | 快照差異**只出現在核准清單裡**：逐句列「舊結果 → 新結果」給使用者確認後才合併 |
+| P3 | **改行為**：詞表合併成一份；U2、U3、U7；`either` 判斷（暫時仍走現有路線） | 快照差異**只出現在核准清單裡**：逐句列「舊結果 → 新結果」給使用者確認後才合併。**2026-11-23 完成（§9.4）** |
 | P4 | **聯合搜尋與統計**：migration 0003、`search_prefs`、`federated_search`、清單網路項目、UI | §7.1 A5～A10 通過 |
 | P5 | **轉交與事後驗證**：U4、§4.5 | §7.1 A11、A12 通過；雲端與本機的 flow 測試全綠 |
 | P6 | **實測與文件**：§7.2、§7.3；ADR、flows、ARCHITECTURE、README 同步；計畫結案 | §7 全部有結果；`pytest` 0 failed；`node --test`、`npm run typecheck` 通過 |
@@ -282,3 +282,33 @@ QueryIntent
   - `pytest` 3066 passed、6 skipped、0 failed。
   - L1：p50 0.011／p95 0.089／最大 0.381 ms，符合 U10（≤ 0.098）。
 - **測試預期寫錯過一次**：「google 周杰倫」原本預期是明說網路，實際現況是交給 Slow Path（Google 句型要求後面接「一下」或搜尋動詞）。已改正預期，程式沒有改。
+
+### 9.4 P3 改行為：直接回答與會變的事實（2026-11-23）
+
+- **規則**（`query_intent.py`）：
+  - `_question`：會變的事實（U12，`query_cues.verify`／`timely`）與查／找／搜尋＋問句（U2、U3、U7）→ `knowledge／answer` → `web_answer`。
+  - 明說要看畫面（瀏覽器、網站、在 X 搜尋）的不收；受詞有本機證據（副檔名、電腦裡、App、專案…）的交給本機規則。
+  - 代名詞、指示詞開頭（你是誰、這個多少錢）與操作動詞開頭（播放新聞、打開股票）不算會變的事實。
+  - 「搜尋台北天氣」改走天氣（`_W_LEAD` 加上搜尋、搜索）。
+  - `answer_mode_of` 對「動詞＋受詞」只看受詞有沒有問句：「可以搜尋履歷嗎」的「嗎」是客氣，仍是 open。
+- **多子句**：`match(..., whole=整句)`。同一句的其他子句明說要看畫面時（開 Safari，搜尋台北天氣），查詢子句照舊開網頁。
+- **執行**（`local_actions.web_answer`，U13、A16）：
+  - 有雲端沒有搜尋金鑰 → 開 Google 搜尋頁、回 ⚠️、`step["web_fallback"]="no_search_key"`，後端 log 只寫變數名稱。
+  - 兩把都沒有 → `pipeline._escalate_to_llm` 以 `match(answer=False)`（＝P2 的路線）重比一次：原本開網頁或找檔案的照舊，原本交給 Slow Path 的交給本機 AI。
+  - 與 P2 逐句比對 9 句：回覆與執行的指令相同。內部紀錄的差異是多一行「🔎 沒有雲端，交給本機 AI」，原本 Slow 的步驟記成 fast。
+- **快照差異 50 句，全部在核准範圍**（U2、U3、U7、U12）：
+  - 人物（周杰倫是誰 10 種說法）→ `web_answer`。
+  - 股價、匯率、新聞、比分、營業時間（名詞片語、問句、查／搜尋開頭）→ `web_answer`。
+  - 搜尋＋天氣 5 句 → `get_weather`。
+  - 查／找／搜尋＋問句（Python 是什麼、怎麼安裝、什麼時候發表、有幾個）→ `web_answer`。
+  - 「找 Xcode 嗎」只有 `answer_mode` 由 answer 變 open，路由仍是 Slow Path。
+- **測試**：
+  - 新檔 `tests/flow/test_route_verify.py`（45 項）：五類各 5 句、天氣 5 句、8 句反例；兩把金鑰 0 次規劃呼叫；只有雲端 → 開搜尋頁＋⚠️；兩把都沒有 → 與現況相同。
+  - 既有測試改預期的句子都註明 U7／U12，語料不刪。改成用同句型、不是會變事實的詞（台北美食、股票走勢）。
+  - `pytest` 3123 passed、6 skipped；1 error 是 `test_xasr_server.py::test_unknown_http_path_is_404` 在全套負載下逾時。單獨跑 `tests/runtime` 通過，P2 的程式也一樣，與本階段無關。
+  - `test_completeness.py`、`test_endpoint.py` 106 passed（A4）。
+- **L1**：
+  - 第一版 p95 0.110 ms，超過 U10。原因是查證判斷對每個「找／查」子句都先做範圍判斷（`resolve_intent`），而且同一子句重複 `parse_find`。
+  - 改成每子句只解析一次、確定是查證或問句才做範圍判斷，判斷結果共用（`_Local`）；`verify` 詞表不再用 `.*?` 前綴。
+  - 與 P2 交替跑 3 次：P2 0.089～0.090，P3 **0.091～0.093 ms**，符合 U10（≤ 0.098）。
+- **已知、不在本階段**：「勇士隊昨天贏了嗎」被敘述守門（昨天）擋下，維持現況。

@@ -1,11 +1,11 @@
 """查詢分類（計畫 docs/plans/active/2026-11-23-query-routing.md §4.1）：一句話要找什麼（target）、怎麼給（mode）。
 純函式：不碰網路、LLM、子程序、資料庫，也不讀前景；catalog 只做唯讀查詢（與 domain.resolve_intent 相同）。
-分類結果由 fast_path._route_query 依對應表換成動作。P2 只搬家：分類與既有規則逐句相同（行為快照 0 差異）"""
+分類結果由 fast_path._route_query 依對應表（§4.2）換成動作。"""
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
-from mac_ai.router.domain import _REALTIME_RE, SCOPE_WORDS, Intent, parse_find, resolve_intent
+from mac_ai.router.domain import _REALTIME_RE, SCOPE_WORDS, FindRequest, Intent, parse_find, resolve_intent
 from mac_ai.router.lexicon import APP_KIND, QUERY_CUES, WEATHER_CITY_ALIASES, _OPEN, _alt, _compact
 
 _I = re.IGNORECASE
@@ -15,7 +15,6 @@ _LOCAL_DOMAINS = ("app", "project", "folder", "file")
 # 明說要看畫面（瀏覽器、網站、Google、上網、給我看、顯示、在 X 搜尋、句首的搜尋）：開網頁，優先於一切（明說優先，同 0006）
 _OPEN_CUE_RE = re.compile(
     rf"{_alt(QUERY_CUES['open_cue'] + SCOPE_WORDS['web'])}|在.{{1,12}}?(?:{_alt(QUERY_CUES['lead_search'])})", re.IGNORECASE)
-_LEAD_SEARCH_RE = re.compile(rf"^(?:{_alt(QUERY_CUES['lead_search'])})")
 # 問句或要求告知：直接回答（「誰」不只收「是誰」：只收「是誰」時「勇士隊最近一場比賽誰贏了」被當成開網頁，2026-11-23 實測）
 _ASK_RE = re.compile(_alt(QUERY_CUES["ask"]))
 # 有接 API 的高頻類別（目前只有天氣）；說了類別、沒說要看畫面，查／找也是要答案
@@ -33,7 +32,7 @@ _W_WHEN = {
 }
 _W_CITY = rf"(?:{_alt(list(WEATHER_CITY_ALIASES))})"
 _W_WHEN_RE = rf"(?:{_alt(list(_W_WHEN))})"
-_W_LEAD = r"(?:(?:查詢|查查|查|找找|找|看看|看|問|告訴我|跟我說|和我說|報一下|報|播報|知道|說|講)(?:一下下|一下|看看)?)?"
+_W_LEAD = r"(?:(?:搜尋|搜索|查詢|查查|查|找找|找|看看|看|問|告訴我|跟我說|和我說|報一下|報|播報|知道|說|講)(?:一下下|一下|看看)?)?"  # 搜尋：句首的搜尋不再算要看畫面（U7）
 # 主題：strong 單獨就算天氣（天氣、會下雨嗎、氣溫）；weak（幾度）一定要同時說了縣市或時間，不然太容易誤收
 _W_STRONG = r"(?P<strong>天氣|會不會(?:下雨|降雨)|(?:會|有)?(?:下雨|降雨)嗎|(?:下雨|降雨)機率|氣溫|溫度)"  # 下雨一定要帶疑問（嗎、會不會、機率）：『明天會下雨』可能是敘述，不收
 _W_WEAK = r"(?P<weak>幾度|多少度)"
@@ -42,13 +41,52 @@ _WEATHER_RE = re.compile(
     rf"^{_W_LEAD}(?P<c1>{_W_CITY})?(?P<w1>{_W_WHEN_RE})?(?P<c2>{_W_CITY})?(?:的)?(?:{_W_STRONG}|{_W_WEAK})(?P<w2>{_W_WHEN_RE})?{_W_TAIL}$")
 
 
+# ---- 會變的事實（計畫 U12）：人物、時事、比分、營業時間、價格。不憑記憶回答，一律查證 ----
+# 「X 是誰」的 X 不能是代名詞或指示詞（你是誰、他是誰、這首歌是誰唱的）；價格、比分前面也不能是指示詞（這個多少錢指畫面上的東西）
+_SUBJECT_BAD_RE = re.compile(r"^(?:你|妳|您|我|他|她|它|祂|牠|這|那|誰)")
+_PERSON_RE = re.compile(r"^(?P<x>.+?)(?:到底)?是誰|^誰是(?P<y>.{2,})")
+_VERIFY_WORD_RE = re.compile(rf"(?:{_alt(QUERY_CUES['verify'])})")  # 前面的字（主詞）用 m.start() 取：不用 .*? 免得每個起點都回溯
+# 有時間性的問句（今年的冠軍、最新的 iPhone、現在的總統）也要查證；『最近』單獨不算（你最近好嗎）
+_TIMELY_RE = re.compile(rf"(?:{_alt(QUERY_CUES['timely'])})")
+# 名詞片語（台積電股價、故宮開放時間）也算，但前面是操作動詞（播放新聞、打開股票）的不算
+_COMMAND_LEAD_RE = re.compile(rf"^(?:{_OPEN}|{_alt(QUERY_CUES['command_lead'])})", _I)
+# 要求告知的開頭：『知道周杰倫是誰嗎』『告訴我台積電股價』去掉後再判斷
+_TELL_LEAD_RE = re.compile(rf"^(?:{_alt(QUERY_CUES['tell_lead'])})\s*")
+_ASK_TAIL_RE = re.compile(rf"(?:{_alt(QUERY_CUES['question_end'])})+$")
+
+
+def _verify_cue(s: str) -> bool:
+    """s（canonicalize 之後）是不是在問會變的事實。只看字面，不判斷是不是人名（沒有 NER）"""
+    t = _TELL_LEAD_RE.sub("", s, count=1)
+    if not t or _COMMAND_LEAD_RE.match(t):
+        return False
+    m = _PERSON_RE.search(t)
+    if m:
+        x = (m["x"] or m["y"] or "").strip()
+        if len(x) >= 2 and not _SUBJECT_BAD_RE.match(x):
+            return True
+    m = _VERIFY_WORD_RE.search(t)
+    x = t[:m.start()].strip() if m else ""
+    if m and (len(x) >= 2 or _ASK_RE.search(t)) and not _SUBJECT_BAD_RE.match(x or "這"):
+        return True
+    return bool(_TIMELY_RE.search(t) and _ASK_RE.search(t))
+
+
+def _clean_question(s: str) -> str:
+    """查證用的查詢字：去掉要求告知的開頭與句尾的嗎、呢、問號（其餘一個字都不動）"""
+    return _ASK_TAIL_RE.sub("", _TELL_LEAD_RE.sub("", s.strip(), count=1)).strip()
+
+
 def answer_mode_of(raw: str, s: str) -> str:
     """『open』（開網頁）或『answer』（直接回答）。raw＝原句（去頭尾空白），s＝canonicalize_clause(raw)。
-    依序：明說要看畫面→open；問句或要求告知→answer；查／找＋高頻類別、只有類別名詞→answer；其餘（查周杰倫、查一下最近的新聞）→open（現況）。
+    依序：明說要看畫面→open；問句或要求告知、天氣、會變的事實（U12：股價、新聞…）→answer；其餘（查周杰倫）→open。
+    句首的「搜尋」不再算明說要看畫面（U7，取代 0021 第 1 條的這一項）。
     守門（否定、敘述）不在這裡，由呼叫端先擋"""
-    if _OPEN_CUE_RE.search(raw) or _LEAD_SEARCH_RE.match(s):
+    if _OPEN_CUE_RE.search(raw):
         return "open"
-    if _ASK_RE.search(s) or _CATEGORY_RE.search(s):
+    req = parse_find(s)
+    asked = _clean_question(req.query or req.target) if req is not None and req.verb_class in ("find", "search") else s
+    if _ASK_RE.search(asked) or _CATEGORY_RE.search(s) or _verify_cue(s):  # 『可以搜尋履歷嗎』的嗎是客氣，不是在問事情
         return "answer"
     return "open"
 
@@ -67,7 +105,7 @@ _SEARCH_RES = (
 @dataclass(frozen=True)
 class QueryIntent:
     """target：knowledge（世界知識）／local（本機的 App、專案、資料夾、檔案）；mode：show（開給使用者看）／answer（直接回答）。
-    evidence：判斷依據（category／explicit_web／realtime／verb，或範圍判斷的 source）。category：weather。
+    evidence：判斷依據（category／explicit_web／verify／question／realtime／verb，或範圍判斷的 source）。category：weather／verify。
     slots：天氣的 city／day／part；show 的 where（google＝直接開 Google、context＝依前景網站決定）與 app（要先開的瀏覽器）。
     intent：範圍判斷（domain.resolve_intent）的結果；有它就照 local_actions 的對應表執行"""
     target: str
@@ -81,9 +119,10 @@ class QueryIntent:
     note: str = ""
 
 
-def _scope(s: str, catalog, candidates: bool, verbs: Tuple[str, ...], domains: Tuple[str, ...] = ()) -> Optional[QueryIntent]:
-    """範圍判斷（domain.resolve_intent）。verbs＝只處理這幾類動詞；domains＝只接受這幾種範圍"""
-    req = parse_find(s)
+def _scope(s: str, catalog, candidates: bool, verbs: Tuple[str, ...], domains: Tuple[str, ...] = (),
+           req: Optional[FindRequest] = None) -> Optional[QueryIntent]:
+    """範圍判斷（domain.resolve_intent）。verbs＝只處理這幾類動詞；domains＝只接受這幾種範圍；req＝已經解析好的 parse_find(s)"""
+    req = req or parse_find(s)
     if req is None or req.verb_class not in verbs:
         return None
     intent = resolve_intent(req, catalog, candidates)
@@ -127,32 +166,93 @@ def _open_search(s: str, catalog, candidates: bool) -> Optional[QueryIntent]:
     return QueryIntent("knowledge", "show", "explicit_web", query, slots={"where": "google", "app": name}, confidence=conf, note=note)
 
 
-def _search(s: str, catalog, candidates: bool) -> Optional[QueryIntent]:
+class _Local:
+    """同一個子句的本機範圍判斷只做一次、用到才做（resolve_intent 是分類裡最慢的一步）"""
+
+    def __init__(self, s: str, req: Optional[FindRequest], catalog, candidates: bool):
+        self.s, self.req, self.catalog, self.candidates = s, req, catalog, candidates
+        self.done, self.q = False, None
+
+    def get(self) -> Optional[QueryIntent]:
+        if not self.done:
+            self.done = True
+            self.q = _scope(self.s, self.catalog, self.candidates, ("find", "search"), _LOCAL_DOMAINS, self.req)
+        return self.q
+
+    def search(self) -> Optional[QueryIntent]:
+        """只收搜尋動詞（搜尋、查）的本機範圍"""
+        return self.get() if self.req is not None and self.req.verb_class == "search" else None
+
+    def evidence(self) -> bool:
+        """『找／查／搜尋』的受詞有本機證據（副檔名、檔案、電腦裡、位置、類型、時間、App、專案、資料夾）：交給本機的規則"""
+        q = self.get()
+        return q is not None and q.intent.source != "default"
+
+
+def _explicit(s: str, local: _Local) -> Optional[QueryIntent]:
+    """明說範圍的搜尋：『上網查 X』『google 一下 X』（網路）、『搜尋 Xcode 這個 App』『搜尋 a.pdf』『在電腦裡搜尋 X』（本機）。
+    比會變的事實、問句先判斷：明說優先（同 0006）"""
     for i, pattern in enumerate(_SEARCH_RES):
         m = pattern.match(s)
-        if m:
-            query = m["q"].strip()
-            if query and not query.startswith("看") and not _QUESTION_END_RE.search(query):  # 『查看…』不是搜尋
-                if i == 0:  # 『搜尋 Xcode 這個 App』『查 X 專案』『搜尋 a.pdf』走本機；其餘維持網頁
-                    local = _scope(s, catalog, candidates, ("search",), _LOCAL_DOMAINS)
-                    if local is not None:
-                        return local
-                # 明說上網／google，或查即時資訊（天氣、新聞…）：一律 Google；其餘看前景（停在 FB 就站內搜尋）
-                if i == 1 or _WEB_LEAD_RE.match(s):
-                    return QueryIntent("knowledge", "show", "explicit_web", query, slots={"where": "google"})
-                if _REALTIME_RE.search(query):
-                    return QueryIntent("knowledge", "show", "realtime", query, slots={"where": "google"})
-                return QueryIntent("knowledge", "show", "verb", query, slots={"where": "context"})
-    req = parse_find(s)
+        if not m:
+            continue
+        query = m["q"].strip()
+        if not query or query.startswith("看") or _QUESTION_END_RE.search(query):  # 『查看…』不是搜尋
+            continue
+        if i == 1 or _WEB_LEAD_RE.match(s):
+            return QueryIntent("knowledge", "show", "explicit_web", query, slots={"where": "google"})
+        return local.search()
+    req = local.req
     if req is not None and req.verb_class == "search" and "local" in req.scope:  # 『在電腦裡搜尋 X』：句首不是搜尋動詞
-        return _scope(s, catalog, candidates, ("search",), _LOCAL_DOMAINS)
+        return local.search()
     return None
 
 
-def classify_query(s: str, catalog, *, raw: str = "", candidates: bool = False, stage: str = "lead") -> Optional[QueryIntent]:
-    """s＝canonicalize_clause 之後的子句，raw＝原句（天氣要看原句有沒有明說要看畫面；預設同 s）。判斷不出是查詢回傳 None。
+def _question(raw: str, s: str, local: _Local) -> Optional[QueryIntent]:
+    """直接回答（knowledge／answer）：
+    ① 會變的事實（U12）：周杰倫是誰、台積電股價、查一下最近的新聞、故宮幾點開門；
+    ② 查／找／搜尋＋問句（U2、U3、U7）：查一下 Python 怎麼安裝、找一下周杰倫是誰、搜尋周杰倫是誰。
+    明說要看畫面（瀏覽器、網站、在 X 搜尋）的不收；有本機證據的交給本機規則"""
+    if _OPEN_CUE_RE.search(raw):
+        return None
+    req = local.req
+    verb = req is not None and req.verb_class in ("find", "search")
+    if _verify_cue(s):
+        q = QueryIntent("knowledge", "answer", "verify", _clean_question(req.query or req.target if verb else s), category="verify")
+    elif verb and _ASK_RE.search(query := _clean_question(req.query or req.target)):
+        q = QueryIntent("knowledge", "answer", "question", query)
+    else:
+        return None
+    if verb and (req.scope or local.evidence()):  # 範圍判斷較慢，確定是查證或問句才做
+        return None
+    return q
+
+
+def _search(s: str) -> Optional[QueryIntent]:
+    """沒說範圍、也不是問句的搜尋（搜尋履歷、查周杰倫）：即時資訊直接 Google，其餘看前景（停在 FB 就站內搜尋）"""
+    m = _SEARCH_RES[0].match(s)
+    if not m:
+        return None
+    query = m["q"].strip()
+    if not query or query.startswith("看") or _QUESTION_END_RE.search(query):  # 『查看…』『搜尋嗎』不是搜尋
+        return None
+    if _REALTIME_RE.search(query):
+        return QueryIntent("knowledge", "show", "realtime", query, slots={"where": "google"})
+    return QueryIntent("knowledge", "show", "verb", query, slots={"where": "context"})
+
+
+def classify_query(s: str, catalog, *, raw: str = "", whole: str = "", candidates: bool = False,
+                   stage: str = "lead", answer: bool = True) -> Optional[QueryIntent]:
+    """s＝canonicalize_clause 之後的子句，raw＝原句（天氣要看原句有沒有明說要看畫面；預設同 s），
+    whole＝整句（多個子句時，其他子句明說要看畫面也算，例如『開 Safari，搜尋台北天氣』）。判斷不出是查詢回傳 None。
     stage＝lead：句首就看得出是查詢的說法（天氣、開瀏覽器搜尋、搜尋／查），在 Fast Path 的問句守門之前判斷（關鍵字裡的疑問詞是搜尋內容）；
-    stage＝find：『找 X』，排在其他指令規則之後（沒有更具體的指令才當成找東西），本機優先"""
+    stage＝find：『找 X』，排在其他指令規則之後（沒有更具體的指令才當成找東西），本機優先。
+    answer=False：跳過直接回答（_question），等於加入 U2、U3、U7、U12 之前的路線（沒有雲端時用）"""
     if stage == "find":
         return _scope(s, catalog, candidates, ("find",))
-    return _weather(raw or s, s) or _open_search(s, catalog, candidates) or _search(s, catalog, candidates)
+    raw = raw or s
+    local = _Local(s, parse_find(s), catalog, candidates)
+    if whole and _OPEN_CUE_RE.search(whole):  # 同一句的其他子句明說要看畫面：這個子句也是要開網頁，不直接回答
+        return _open_search(s, catalog, candidates) or _explicit(s, local) or _search(s)
+    return (_weather(raw, s) or _open_search(s, catalog, candidates) or _explicit(s, local)
+            or (_question(raw, s, local) if answer else None) or _search(s))

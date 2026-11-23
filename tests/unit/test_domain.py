@@ -142,9 +142,9 @@ MATCH_CASES = [
     ("打開郵件", APP("Mail")),
     ("打開下載資料夾", [("open_folder", {"path_key": "Downloads"})]),
     ("找桌面", [("open_folder", {"path_key": "Desktop"})]),
-    ("幫我找一下最近的新聞", [("web_search_or_open_url", {"query": "最近的新聞"})]),
+    ("幫我找一下最近的新聞", [("web_answer", {"query": "最近的新聞"})]),  # 會變的事實直接查證（U12）
     ("網路上找 Xcode", [("web_search_or_open_url", {"query": "Xcode"})]),
-    ("搜尋最近的新聞", [("web_search_or_open_url", {"query": "最近的新聞"})]),
+    ("搜尋最近的新聞", [("web_answer", {"query": "最近的新聞"})]),
     ("找 report.pdf", FIND(name="report", kinds=["pdf"], filename="report.pdf", local_only=True, action="reveal")),
     ("找昨天下載的 PDF", FIND(kinds=["pdf"], since="yesterday", location="Downloads", local_only=True, action="reveal")),
     ("找履歷", FIND(name="履歷", action="reveal")),

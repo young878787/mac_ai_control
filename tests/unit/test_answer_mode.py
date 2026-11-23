@@ -1,4 +1,5 @@
-"""answer_mode：開網頁還是直接回答（計畫 docs/plans/completed/2026-11-21-web-answer.md §4.1、驗收 A1）。純函式，不碰 IO。
+"""answer_mode：開網頁還是直接回答（計畫 docs/plans/completed/2026-11-21-web-answer.md §4.1、驗收 A1；
+2026-11-23 查詢路由計畫 U7：句首的搜尋不再算要看畫面，U12：會變的事實算回答）。純函式，不碰 IO。
 每一列至少 3 句；語料可以加、不能刪。"""
 import pytest
 
@@ -6,10 +7,14 @@ from mac_ai.router.fast_path import answer_mode
 
 # 順序 2：明說要看畫面 → open（優先於一切）
 OPEN_EXPLICIT = [
-    "搜尋台北天氣", "搜索台北天氣", "幫我搜尋台北天氣", "打開瀏覽器查台北天氣", "開瀏覽器查一下台北天氣", "用 Google 搜尋周杰倫",
+    "打開瀏覽器查台北天氣", "開瀏覽器查一下台北天氣", "用 Google 搜尋周杰倫",
     "google 一下台北天氣", "上網查台北天氣", "上網找周杰倫", "網路上找 Xcode", "給我看台北天氣", "顯示台北天氣", "在 Google 搜尋台北天氣",
-    "開 Safari 查今天會不會下雨", "搜尋台北天氣怎麼樣", "上網查勇士隊誰贏了", "搜尋誰贏了",
+    "開 Safari 查今天會不會下雨", "上網查勇士隊誰贏了",
 ]
+# 句首的搜尋不再算要看畫面（U7）：搜尋＋天氣、問句 → answer
+ANSWER_LEAD_SEARCH = ["搜尋台北天氣", "搜索台北天氣", "幫我搜尋台北天氣", "搜尋台北天氣怎麼樣", "搜尋誰贏了", "搜尋周杰倫是誰"]
+# 會變的事實（U12）：名詞片語、查開頭也算 → answer
+ANSWER_VERIFY = ["查一下最近的新聞", "美金匯率", "台積電股價", "故宮博物院開放時間", "最新新聞"]
 # 順序 3：問句或要求告知 → answer
 ANSWER_ASK = [
     "今天台北會下雨嗎", "美金匯率多少", "周杰倫是誰", "告訴我台北天氣", "跟我說明天天氣", "台積電股價多少", "明天天氣怎麼樣",
@@ -20,7 +25,7 @@ ANSWER_LOOKUP_CATEGORY = ["查一下台北天氣", "幫我找一下台北天氣"
 # 順序 5：只有類別名詞 → answer
 ANSWER_CATEGORY_ONLY = ["台北天氣", "明天天氣", "天氣", "高雄的天氣", "今天溫度"]
 # 順序 6：其他中性的查／找 → open（現況）
-OPEN_NEUTRAL = ["查周杰倫", "查一下最近的新聞", "找一下 Xcode 教學", "查 Python 文件", "找一下附近的餐廳", "美金匯率", "台積電股價"]
+OPEN_NEUTRAL = ["查周杰倫", "找一下 Xcode 教學", "查 Python 文件", "找一下附近的餐廳", "可以搜尋履歷嗎", "搜尋嗎", "台積電股票走勢圖"]
 
 
 @pytest.mark.parametrize("text", OPEN_EXPLICIT)
@@ -28,7 +33,7 @@ def test_explicit_screen_cue_opens_the_web(text):
     assert answer_mode(text) == "open"
 
 
-@pytest.mark.parametrize("text", ANSWER_ASK + ANSWER_LOOKUP_CATEGORY + ANSWER_CATEGORY_ONLY)
+@pytest.mark.parametrize("text", ANSWER_ASK + ANSWER_LOOKUP_CATEGORY + ANSWER_CATEGORY_ONLY + ANSWER_LEAD_SEARCH + ANSWER_VERIFY)
 def test_questions_and_category_lookups_answer(text):
     assert answer_mode(text) == "answer"
 
@@ -45,4 +50,5 @@ def test_both_cues_open_wins():
 
 
 def test_row_sizes():
-    assert min(len(OPEN_EXPLICIT), len(ANSWER_ASK), len(ANSWER_LOOKUP_CATEGORY), len(ANSWER_CATEGORY_ONLY), len(OPEN_NEUTRAL)) >= 3
+    assert min(len(OPEN_EXPLICIT), len(ANSWER_ASK), len(ANSWER_LOOKUP_CATEGORY), len(ANSWER_CATEGORY_ONLY), len(OPEN_NEUTRAL),
+               len(ANSWER_LEAD_SEARCH), len(ANSWER_VERIFY)) >= 3

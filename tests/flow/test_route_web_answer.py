@@ -14,7 +14,7 @@ from support.llm import FakeLLM, tc
 from support.web import KEY as BRAVE_KEY
 from support.web import FakeBrave, brave, load  # noqa: F401
 
-ASK = "周杰倫是誰"  # Fast Path 未命中、守門不擋（test_every_long_tail_sentence_reaches_the_cloud_planner 驗證）
+ASK = "誰發明了電話"  # 交給雲端規劃的問句：Fast Path 未命中、守門不擋、不是會變的事實（「周杰倫是誰」這類由 Fast Path 直接查證，見 test_route_verify.py）
 ANSWER = "周杰倫是臺灣華語流行音樂創作歌手。"
 FIRST_URL = "https://zh.wikipedia.org/wiki/%E5%91%A8%E6%9D%B0%E5%80%AB"
 SEARCH_PAGE = "https://www.google.com/search?q="
@@ -143,9 +143,9 @@ def test_second_cloud_call_has_no_tools_and_carries_the_snippets_as_data(web, br
 
 
 def test_search_service_only_receives_the_query(web, brave, sh):
-    say("可以幫我查一下周杰倫是誰嗎")
+    say("可以幫我查一下周杰倫是誰嗎")  # Fast Path 直接查證（U12）：查詢字是去掉『可以幫我查一下』與句尾『嗎』的原話
     (call,) = brave.calls
-    assert call["query"] == "周杰倫" and "是誰" not in call["url"] and "幫我" not in call["url"] and call["timeout"] == config.WEB_SEARCH_TIMEOUT_S
+    assert call["query"] == "周杰倫是誰" and "幫我" not in call["url"] and "嗎" not in call["query"] and call["timeout"] == config.WEB_SEARCH_TIMEOUT_S
 
 
 def test_model_content_alongside_the_tool_is_not_shown(web, brave, sh):
@@ -324,9 +324,9 @@ def test_open_cue_without_search_intent_neither_answers_nor_searches(web, brave,
 
 
 @pytest.mark.parametrize("tool", ["web_search_or_open_url", "site_search"])
-@pytest.mark.parametrize("text", ["告訴我最近的新聞", "周杰倫是誰", "最近有什麼新聞", "湖人贏了嗎"])
+@pytest.mark.parametrize("text", [ASK, "黑洞怎麼形成的", "跟我說日本的首都在哪"])  # 會變的事實由 Fast Path 直接查證，這裡是交給模型的問句
 def test_search_tools_become_web_answer_when_the_sentence_is_a_question(web, brave, sh, tool, text):
-    web.reply = scripted({"tool_calls": [tc(tool, {"query": "最近的新聞" if "新聞" in text else "查詢"})]})
+    web.reply = scripted({"tool_calls": [tc(tool, {"query": "查詢"})]})
     out = say(text)
     (step,) = out["steps"]
     assert len(brave.calls) == 1 and opened(sh) == [] and out["replies"] == [f"{ANSWER} 要打開來源嗎？"]
@@ -335,14 +335,14 @@ def test_search_tools_become_web_answer_when_the_sentence_is_a_question(web, bra
 
 def test_neutral_statement_stays_a_search_page(web, brave, sh):
     """沒有疑問、沒有明說要看畫面、不是高頻類別（answer_mode＝open）：模型要開網頁就照舊開，不改成回答"""
-    web.reply = {"tool_calls": [tc("web_search_or_open_url", {"query": "台積電股價"})]}
-    say("台積電股價")
-    assert brave.calls == [] and opened(sh) == [["open", SEARCH_PAGE + "%E5%8F%B0%E7%A9%8D%E9%9B%BB%E8%82%A1%E5%83%B9"]]
+    web.reply = {"tool_calls": [tc("web_search_or_open_url", {"query": "台積電股票走勢圖"})]}
+    say("台積電股票走勢圖")  # 「台積電股價」這類會變的事實改由 Fast Path 直接查證（U12）
+    assert brave.calls == [] and opened(sh) == [["open", SEARCH_PAGE + "%E5%8F%B0%E7%A9%8D%E9%9B%BB%E8%82%A1%E7%A5%A8%E8%B5%B0%E5%8B%A2%E5%9C%96"]]
 
 
 def test_state_tools_are_still_dropped_in_info_questions(web, brave, sh):
-    web.reply = scripted({"tool_calls": [tc("web_answer", {"query": "美金匯率"}), tc("system_power_action", {"action": "sleep"})]})
-    out = say("美金匯率多少")
+    web.reply = scripted({"tool_calls": [tc("web_answer", {"query": "日本首都"}), tc("system_power_action", {"action": "sleep"})]})
+    out = say("日本的首都是哪裡")
     (step,) = out["steps"]
     assert step["guard_dropped"] == ["system_power_action"] and brave.calls and not any(c[0] == "osascript" for c in sh)
 
@@ -360,8 +360,8 @@ def test_fast_path_and_weather_never_touch_the_search_service(web, brave, sh):
     assert not [c for c in brave.calls if "brave.com" in c["url"]] and web.requests == []
 
 
-@pytest.mark.parametrize("text", [ASK, "湖人贏了嗎", "告訴我最近的新聞", "美金匯率多少", "最近有什麼新聞", "全聯營業到幾點"])
-def test_every_long_tail_sentence_reaches_the_cloud_planner(web, brave, sh, text):
+@pytest.mark.parametrize("text", [ASK, "黑洞怎麼形成的", "跟我說日本的首都在哪", "日本的首都是哪裡"])
+def test_every_planner_question_reaches_the_cloud_planner(web, brave, sh, text):  # 會變的事實不在這裡：test_route_verify.py
     web.reply = {"content": "好的～"}
     out = say(text)
     assert out["steps"][0]["kind"] == "slow" and planning(web)

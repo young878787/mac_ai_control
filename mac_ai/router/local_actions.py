@@ -760,7 +760,8 @@ def get_weather(city: str = "", day: str = "today", part: str = "", ctx: Optiona
 
 
 # ---------- 長尾回答（搜尋 → 雲端依摘錄回答）----------
-_WHY = {"search": "搜尋服務沒有回應", "cloud": "AI 沒有回應", "no_answer": "搜尋結果裡沒有答案", "truncated": "AI 的回答不完整"}
+_WHY = {"search": "搜尋服務沒有回應", "cloud": "AI 沒有回應", "no_answer": "搜尋結果裡沒有答案", "truncated": "AI 的回答不完整",
+        "no_search_key": "沒有設定搜尋金鑰"}
 
 
 def _web_fallback(query: str, ctx: Optional[ExecContext], why: str) -> str:
@@ -776,10 +777,23 @@ def _web_fallback(query: str, ctx: Optional[ExecContext], why: str) -> str:
 
 def web_answer(query: str, ctx: Optional[ExecContext] = None) -> str:
     """長尾問題：Brave 搜尋（只送 query）→ 雲端依摘錄回答 1～2 句（不帶工具）→ 放進 ctx.replies，並記下第一筆來源供「要打開來源嗎？」。
+    Fast Path 也會直接送來（會變的事實、查／找＋問句，計畫 docs/plans/active/2026-11-23-query-routing.md U12）：
+    沒有雲端 → ctx.escalate 交給本機 Slow Path；有雲端、沒有搜尋金鑰 → 開搜尋頁並記 step["web_fallback"]（U13）。
     搜尋失敗、雲端失敗、摘錄裡沒有答案都退回開搜尋頁（⚠️）。摘錄只活在這個函式裡：不寫紀錄、不進對話記憶（Brave 條款）。
     原句有時間性時只搜近期網頁（search_client.freshness_for）；近期沒有結果就不過濾再搜一次。
     各階段記在 ctx.step["web"]：search_ms、results、freshness、fresh_retry、answer_ms、cloud（雲端呼叫的 meta）、error（分類）"""
+    if cloud_client.settings() is None:  # 沒有雲端（Fast Path 直接送來的才會遇到）：交給本機 AI，與沒有雲端時相同（U13）
+        if ctx is None:
+            return "⚠️ 沒有雲端，沒辦法直接回答"
+        ctx.escalate = {"kind": "slow"}
+        return "🔎 沒有雲端，交給本機 AI"
     info: dict = ctx.step.setdefault("web", {}) if ctx is not None and ctx.step is not None else {}
+    if not search_client.available():  # 有雲端、沒有搜尋金鑰：不讓模型憑記憶回答，開搜尋頁並在後端提醒（U13）
+        info["error"] = "no_search_key"
+        if ctx is not None and ctx.step is not None:
+            ctx.step["web_fallback"] = "no_search_key"
+        print("⚠️ [沒有搜尋金鑰（BRAVE_API_KEY），已退回開搜尋頁]")
+        return _web_fallback(query, ctx, "no_search_key")
     utterance = (ctx.utterance if ctx is not None else "") or query
     fresh = search_client.freshness_for(utterance)
     if fresh:

@@ -85,8 +85,8 @@ NO_LLM_CASES = [
     ("欸你幫我在電腦裡面找那個叫做履歷的檔案", "local"),
     ("找 report.pdf", "local"),
     ("找昨天下載的 PDF", "local"),
-    ("搜尋一下 Xcode 是什麼", "web"),
-    ("找一下最近的新聞", "web"),
+    ("上網找 Xcode", "web"),  # 「搜尋一下 Xcode 是什麼」「找一下最近的新聞」改成直接回答（U7、U12，test_route_verify.py）
+    ("找一下股票走勢", "web"),
 ]
 
 

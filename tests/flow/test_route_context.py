@@ -77,7 +77,7 @@ SEARCH_CASES = [
     ("B3", "Safari", GH, "查 mlx", [["open", "-a", "Safari", "https://github.com/search?q=mlx"]], "✅ 已在 GitHub 搜尋：mlx"),
     ("B4", "Safari", "www.google.com", "查貓咪", [["open", "-a", "Safari", URL("貓咪")]], "✅ 已在 Google 搜尋：貓咪"),
     ("B5", "Safari", "example.com", "查貓咪", [["open", "-a", "Safari", URL("貓咪")]], "✅ 已開啟瀏覽器搜尋：貓咪"),
-    ("B6", "Safari", FB, "查最近的新聞", [["open", "-a", "Safari", URL("最近的新聞")]], "✅ 已開啟瀏覽器搜尋：最近的新聞"),
+    ("B6", "Safari", FB, "查股票走勢", [["open", "-a", "Safari", URL("股票走勢")]], "✅ 已開啟瀏覽器搜尋：股票走勢"),  # 新聞改成直接回答（U12）
     ("B7", "Safari", FB, "上網查貓咪", [["open", "-a", "Safari", URL("貓咪")]], "✅ 已開啟瀏覽器搜尋：貓咪"),
     ("B7b", "Safari", FB, "google 一下貓咪", [["open", "-a", "Safari", URL("貓咪")]], "✅ 已開啟瀏覽器搜尋：貓咪"),
     ("B8", "Finder", "", "查貓咪", [["open", URL("貓咪")]], "✅ 已開啟瀏覽器搜尋：貓咪"),
