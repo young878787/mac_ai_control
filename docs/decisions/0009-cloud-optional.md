@@ -1,6 +1,6 @@
 # 0009 雲端是選用的加分：Slow Path 先問雲端，失敗退回本機
 
-- 狀態：採用（改變原本「沒有雲端 API」的北極星）
+- 狀態：採用（改變原本「沒有雲端 API」的北極星；第 1 條的熔斷範圍被 [0024](0024-home-city-and-answer-timeout.md) 修改）
 - 日期：2026-11-15（K5）、2026-11-16（K11 依 P0 實測）
 - 來源：[端雲協同](../plans/completed/2026-11-15-cloud-hybrid.md) §3 K1～K13、§13.1
 
@@ -10,7 +10,7 @@
 
 ## 決定
 
-1. 不做分流。Slow 步驟在有金鑰時先問雲端（`_execute_cloud`），失敗（連線、逾時、429、5xx 熔斷 30 秒；401／403 本次執行停用）就在同一步退回本機。
+1. 不做分流。Slow 步驟在有金鑰時先問雲端（`_execute_cloud`），失敗（連線、逾時、429、5xx 熔斷 30 秒；401／403 本次執行停用）就在同一步退回本機。（**被 [0024](0024-home-city-and-answer-timeout.md) 修改**：`web_answer` 依摘錄回答那次逾時不熔斷，其他照舊。）
 2. 雲端只用在 Slow Path 的規劃。`match()`、`completeness`、Fast Path、G1、本機搜尋 0 筆後的轉交都不碰雲端。
 3. 沒有金鑰、`CLOUD_ENABLED=False`、`AI_API_URL` 不是 https 時，行為與沒有雲端逐字相同（有測試守住）。
 4. 雲端有自己的 `CLOUD_SYSTEM_PROMPT`（XML、第三人稱，人格是可愛、熱情、簡潔；`reasoning_effort=low`）與 `CLOUD_TOOLS`。`chat_reply` 多一個 `text` 參數，因為這個模型只要有 `tool_calls` 就不寫文字（混合句 0/19 → 19/19）。

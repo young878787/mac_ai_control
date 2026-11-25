@@ -1,6 +1,6 @@
 # Slow Path：LLM 規劃與驗證
 
-Fast Path 沒命中的子句（slow 段），以及找檔案 0 筆後的轉交（`local_miss`），都由 `slow_path.execute_slow_path_llm` 處理。相關決策：[0007 G1](../decisions/0007-no-model-for-negation.md)、[0009 雲端](../decisions/0009-cloud-optional.md)、[0011 雲端工具](../decisions/0011-cloud-tools-and-site-open.md)、[0021](../decisions/0021-weather-answer.md)（`answer_mode`）、[0022 長尾回答](../decisions/0022-web-answer.md)、[0023 查詢路由](../decisions/0023-query-routing.md)（轉交走雲端、不憑記憶回答）。
+Fast Path 沒命中的子句（slow 段），以及找檔案 0 筆後的轉交（`local_miss`），都由 `slow_path.execute_slow_path_llm` 處理。相關決策：[0007 G1](../decisions/0007-no-model-for-negation.md)、[0009 雲端](../decisions/0009-cloud-optional.md)、[0011 雲端工具](../decisions/0011-cloud-tools-and-site-open.md)、[0021](../decisions/0021-weather-answer.md)（`answer_mode`）、[0022 長尾回答](../decisions/0022-web-answer.md)、[0023 查詢路由](../decisions/0023-query-routing.md)（轉交走雲端、不憑記憶回答）、[0024](../decisions/0024-home-city-and-answer-timeout.md)（只聊天的一步）。
 
 ```mermaid
 flowchart TD
@@ -35,6 +35,11 @@ flowchart TD
   - `info_question` 丟掉 `STATE_TOOLS`；`local_miss` 而且沒有 calls → 「找不到」。
   - 沒 calls 也沒被拒 → 看畫面補救（`_is_look_at_screen`）或 `chat_reply`；規劃呼叫的 content 不採用。
   - 有 calls → 逐個 `run_tool`。
+
+**只聊天的一步** `execute_chat_only`（pipeline 的 escalate kind＝chat，目前只有「我住 X」，[0024](../decisions/0024-home-city-and-answer-timeout.md)）：不跑 `intent_guard`（Fast Path 已經命中），原句照原樣送出。
+
+- 有雲端 → `plan_cloud(note=…)`：user 訊息最後附 `<note>`，system prompt 與工具不變。模型提出的工具呼叫與被拒絕的一律不執行（記在 `step["chat_dropped"]`），只採用文字；沒有文字回固定句。
+- 沒有雲端、熔斷、CloudError → 本機 `chat_reply(fallback=固定句)`，`chat_hint`＝note，不帶工具。
 
 ## validate_calls（本機、雲端共用，依序）
 

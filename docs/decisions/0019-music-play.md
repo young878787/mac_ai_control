@@ -25,7 +25,7 @@
 
 **偏好資料庫（SQLite＋Alembic）**
 
-8. （2026-11-23 補註：同一個資料庫也存天氣的常問縣市 `weather_queries`，migration `0002`，見 [0021](0021-weather-answer.md)。）偏好存在 `data/music.sqlite3`（`MUSIC_DB_PATH`）：永久保存（`events` 只追加不刪）、不入版控、啟動時自動建立。執行期只用內建 `sqlite3`、WAL、只有 `command_worker` 一個寫入者；搜尋執行緒與 `clientVersion` 更新執行緒不碰資料庫；定時整理用 `QueuedJob` 排進指令佇列。
+8. （2026-11-23 補註：同一個資料庫也存天氣的常問縣市 `weather_queries`，migration `0002`，見 [0021](0021-weather-answer.md)。2026-11-25 補註：另有常駐資料 `profile`（居住地），migration `0004`，見 [0024](0024-home-city-and-answer-timeout.md)。）偏好存在 `data/music.sqlite3`（`MUSIC_DB_PATH`）：永久保存（`events` 只追加不刪）、不入版控、啟動時自動建立。執行期只用內建 `sqlite3`、WAL、只有 `command_worker` 一個寫入者；搜尋執行緒與 `clientVersion` 更新執行緒不碰資料庫；定時整理用 `QueuedJob` 排進指令佇列。
 9. schema 由 Alembic 管理（`mac_ai/db/migrations/`，程式組設定，不放 `alembic.ini`；`render_as_batch`）。`ensure_schema` 只在函式內 import alembic／sqlalchemy，執行期程式不載入它們。版本落後時先用 `sqlite3` backup API 備份成 `music.sqlite3.bak-{舊版本}`，升級在備份複本上做，成功才 `os.replace`（失敗時原檔位元組不變，點歌照常但不寫紀錄並回 ⚠️）；檔案損毀改名成 `.corrupt-{時間}` 後重建。啟動時在背景執行緒準備（`MusicDb.start()`），準備好之前 `conn()` 回 None，點歌照常播放、只是不矯正、不查快取、不寫紀錄；`--text` 模式同步等它準備好。
 10. 點歌字詞矯正只在執行階段用拼音（macOS ICU，ctypes）改寫 query，詞表在資料庫、動態增刪並定時整理（`MUSIC_MAINT_INTERVAL_S`＝6 小時）；**不改 STT 提示詞**（提示詞只在 WS 連線時送一次，要主動重連才會生效）。
 
