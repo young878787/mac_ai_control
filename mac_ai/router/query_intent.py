@@ -38,7 +38,18 @@ _W_STRONG = r"(?P<strong>天氣|會不會(?:下雨|降雨)|(?:會|有)?(?:下雨
 _W_WEAK = r"(?P<weak>幾度|多少度)"
 _W_TAIL = r"(?:預報|預測|狀況|情況|資訊|如何|怎麼樣|怎樣|嗎|多少|多高|是多少|有多高|幾度)?"
 _WEATHER_RE = re.compile(
-    rf"^{_W_LEAD}(?P<c1>{_W_CITY})?(?P<w1>{_W_WHEN_RE})?(?P<c2>{_W_CITY})?(?:的)?(?:{_W_STRONG}|{_W_WEAK})(?P<w2>{_W_WHEN_RE})?{_W_TAIL}$")
+    rf"^(?P<lead>{_W_LEAD})(?P<c1>{_W_CITY})?(?P<w1>{_W_WHEN_RE})?(?P<c2>{_W_CITY})?(?:的)?(?:{_W_STRONG}|{_W_WEAK})(?P<w2>{_W_WHEN_RE})?{_W_TAIL}$")
+# 句首語氣詞（C4，計畫 docs/plans/completed/2026-11-24-weather-city-and-answer-timeout.md §3.5）：只給天氣規則用，不動 canonicalize_clause。
+# 「嗯、欸」canonicalize 已經去掉，這裡補上不在填充詞裡的「那、好、對了」
+_W_INTERJ_RE = re.compile(r"^(?:那麼|好那|那|好|嗯|欸|對了)(?P<help>幫我)?")
+
+# 居住地（C1、C2、C3、C5，同計畫 §3.2～§3.4）：只收「（我／我家／我們家）（現在）住／住在／在 縣市（語尾）」，比對原句（canonicalize 會把「你住台北嗎」的「你」吃掉）
+_HOME_SUBJECT = r"(?:我們家|我家|我)"
+_HOME_VERB = r"(?:住在|住|在)"
+_HOME_TAIL = r"(?:啦|喔|哦|啊|呀|吧|耶|欸|囉)?"
+_HOME_RE = re.compile(rf"^{_HOME_SUBJECT}(?:現在)?{_HOME_VERB}(?P<city>{_W_CITY})")
+_HOME_BAD_RE = re.compile(r"不|沒|以前|之前|曾|嗎|？|\?")  # 否定、過去、提問：不是在說現在住哪（守門之外再自己擋一次）
+_CITY_REPLY_RE = re.compile(rf"^(?:{_HOME_SUBJECT})?(?:現在)?(?:{_HOME_VERB}|是)?(?P<city>{_W_CITY}){_HOME_TAIL}$")
 
 
 # ---- 會變的事實（計畫 U12）：人物、時事、比分、營業時間、價格。不憑記憶回答，一律查證 ----
@@ -142,13 +153,16 @@ def _scope(s: str, catalog, candidates: bool, verbs: Tuple[str, ...], domains: T
 
 
 def _weather(raw: str, s: str) -> Optional[QueryIntent]:
-    """『台北天氣』『明天會下雨嗎』『查一下台北天氣』『今天幾度』→ 天氣（city 空字串＝用常問的縣市，執行時才查資料庫）。
+    """『台北天氣』『明天會下雨嗎』『查一下台北天氣』『今天幾度』→ 天氣（city 空字串＝用預設：居住地或常問的縣市，執行時才查資料庫）。
     只讀資料、不改變狀態，是 0007（提問不走 Fast）的例外；否定、敘述仍由 Fast Path 的守門先擋。
+    句首可以先有語氣詞（那幫我查明天天氣、對了明天會下雨嗎，C4），但語氣詞後面要接幫我、查／告訴我、縣市或時間（『好天氣』是感嘆，不收）。
     明說要看畫面（answer_mode＝open）、說了兩個不同縣市或時間、後天／週末（超過 36 小時）都不收，照舊走搜尋或交給 Slow Path"""
     if not (_CATEGORY_RE.search(s) or "度" in s):  # 便宜的前置檢查
         return None
-    m = _WEATHER_RE.match(re.sub(r"\s+", "", s))
-    if m is None:
+    t = re.sub(r"\s+", "", s)
+    mi = _W_INTERJ_RE.match(t)
+    m = _WEATHER_RE.match(t[mi.end():] if mi else t)
+    if m is None or (mi and not (mi["help"] or m["lead"] or m["c1"] or m["w1"])):
         return None
     cities = {WEATHER_CITY_ALIASES[c] for c in (m["c1"], m["c2"]) if c}
     whens = {_W_WHEN[w] for w in (m["w1"], m["w2"]) if w}
@@ -157,6 +171,41 @@ def _weather(raw: str, s: str) -> Optional[QueryIntent]:
     day, part = next(iter(whens), ("today", ""))
     return QueryIntent("knowledge", "answer", "category", category="weather",
                        slots={"city": next(iter(cities), ""), "day": day, "part": part})
+
+
+def parse_city_reply(clause: str) -> Optional[str]:
+    """天氣冷啟動後的回答（C1）：整句只說縣市（台北、台北啦、我住台北、在台中、我家在高雄、是台南）→ 正規化的縣市名；不是回傳 None。
+    純函式；有沒有待答由 pipeline 決定（match() 看不到待答狀態）"""
+    t = re.sub(r"\s+", "", clause)
+    t = _W_INTERJ_RE.sub("", t, count=1) or t
+    if _HOME_BAD_RE.search(t):
+        return None
+    m = _CITY_REPLY_RE.match(t)
+    return WEATHER_CITY_ALIASES[m["city"]] if m else None
+
+
+def _home_city(raw: str, whole: str = "") -> Optional[QueryIntent]:
+    """『我住台北』『我家在高雄』『我在台北喔』→ 記下居住地（C2、C5）；『我住台北幫我查台北的天氣』『我住台北明天天氣如何』→ 設居住地並回答天氣（C3）。
+    主詞一定要是我／我家／我們家（看原句），否定、過去、提問不收（問號在切句時就被切掉了，看整句 whole）；
+    後面另說了不同縣市、或接的不是天氣問句（我住台北很多年了）都不收"""
+    if "住" not in raw and "在" not in raw:  # 便宜的前置檢查（每個子句都會跑到）
+        return None
+    t = re.sub(r"\s+", "", raw)
+    t = _W_INTERJ_RE.sub("", t, count=1) or t
+    if _HOME_BAD_RE.search(t):
+        return None
+    m = _HOME_RE.match(t)
+    if m is None or (whole and re.search(re.escape(raw) + r"\s*[？?]", whole)):
+        return None
+    city, rest = WEATHER_CITY_ALIASES[m["city"]], t[m.end():]
+    if re.fullmatch(_HOME_TAIL, rest):
+        return QueryIntent("profile", "remember", "said", category="home", slots={"city": city})
+    mi = _W_INTERJ_RE.match(rest)
+    rest = rest[mi.end():] if mi else rest.removeprefix("幫我")
+    q = _weather(rest, rest)
+    if q is None or q.slots["city"] not in ("", city):
+        return None
+    return QueryIntent("knowledge", "answer", "category", category="weather", slots={**q.slots, "city": city, "set_home": "said"})
 
 
 def _open_search(s: str, catalog, candidates: bool) -> Optional[QueryIntent]:
@@ -272,6 +321,9 @@ def classify_query(s: str, catalog, *, raw: str = "", whole: str = "", candidate
     if stage == "find":
         return _find(s, catalog, candidates)
     raw = raw or s
+    home = _home_city(raw, whole)  # 其他子句明說要看畫面也照收：『我住台北』與要不要開網頁無關
+    if home is not None:
+        return home
     local = _Local(s, parse_find(s), catalog, candidates)
     if whole and _OPEN_CUE_RE.search(whole):  # 同一句的其他子句明說要看畫面：這個子句也是要開網頁，不直接回答
         return _open_search(s, catalog, candidates) or _explicit(s, local) or _search(s, either=False)

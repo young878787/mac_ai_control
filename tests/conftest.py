@@ -83,11 +83,12 @@ def cloud(monkeypatch, tmp_path):
 def _isolate_catalog(monkeypatch):
     """離線測試不能依賴這台電腦裝了哪些 App，也不能真的跑 mdfind：已安裝 App 清單固定為空（只剩詞庫），
     選擇清單每個測試各自獨立。需要已安裝 App 的測試用 installed_apps fixture 加。"""
-    from mac_ai.router import catalog, choices, sources
+    from mac_ai.router import catalog, choices, sources, weather_followup
     monkeypatch.setattr(catalog, "_scan_installed", lambda: {})
     monkeypatch.setattr(catalog, "DEFAULT", catalog.Catalog())
     monkeypatch.setattr(choices, "STORE", choices.ChoiceStore())
     monkeypatch.setattr(sources, "STORE", sources.SourceStore())
+    monkeypatch.setattr(weather_followup, "STORE", weather_followup.FollowupStore())
     yield
 
 

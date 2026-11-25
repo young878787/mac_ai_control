@@ -99,7 +99,7 @@ def _seed_v1_with_events(tmp_path: Path, path: Path, n: int = 10) -> Path:
 
 
 def test_head_version_matches_migration():
-    assert db.HEAD_VERSION == 3
+    assert db.HEAD_VERSION == 4
 
 
 def test_d1_first_run_creates_folder_file_and_schema(tmp_path):
@@ -114,8 +114,8 @@ def test_d1_first_run_creates_folder_file_and_schema(tmp_path):
             assert got == cols, table
         names = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='index'")}
         assert {"events_ts", "terms_pinyin"} <= names
-        assert c.execute("SELECT version_num FROM alembic_version").fetchall() == [("0003",)]
-        assert c.execute("PRAGMA user_version").fetchone()[0] == db.HEAD_VERSION == 3
+        assert c.execute("SELECT version_num FROM alembic_version").fetchall() == [("0004",)]
+        assert c.execute("PRAGMA user_version").fetchone()[0] == db.HEAD_VERSION == 4
     finally:
         c.close()
     assert not list(path.parent.glob("*.bak-*"))
@@ -126,7 +126,7 @@ def test_v1_database_upgrades_to_weather_queries_with_backup(tmp_path):
     path = tmp_path / "music.sqlite3"
     assert db.ensure_schema(path).ok
     c = sqlite3.connect(str(path))
-    c.executescript("DROP TABLE search_terms; DROP TABLE weather_queries; UPDATE alembic_version SET version_num='0001'; PRAGMA user_version=1;")
+    c.executescript("DROP TABLE profile; DROP TABLE search_terms; DROP TABLE weather_queries; UPDATE alembic_version SET version_num='0001'; PRAGMA user_version=1;")
     c.executemany("INSERT INTO events (ts, kind, ok) VALUES (?, 'play', 1)", [(float(i),) for i in range(5)])
     c.commit()
     c.close()
@@ -134,8 +134,8 @@ def test_v1_database_upgrades_to_weather_queries_with_backup(tmp_path):
     r = db.ensure_schema(path)
     assert r.ok and r.backup is not None and r.backup.name == "music.sqlite3.bak-1"
     assert _scalar(r.backup, "PRAGMA user_version") == 1 and _scalar(r.backup, "SELECT COUNT(*) FROM events") == before == 5
-    assert _scalar(path, "PRAGMA user_version") == 3 and _scalar(path, "SELECT COUNT(*) FROM events") == 5
-    assert _scalar(path, "SELECT version_num FROM alembic_version") == "0003"
+    assert _scalar(path, "PRAGMA user_version") == 4 and _scalar(path, "SELECT COUNT(*) FROM events") == 5
+    assert _scalar(path, "SELECT version_num FROM alembic_version") == "0004"
     c = sqlite3.connect(str(path))
     try:
         assert [(n, t, nn, pk) for _, n, t, nn, d, pk in c.execute("PRAGMA table_info(weather_queries)")] == [
@@ -150,7 +150,7 @@ def test_v2_database_upgrades_to_search_terms_with_backup(tmp_path):
     path = tmp_path / "music.sqlite3"
     assert db.ensure_schema(path).ok
     c = sqlite3.connect(str(path))
-    c.executescript("DROP TABLE search_terms; UPDATE alembic_version SET version_num='0002'; PRAGMA user_version=2;")
+    c.executescript("DROP TABLE profile; DROP TABLE search_terms; UPDATE alembic_version SET version_num='0002'; PRAGMA user_version=2;")
     c.executemany("INSERT INTO events (ts, kind, ok) VALUES (?, 'play', 1)", [(float(i),) for i in range(5)])
     c.executemany("INSERT INTO weather_queries (ts, city) VALUES (?, '臺北市')", [(float(i),) for i in range(3)])
     c.commit()
@@ -158,7 +158,7 @@ def test_v2_database_upgrades_to_search_terms_with_backup(tmp_path):
     r = db.ensure_schema(path)
     assert r.ok and r.backup is not None and r.backup.name == "music.sqlite3.bak-2"
     assert _scalar(r.backup, "PRAGMA user_version") == 2 and _scalar(r.backup, "SELECT COUNT(*) FROM weather_queries") == 3
-    assert _scalar(path, "PRAGMA user_version") == 3 and _scalar(path, "SELECT version_num FROM alembic_version") == "0003"
+    assert _scalar(path, "PRAGMA user_version") == 4 and _scalar(path, "SELECT version_num FROM alembic_version") == "0004"
     assert _scalar(path, "SELECT COUNT(*) FROM events") == 5 and _scalar(path, "SELECT COUNT(*) FROM weather_queries") == 3
     c = sqlite3.connect(str(path))
     try:
@@ -166,6 +166,40 @@ def test_v2_database_upgrades_to_search_terms_with_backup(tmp_path):
             ("id", "INTEGER", 0, 1), ("ts", "REAL", 1, 0), ("term", "TEXT", 1, 0), ("side", "TEXT", 1, 0),
             ("signal", "TEXT", 1, 0), ("path", "TEXT", 0, 0)]
         assert "search_terms_term" in {x[0] for x in c.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    finally:
+        c.close()
+
+
+def test_v3_database_upgrades_to_profile_with_backup(tmp_path):
+    """版本 3 → 4：先備份成 .bak-3、既有資料（點歌、天氣、常搜名詞）不變、多一張 profile（計畫 2026-11-24-weather-city-and-answer-timeout.md §3.1、A4）"""
+    path = tmp_path / "music.sqlite3"
+    assert db.ensure_schema(path).ok
+    c = sqlite3.connect(str(path))
+    c.executescript("DROP TABLE profile; UPDATE alembic_version SET version_num='0003'; PRAGMA user_version=3;")
+    c.executemany("INSERT INTO events (ts, kind, ok) VALUES (?, 'play', 1)", [(float(i),) for i in range(5)])
+    c.executemany("INSERT INTO weather_queries (ts, city) VALUES (?, '臺北市')", [(float(i),) for i in range(3)])
+    c.executemany("INSERT INTO search_terms (ts, term, side, signal) VALUES (?, '履歷', 'local', 'explicit')", [(float(i),) for i in range(2)])
+    c.commit()
+    c.close()
+    before = {t: _dump_table(path, t) for t in ("events", "weather_queries", "search_terms")}
+    r = db.ensure_schema(path)
+    assert r.ok and r.backup is not None and r.backup.name == "music.sqlite3.bak-3"
+    assert _scalar(r.backup, "PRAGMA user_version") == 3 and _scalar(r.backup, "SELECT COUNT(*) FROM search_terms") == 2
+    assert _scalar(path, "PRAGMA user_version") == 4 and _scalar(path, "SELECT version_num FROM alembic_version") == "0004"
+    assert {t: _dump_table(path, t) for t in before} == before
+    c = sqlite3.connect(str(path))
+    try:
+        assert [(n, t, nn, pk) for _, n, t, nn, d, pk in c.execute("PRAGMA table_info(profile)")] == [
+            ("key", "TEXT", 0, 1), ("value", "TEXT", 1, 0), ("source", "TEXT", 1, 0), ("updated_at", "REAL", 1, 0)]
+        assert c.execute("SELECT COUNT(*) FROM profile").fetchone()[0] == 0
+    finally:
+        c.close()
+
+
+def _dump_table(path: Path, table: str):
+    c = sqlite3.connect(str(path))
+    try:
+        return c.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
     finally:
         c.close()
 

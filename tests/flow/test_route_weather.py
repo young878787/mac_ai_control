@@ -250,3 +250,183 @@ def test_weather_sentences_do_not_reach_the_llm_or_cloud(monkeypatch, sh, net, a
     for text, _ in POSITIVE[:12]:
         say(text)
     assert llm.plans == [] and llm.chats == []
+
+
+# ---------- 居住地、冷啟動接續、「我住 X」（計畫 2026-11-24-weather-city-and-answer-timeout.md；A5～A7、A9）----------
+from mac_ai.router import cloud_client, profile_store, weather_followup  # noqa: E402
+from support.clock import Clock  # noqa: E402
+from support.llm import tc  # noqa: E402
+
+
+def home(music_db):
+    return profile_store.get(music_db.conn(), profile_store.HOME_CITY)
+
+
+def home_row(music_db):
+    return music_db.conn().execute("SELECT value, source FROM profile WHERE key='home_city'").fetchone()
+
+
+@pytest.fixture
+def chat_cloud(cloud):
+    """有雲端：規劃那次只回文字（聊天）"""
+    cloud.reply = {"content": "好喔～記住了"}
+    return cloud
+
+
+# A5：居住地優先於統計
+def test_home_city_beats_the_statistics(monkeypatch, sh, net, at_noon, music_db):
+    forbid_llm(monkeypatch)
+    for _ in range(5):
+        weather_prefs.record_city(music_db.conn(), KAOHSIUNG, NOW_EPOCH)
+    profile_store.set(music_db.conn(), profile_store.HOME_CITY, TAIPEI, "said", NOW_EPOCH)
+    out = say("明天天氣")
+    assert out["replies"] == [METEO_TOMORROW] and out["steps"][0]["weather"]["default"] == "home"
+
+
+def test_explicit_city_still_wins_and_does_not_change_the_home(monkeypatch, sh, net, at_noon, music_db):
+    forbid_llm(monkeypatch)
+    profile_store.set(music_db.conn(), profile_store.HOME_CITY, TAIPEI, "said", NOW_EPOCH)
+    out = say("高雄明天天氣")
+    assert out["replies"][0].startswith("高雄市明天") and home(music_db) == TAIPEI
+
+
+def test_without_a_home_the_statistics_are_used_as_before(monkeypatch, sh, net, at_noon, music_db):
+    forbid_llm(monkeypatch)
+    weather_prefs.record_city(music_db.conn(), KAOHSIUNG, NOW_EPOCH)
+    out = say("明天天氣")
+    assert out["replies"][0].startswith("高雄市明天") and out["steps"][0]["weather"]["default"] == "stats"
+
+
+# A6：冷啟動後的下一句只說縣市
+@pytest.mark.parametrize("reply, city", [("台北", TAIPEI), ("台北啦", TAIPEI), ("我住台北", TAIPEI), ("在台中", "臺中市"),
+                                         ("我家在高雄", KAOHSIUNG)])
+def test_city_reply_after_cold_start_answers_the_original_question(monkeypatch, sh, net, at_noon, music_db, reply, city):
+    forbid_llm(monkeypatch)
+    assert say("明天天氣")["steps"][0]["logs"] == [COLD]
+    out = say(reply)
+    (step,) = out["steps"]
+    assert step["kind"] == "fast" and out["replies"][0].startswith(f"{city}明天") and "llm_ms" not in step
+    assert home_row(music_db) == (city, "cold_start_reply") and rows(music_db) == [(city,)]
+    assert step["weather"]["set_home"] == "cold_start_reply"
+
+
+def test_city_reply_keeps_the_part_of_day(monkeypatch, sh, net, at_noon, music_db):
+    forbid_llm(monkeypatch)
+    say("明晚會下雨嗎")
+    out = say("台北")
+    assert out["replies"][0].startswith("臺北市明晚") and "明天白天" not in out["replies"][0]
+
+
+def test_city_reply_after_the_ttl_is_not_a_weather_answer(monkeypatch, sh, net, at_noon, music_db):
+    clock = Clock()
+    monkeypatch.setattr(weather_followup, "STORE", weather_followup.FollowupStore(clock=clock))
+    say("明天天氣")
+    clock.now += 60.0
+    out = say("台北")
+    assert out["steps"][0]["kind"] == "slow" and "weather" not in out["steps"][0] and home(music_db) is None
+
+
+def test_another_sentence_in_between_drops_the_pending_question(monkeypatch, sh, net, at_noon, music_db):
+    say("明天天氣")
+    say("音量調到 30")
+    out = say("台北")
+    assert out["steps"][0]["kind"] == "slow" and home(music_db) is None and rows(music_db) == []
+
+
+def test_two_clauses_are_not_a_city_reply(monkeypatch, sh, net, at_noon, music_db):
+    say("明天天氣")
+    out = say("台北，順便調音量")
+    assert all("weather" not in s for s in out["steps"]) and home(music_db) is None
+
+
+# A7：「我住 X」→ 背景記下居住地＋聊天（不出記錄的泡泡、不執行任何工具、不查天氣）
+@pytest.mark.parametrize("text, city", [("我住台北", TAIPEI), ("我住在台中", "臺中市"), ("我家在高雄", KAOHSIUNG),
+                                        ("我們家住新北", "新北市"), ("我在台北喔", TAIPEI)])
+def test_i_live_in_x_records_in_the_background_and_chats(chat_cloud, sh, net, at_noon, music_db, text, city):
+    out = say(text)
+    (step,) = out["steps"]
+    assert home_row(music_db) == (city, "said") and rows(music_db) == [(city,)]
+    assert out["replies"] == ["好喔～記住了"] and step["route"] == "cloud" and step["status"] == "ok"
+    assert step["logs"][0] == f"✅ 已在背景記下居住地：{city}" and net.calls == [] and sh == []
+    assert out.get("expand") == "chat"
+
+
+def test_tools_proposed_by_the_cloud_are_never_run(chat_cloud, sh, net, at_noon, music_db, monkeypatch):
+    ran = []
+    monkeypatch.setattr("mac_ai.router.actions.read_screen", lambda ctx: ran.append("read_screen") or "✅ 看過了")
+    chat_cloud.reply = {"tool_calls": [tc("read_screen"), tc("chat_reply", {"text": "好喔，記住你住台北了"}),
+                                       tc("control_mac_app", {"app_name": "Safari", "action": "open"})]}
+    out = say("我住台北")
+    (step,) = out["steps"]
+    assert ran == [] and [c for c in sh if c and c[0] in ("open", "osascript", "screencapture")] == []
+    assert out["replies"] == ["好喔，記住你住台北了"] and step["chat_dropped"] == ["read_screen", "control_mac_app"]
+    assert home(music_db) == TAIPEI
+
+
+def test_breaker_open_uses_the_local_chat_without_tools(cloud, sh, net, at_noon, music_db, monkeypatch):
+    llm = FakeLLM(plan=[tc("read_screen")], chat="好～記住囉").install(monkeypatch)
+    cloud_client._down_until = float("inf")
+    out = say("我住台北")
+    assert llm.plans == [] and len(llm.chats) == 1 and out["replies"] == ["好～記住囉"] and cloud.requests == []
+    assert "已在背景記下使用者的居住地：臺北市" in llm.chats[0][0]["content"] and llm.chats[0][-1]["content"] == "我住台北"
+    assert out["steps"][0]["route"] == "local" and home(music_db) == TAIPEI
+
+
+def test_no_cloud_uses_the_local_chat(sh, net, at_noon, music_db, monkeypatch):
+    llm = FakeLLM(plan=[tc("read_screen")], chat="好～").install(monkeypatch)
+    out = say("我住台北")
+    assert llm.plans == [] and out["replies"] == ["好～"] and home(music_db) == TAIPEI
+
+
+@pytest.mark.parametrize("setup", ["cloud_empty", "cloud_down", "local_error", "local_empty"])
+def test_no_text_from_the_model_falls_back_to_a_fixed_sentence(cloud, sh, net, at_noon, music_db, monkeypatch, setup):
+    import urllib.error
+    if setup == "cloud_empty":
+        cloud.reply = {"content": ""}
+        FakeLLM(chat="不該用到").install(monkeypatch)
+    elif setup == "cloud_down":
+        cloud.reply = urllib.error.URLError("down")
+        FakeLLM(chat="").install(monkeypatch)
+    else:
+        cloud_client._down_until = float("inf")
+        FakeLLM(error=True).install(monkeypatch) if setup == "local_error" else FakeLLM(chat="").install(monkeypatch)
+    out = say("我住台北")
+    assert out["replies"] == ["好～記住你住臺北市了，之後問天氣就查臺北市喔"] and out["steps"][0]["status"] == "ok"
+    assert home(music_db) == TAIPEI
+
+
+def test_database_not_ready_does_not_claim_it_was_remembered(chat_cloud, sh, net, at_noon):
+    out = say("我住台北")
+    (step,) = out["steps"]
+    assert step["logs"][0].startswith("⚠️ 偏好資料庫無法使用") and "沒能記下來" in chat_cloud.requests[0]["messages"][1]["content"]
+
+
+def test_i_live_in_x_then_weather_uses_the_new_home(chat_cloud, sh, net, at_noon, music_db):
+    say("我住台中")
+    out = say("明天天氣")
+    assert out["replies"][0].startswith("臺中市明天") and out["steps"][0]["weather"]["default"] == "home"
+
+
+def test_saying_it_again_overwrites_the_home(chat_cloud, sh, net, at_noon, music_db):
+    say("我住台北")
+    say("我住高雄")
+    assert home_row(music_db) == (KAOHSIUNG, "said")
+
+
+# A9：「我住 X＋天氣」
+@pytest.mark.parametrize("text, day", [("我住台北幫我查台北的天氣", "today"), ("我住台北明天天氣如何", "tomorrow")])
+def test_i_live_in_x_plus_weather_answers_and_sets_home(monkeypatch, sh, net, at_noon, music_db, text, day):
+    forbid_llm(monkeypatch)
+    out = say(text)
+    assert out["replies"] == [METEO_TODAY if day == "today" else METEO_TOMORROW]
+    assert home_row(music_db) == (TAIPEI, "said") and rows(music_db) == [(TAIPEI,)]
+
+
+def test_i_live_in_x_comma_weather_answers_with_the_new_home(chat_cloud, sh, net, at_noon, music_db):
+    out = say("我住台北，明天天氣如何")
+    assert METEO_TOMORROW in out["replies"] and home(music_db) == TAIPEI
+
+
+def test_i_live_in_x_but_asks_another_city_goes_to_the_slow_path(chat_cloud, sh, net, at_noon, music_db):
+    out = say("我住台北幫我查高雄天氣")
+    assert out["steps"][0]["kind"] == "slow" and home(music_db) is None

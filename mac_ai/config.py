@@ -116,6 +116,7 @@ WEATHER_TIMEOUT_S = 2.0  # 每個來源各自的逾時（最差兩個都逾時�
 CWA_FORECAST_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001"  # 今明 36 小時縣市預報；舊網域 opendata.cwb.gov.tw 已不存在（2026-11-23 實測）
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 WEATHER_DEFAULT_WINDOW_S = 90 * 86400.0  # 沒說縣市時，「常問縣市」統計的時間窗口
+WEATHER_CITY_FOLLOWUP_TTL_S = 60.0  # 天氣冷啟動後，下一句只說縣市（台北、我住台北）有效的時間，與喚醒會話、來源追問一致
 
 # --- 長尾問題回答（搜尋 → 雲端摘要 1～2 句）。要有 BRAVE_API_KEY 與 AI_API_KEY 才啟用；少一個就照舊開搜尋網頁。數值是建議值，實測後在 §9 定案
 BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
@@ -124,7 +125,7 @@ BRAVE_SEARCH_LANG = "zh-hant"
 WEB_SEARCH_TIMEOUT_S = 3.0  # Brave 單次逾時
 WEB_SEARCH_COUNT = 5  # 摘錄筆數
 WEB_SNIPPET_CHARS = 300  # 每筆摘錄送雲端的字數上限
-WEB_ANSWER_TIMEOUT_S = 6.0  # 依摘錄回答的那次雲端呼叫的逾時（規劃那次仍是 CLOUD_TIMEOUT_S）
+WEB_ANSWER_TIMEOUT_S = 10.0  # 依摘錄回答的那次雲端呼叫的逾時（規劃那次仍是 CLOUD_TIMEOUT_S）。2026-11-24 實測 low 38 次：p50 2.29 s、p90 7.93 s，6 s 時 18.4% 逾時、10 s 時 7.9%（多半是雲端單次變慢）；使用者 2026-11-24 定 10 s。逾時不熔斷（cloud_client.chat trip_on_timeout=False）
 WEB_ANSWER_MAX_TOKENS = 4096  # 依摘錄回答那次的上限（含推理；推理維持 CLOUD_REASONING_EFFORT）。600 時摘錄互相矛盾會推理到上限、答案空白或被截斷（2026-11-23 實測），使用者 2026-11-23 定 4096
 SOURCE_FOLLOWUP_TTL_S = 60.0  # 回答後「要打開來源嗎？」說「好」有效的時間，與喚醒會話一致
 

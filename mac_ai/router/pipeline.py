@@ -3,13 +3,14 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from mac_ai import config
-from mac_ai.router import catalog, memory, sources
+from mac_ai.router import catalog, memory, sources, weather_followup
 from mac_ai.router.actions import ExecContext, front_app, run_tool
 from mac_ai.router.fast_path import FastPathMatcher, Match
 from mac_ai.router.llm_client import LLMError, LLMUnavailable
 from mac_ai.router.local_actions import record_explicit_search
 from mac_ai.router.normalize import log_normalization, normalize_utterance, restore_misheard
-from mac_ai.router.slow_path import execute_slow_path_llm, local_miss_reply
+from mac_ai.router.query_intent import parse_city_reply
+from mac_ai.router.slow_path import execute_chat_only, execute_slow_path_llm, local_miss_reply
 
 
 def _step_status(ctx: ExecContext) -> str:
@@ -62,12 +63,16 @@ def _recover_slow_segment(clauses: List[str], matcher: FastPathMatcher, ctx: Exe
 
 
 def _escalate_to_llm(text: str, step: dict, ctx: ExecContext, run: Match, matcher: FastPathMatcher) -> List[str]:
-    """ctx.escalate 有兩種：{"kind": "slow"}（web_answer 沒有雲端可用）→ 照沒有雲端時的路線：
+    """ctx.escalate 有三種：{"kind": "chat", "note", "fallback"}（「我住 X」已在背景記下居住地）→ 同一步只聊天，不執行任何工具；
+    {"kind": "slow"}（web_answer 沒有雲端可用）→ 照沒有雲端時的路線：
     不做直接回答判斷再比對一次（查一下周杰倫是誰 → 開網頁），沒命中才整句交給本機 Slow Path；
     其餘是本機搜尋 0 筆、又沒有明確的本機證據（例如『打開 python 教學』）：同一步把原句交給模型判斷。
     模型只決定要不要上網；網頁搜尋的關鍵字一律用使用者的原話（不用模型改寫的字）。
     沒有選任何動作或 LLM 不可用，都回保底的『找不到』並說明原因"""
     miss, ctx.escalate = ctx.escalate, None
+    if miss.get("kind") == "chat":
+        print("💬 [已在背景處理，接著聊天]")
+        return execute_chat_only(text, step, ctx, miss["note"], miss["fallback"])
     if miss.get("kind") == "slow":  # web_answer 沒有雲端可用：行為與沒有雲端時相同（U13、A16）
         legacy = matcher.match(text, whole=ctx.normalized, answer=False)
         if legacy is not None:
@@ -118,6 +123,7 @@ def process_voice_command(stt_text: str) -> dict:
     stt_text = normalized
 
     pending_source = sources.STORE.take()  # 每一句開頭取走：上一句回答後的「要打開來源嗎？」只有緊接著的這一句能回答
+    pending_weather = weather_followup.STORE.take()  # 同上：天氣冷啟動後，只有緊接著的這一句能只說縣市
     matcher = FastPathMatcher()
     t = time.perf_counter()
     clauses = matcher.split_clauses(stt_text)
@@ -133,6 +139,10 @@ def process_voice_command(stt_text: str) -> dict:
             cursor = pos + len(clause)
         if pending_source and len(clauses) == 1 and sources.is_yes(clause):
             run = Match([("open_source", {"url": pending_source})], note="打開上一個回答的來源")  # match() 看不到待決狀態，所以不在 Fast Path 規則裡
+        elif pending_weather and len(clauses) == 1 and (city := parse_city_reply(clause)):  # 冷啟動問的是「你住哪裡」：回答當成居住地（C1）
+            day, part = pending_weather
+            run = Match([("get_weather", {"city": city, "day": day, "part": part, "set_home": "cold_start_reply"})],
+                        note="冷啟動後回答的縣市")
         else:
             run = matcher.match(clause, whole=stt_text)  # 整句：其他子句明說要看畫面時，查詢子句也開網頁
         if run:

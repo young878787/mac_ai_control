@@ -84,3 +84,83 @@ def test_classify_query_is_pure(monkeypatch):
     for text in sentences:
         classify(text)
         classify(text, stage="find")
+
+
+# ---------- 居住地與天氣句首（計畫 2026-11-24-weather-city-and-answer-timeout.md §3.2～§3.5；A7、A9～A11）----------
+from mac_ai.router.query_intent import parse_city_reply  # noqa: E402
+
+TAIPEI = "臺北市"
+
+
+def _actions(text):
+    """同 pipeline：每個子句比對時帶整句（問號在切句時被切掉，要看整句）"""
+    import mac_ai.router as r
+    whole = r.normalize_utterance(text)
+    matcher = r.FastPathMatcher()
+    return [m.actions if m is not None else None for m in (matcher.match(c, whole=whole) for c in matcher.split_clauses(whole))]
+
+
+@pytest.mark.parametrize("text, city", [
+    ("我住台北", TAIPEI), ("我住在台中", "臺中市"), ("我家在高雄", "高雄市"), ("我們家住新北", "新北市"), ("我在台北喔", TAIPEI),
+    ("我現在住台南", "臺南市"), ("我住台北啦", TAIPEI), ("那我住台北", TAIPEI),
+])
+def test_i_live_in_x_remembers_the_home_city(text, city):
+    assert _actions(text) == [[("remember_home", {"city": city})]]
+
+
+@pytest.mark.parametrize("text, day", [
+    ("我住台北幫我查台北的天氣", "today"), ("我住台北明天天氣如何", "tomorrow"), ("我住台北天氣", "today"),
+    ("我住台北幫我查明天的天氣", "tomorrow"),
+])
+def test_i_live_in_x_plus_weather_sets_home_and_answers(text, day):
+    assert _actions(text) == [[("get_weather", {"city": TAIPEI, "day": day, "part": "", "set_home": "said"})]]
+
+
+def test_i_live_in_x_comma_weather_is_two_steps():
+    assert _actions("我住台北，明天天氣如何") == [[("remember_home", {"city": TAIPEI})],
+                                               [("get_weather", {"city": "", "day": "tomorrow", "part": ""})]]
+
+
+@pytest.mark.parametrize("text", ["我住台北幫我查高雄天氣", "我住台北查高雄明天天氣"])
+def test_i_live_in_x_but_asks_another_city_is_not_fast(text):
+    assert _actions(text) == [None]
+
+
+# §3.3 誤觸發清單（A10）：一句都不能產生 remember_home 或 get_weather
+FALSE_TRIGGERS = ["我不住台北", "我以前住台北", "我住台北很多年了", "我住台北的朋友說明天會下雨", "我朋友住台北", "你住台北嗎", "我住台北嗎",
+                  "我要去台北", "我明天去台中", "我在台北出差", "台北", "他住台北", "我之前住在高雄", "我曾經住台中", "我沒住台北",
+                  "我住台北？", "我們不住新北"]
+
+
+@pytest.mark.parametrize("text", FALSE_TRIGGERS)
+def test_false_triggers_never_remember_or_answer_weather(text):
+    names = [a[0] for acts in _actions(text) if acts for a in acts]
+    assert "remember_home" not in names and "get_weather" not in names
+
+
+@pytest.mark.parametrize("text, day", [
+    ("那幫我查詢明天的天氣", "tomorrow"), ("好那幫我查明天天氣", "tomorrow"), ("嗯台北天氣", "today"), ("對了明天會下雨嗎", "tomorrow"),
+    ("那麼明天天氣如何", "tomorrow"), ("欸明天天氣", "tomorrow"), ("那台北天氣", "today"), ("好幫我查天氣", "today"),
+])
+def test_weather_lead_allows_interjections(text, day):
+    (acts,) = _actions(text)
+    assert acts is not None and acts[0][0] == "get_weather" and acts[0][1]["day"] == day
+
+
+@pytest.mark.parametrize("text", ["好天氣", "那天氣", "好熱天氣", "好那今天天氣很好", "那天氣之子", "對了天氣之子是什麼電影", "那打開天氣"])
+def test_interjection_does_not_turn_exclamations_into_weather(text):
+    names = [a[0] for acts in _actions(text) if acts for a in acts]
+    assert "get_weather" not in names
+
+
+@pytest.mark.parametrize("text, city", [
+    ("台北", TAIPEI), ("台北啦", TAIPEI), ("我住台北", TAIPEI), ("在台中", "臺中市"), ("我家在高雄", "高雄市"), ("是台南", "臺南市"),
+    ("我住在新竹", "新竹市"), ("嗯台北喔", TAIPEI), ("臺北市", TAIPEI),
+])
+def test_city_reply(text, city):
+    assert parse_city_reply(text) == city
+
+
+@pytest.mark.parametrize("text", ["台北，順便調音量", "我不住台北", "台北嗎", "好啊", "明天天氣", "打開台北", "台北車站", "台北高雄", "我以前住台北", ""])
+def test_not_a_city_reply(text):
+    assert parse_city_reply(text) is None

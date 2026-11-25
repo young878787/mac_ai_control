@@ -504,3 +504,38 @@ def test_model_opens_the_page_but_sentence_asks_a_changing_fact(utterance):
 def test_model_searches_the_web_but_sentence_is_local(utterance, query, tool):
     calls, _, reroutes = _validated("web_search_or_open_url", query, utterance)
     assert [n for n, _ in calls] == [tool] and reroutes[0].startswith("[Domain 導向]")
+
+
+# ---------- 回答逾時不連鎖熔斷（計畫 2026-11-24-weather-city-and-answer-timeout.md T1、T3；A2、A3）----------
+CHAT = "今天心情不錯"  # 交給雲端規劃、只回文字的句子
+
+
+def _timeout_on(which):
+    """which＝answer：回答那次逾時；plan：規劃那次逾時（只有第一句）"""
+    state = {"n": 0}
+
+    def reply(body):
+        if body.get("tools"):
+            state["n"] += 1
+            if which == "plan" and state["n"] == 1:
+                raise OSError("timed out")
+            return web_plan() if body["messages"][1]["content"].startswith(ASK) else {"content": "好～"}
+        raise OSError("timed out")
+    return reply
+
+
+def test_answer_timeout_does_not_trip_the_breaker_and_the_next_sentence_still_uses_the_cloud(web, brave, sh):
+    web.reply = _timeout_on("answer")
+    first = say(ASK)["steps"][0]
+    assert "沒辦法直接回答（AI 沒有回應）" in first["logs"][-1] and len(opened(sh)) == 1
+    assert first["web"]["cloud"]["status"] == "timeout" and first["web"]["cloud"]["breaker"] == "skipped"
+    assert cloud_client.available()
+    second = say(CHAT)["steps"][0]
+    assert second["route"] == "cloud" and second["kind"] == "slow"
+
+
+def test_planning_timeout_still_trips_the_breaker(web, brave, sh, local):
+    web.reply = _timeout_on("plan")
+    first = say(ASK)["steps"][0]
+    assert first["route"] == "local" and first["cloud"]["breaker"] == "tripped" and not cloud_client.available()
+    assert say(CHAT)["steps"][0]["route"] == "local"

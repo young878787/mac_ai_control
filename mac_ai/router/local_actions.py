@@ -24,7 +24,8 @@ from mac_ai.router.domain import Intent
 from mac_ai.router.lexicon import LEXICON
 from mac_ai import db as music_db
 from mac_ai.router import (
-    cloud_client, music_prefs, search_client, search_prefs, sources, weather_client, weather_prefs, youtube_client,
+    cloud_client, music_prefs, profile_store, search_client, search_prefs, sources, weather_client, weather_followup, weather_prefs,
+    youtube_client,
 )
 
 _FOLDERS = {f["key"]: f for f in LEXICON["known_folders"]}
@@ -852,9 +853,11 @@ def today_taipei() -> str:
     return datetime.datetime.fromtimestamp(_now(), _TAIPEI).strftime("%Y-%m-%d")
 
 
-def get_weather(city: str = "", day: str = "today", part: str = "", ctx: Optional[ExecContext] = None) -> str:
-    """天氣回答（只讀資料：不開網頁、不呼叫 LLM）。city 空字串＝用資料庫統計的常問縣市，沒有紀錄就請使用者說縣市（不猜、不定位）；
-    句子明說的縣市記進資料庫（不管查不查得到）。有 CWA_API_KEY 先查氣象署，沒有金鑰或失敗改查 Open-Meteo，兩個都失敗回 ❌ 查不到。
+def get_weather(city: str = "", day: str = "today", part: str = "", set_home: str = "", ctx: Optional[ExecContext] = None) -> str:
+    """天氣回答（只讀資料：不開網頁、不呼叫 LLM）。city 空字串＝用預設：居住地（profile.home_city）→ 資料庫統計的常問縣市 →
+    都沒有就請使用者說縣市（冷啟動：不猜、不定位，並記下這次的 day、part，下一句只說縣市就接著回答）。
+    句子明說的縣市記進資料庫（不管查不查得到）；set_home（said＝「我住 X＋天氣」、cold_start_reply＝冷啟動後回答的縣市）時同時設為居住地。
+    有 CWA_API_KEY 先查氣象署，沒有金鑰或失敗改查 Open-Meteo，兩個都失敗回 ❌ 查不到。
     資料庫還沒準備好（conn() 是 None）：明說縣市照常回答、只是不記；沒說縣市當冷啟動。結果文字放進 ctx.replies（泡泡）"""
     t0 = time.perf_counter()
     info: dict = ctx.step.setdefault("weather", {}) if ctx is not None and ctx.step is not None else {}
@@ -864,11 +867,17 @@ def get_weather(city: str = "", day: str = "today", part: str = "", ctx: Optiona
     if explicit:
         if conn is not None:
             _db_call(info, weather_prefs.record_city, conn, city, now)
+            if set_home:
+                _db_call(info, profile_store.set, conn, profile_store.HOME_CITY, city, set_home, now)
+                info["set_home"] = set_home
     else:
-        city = (_db_call(info, weather_prefs.default_city, conn, now) if conn is not None else None) or ""
+        home = _db_call(info, profile_store.get, conn, profile_store.HOME_CITY) if conn is not None else None
+        city = home or (_db_call(info, weather_prefs.default_city, conn, now) if conn is not None else None) or ""
         if not city:
             info.update(city="", cold_start=True)
+            weather_followup.STORE.put(day, part)
             return weather_prefs.COLD_START_MESSAGE
+        info["default"] = "home" if home else "stats"
     res = weather_client.lookup(city, day, part, datetime.datetime.fromtimestamp(now, _TAIPEI).replace(tzinfo=None),
                                 config.env_value("CWA_API_KEY").strip())
     info.update(city=city, explicit=explicit, source=res.source, tried=res.tried, ms=(time.perf_counter() - t0) * 1000)
@@ -877,6 +886,31 @@ def get_weather(city: str = "", day: str = "today", part: str = "", ctx: Optiona
     if ctx is not None:
         ctx.replies.append(res.text)
     return f"✅ {res.text}"
+
+
+def home_reply(city: str) -> str:
+    """「我住 X」聊天這一步模型沒給文字或失敗時的固定回覆"""
+    return f"好～記住你住{city}了，之後問天氣就查{city}喔"
+
+
+def remember_home(city: str, ctx: Optional[ExecContext] = None) -> str:
+    """「我住 X」（C2）：在背景記下居住地，並照舊記一筆明說的縣市統計；結果只進 log、不出泡泡。
+    同一步接著聊天（ctx.escalate kind＝chat，由 pipeline 轉交：只採用文字回覆、不執行任何工具）。
+    資料庫還沒準備好或寫入失敗：回 ⚠️，聊天的提示改成「沒記下來」，回覆不會謊稱已經記住"""
+    info: dict = ctx.step.setdefault("weather", {}) if ctx is not None and ctx.step is not None else {}
+    now = _now()
+    conn = MUSIC_DB.conn()
+    if conn is not None:
+        _db_call(info, profile_store.set, conn, profile_store.HOME_CITY, city, "said", now)
+        if "db_error" not in info:
+            _db_call(info, weather_prefs.record_city, conn, city, now)
+    saved = conn is not None and "db_error" not in info
+    info.update(city=city, set_home="said" if saved else "")
+    if ctx is not None:
+        ctx.escalate = ({"kind": "chat", "note": f"已在背景記下使用者的居住地：{city}", "fallback": home_reply(city)} if saved else
+                        {"kind": "chat", "note": f"使用者說居住地是{city}，但這次沒能記下來；回覆不得說已經記住。",
+                         "fallback": f"我聽到你住{city}了，不過這次沒記下來，等一下再跟我說一次好嗎？"})
+    return f"✅ 已在背景記下居住地：{city}" if saved else f"⚠️ 偏好資料庫無法使用，沒有記下居住地：{city}"
 
 
 # ---------- 長尾回答（搜尋 → 雲端依摘錄回答）----------
@@ -936,7 +970,8 @@ def web_answer(query: str, ctx: Optional[ExecContext] = None) -> str:
     t = time.perf_counter()
     try:
         message = cloud_client.chat(cloud_client.web_answer_messages(utterance, results, today), tools=None,
-                                    timeout=config.WEB_ANSWER_TIMEOUT_S, max_tokens=config.WEB_ANSWER_MAX_TOKENS, meta=meta)
+                                    timeout=config.WEB_ANSWER_TIMEOUT_S, max_tokens=config.WEB_ANSWER_MAX_TOKENS, meta=meta,
+                                    trip_on_timeout=False)  # 回答那次逾時不熔斷：後面的句子照常走雲端規劃
     except cloud_client.CloudError as e:
         info.update(error=f"cloud:{e}")
         return _web_fallback(query, ctx, "cloud")
@@ -972,5 +1007,5 @@ LOCAL_TOOLS.update({
     "open_folder": open_folder, "find_file": find_file, "pick_choice": pick_choice,
     "context_search": context_search, "front_action": front_action, "play_media": play_media,
     "music_replace": music_replace, "music_feedback": music_feedback, "music_top": music_top, "get_weather": get_weather,
-    "web_answer": web_answer, "open_source": open_source, "federated_search": federated_search,
+    "remember_home": remember_home, "web_answer": web_answer, "open_source": open_source, "federated_search": federated_search,
 })

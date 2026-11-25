@@ -310,7 +310,7 @@ def test_key_never_appears_in_output_results_or_logs(cloud, local, capsys, name,
     event = {"command": "x", "ok": True, "total_ms": 1.0, "replies": out["replies"]}
     blob = capsys.readouterr().out + json.dumps(out, ensure_ascii=False, default=str) + json.dumps(command_record(event, out), ensure_ascii=False)
     assert KEY not in blob and "Bearer" not in blob
-    assert set(step.get("cloud", {})) <= {"model", "status", "total_ms", "prompt_tokens", "completion_tokens", "finish_reason"}
+    assert set(step.get("cloud", {})) <= {"model", "status", "total_ms", "prompt_tokens", "completion_tokens", "finish_reason", "breaker"}
 
 
 # ---------- 記錄欄位 ----------
@@ -643,3 +643,22 @@ def test_put_away_may_minimize(cloud, sh, native_calls, front):
     front("Safari")
     cloud.reply = {"tool_calls": [tc("front_action", {"id": "minimize"})]}
     assert r.process_voice_command("把它收起來")["steps"][0]["status"] == "ok" and native_calls == ["window minimize"]
+
+
+# ---------- 「我住 X」的 note（計畫 2026-11-24-weather-city-and-answer-timeout.md §3.3；A8）----------
+def test_home_note_is_only_at_the_end_of_the_user_message(cloud, local, sh, music_db):
+    cloud.reply = {"content": "好喔～"}
+    r.process_voice_command("我住台北")
+    (body,) = cloud.requests
+    system, user = body["messages"]
+    assert system == {"role": "system", "content": cloud_client.CLOUD_SYSTEM_PROMPT} and body["tools"] == cloud_client.CLOUD_TOOLS
+    note = "<note>已在背景記下使用者的居住地：臺北市</note>"
+    assert user["content"].startswith(slow_path.build_user_message("我住台北") + "\n\n") and user["content"].endswith("\n\n" + note)
+    assert user["content"].count("<note>") == 1 and "remember_home() ✅" in user["content"]  # 這一句已執行的本機工具只留名稱（0009 第 6 條）
+
+
+def test_other_sentences_have_no_note(cloud, local, sh):
+    cloud.reply = {"content": "好～"}
+    r.process_voice_command("今天心情不錯")
+    (body,) = cloud.requests
+    assert body["messages"][1]["content"] == slow_path.build_user_message("今天心情不錯") and "<note>" not in json.dumps(body, ensure_ascii=False)

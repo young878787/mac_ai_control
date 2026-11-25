@@ -123,6 +123,8 @@ def _route_query(q: QueryIntent) -> Match:
         return Match(plan_actions(q.intent), q.intent.confidence, q.intent.note, q.intent, query=q)
     if q.category == "weather":
         return Match([("get_weather", dict(q.slots))])
+    if q.category == "home":  # 「我住 X」：背景記下居住地，同一步接著聊天（計畫 docs/plans/completed/2026-11-24-weather-city-and-answer-timeout.md §3.3）
+        return Match([("remember_home", dict(q.slots))], note="記下居住地")
     if q.mode == "answer":  # 會變的事實、查／找＋問句：查證後回答；金鑰不齊時怎麼退回由 web_answer 在執行時決定（U13）
         return Match([("web_answer", {"query": q.query})], note=f"直接回答（{q.evidence}）")
     search = ("web_search_or_open_url" if q.slots["where"] == "google" else "context_search", {"query": q.query})

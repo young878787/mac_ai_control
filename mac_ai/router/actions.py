@@ -542,9 +542,9 @@ def _strip_think(text: str) -> str:
     return re.sub(r"<think>.*", "", text.rsplit("</think>", 1)[-1], flags=re.DOTALL).strip()
 
 
-def chat_reply(ctx: Optional[ExecContext] = None) -> str:
+def chat_reply(ctx: Optional[ExecContext] = None, *, fallback: Optional[str] = None) -> str:
     """chat call：把這一步的原句直接當成使用者訊息送入模型（不帶 tools），回覆寫入 ctx.replies。
-    同一步只回覆一次；失敗只記錄，不拋例外"""
+    同一步只回覆一次；失敗只記錄，不拋例外。fallback：模型失敗或沒給文字時改回這句（只有程式內部傳，「我住 X」用）"""
     ctx = ctx or ExecContext()
     if ctx.chat_done:
         return "✅ 已回覆"
@@ -559,6 +559,10 @@ def chat_reply(ctx: Optional[ExecContext] = None) -> str:
             timeout=CHAT_TIMEOUT_S, tools=False, max_tokens=128, meta=meta,
         )
     except LLMError as e:
+        if fallback:
+            step["chat_error"] = str(e)
+            ctx.replies.append(fallback)
+            return f"💬 {fallback}（AI 回覆失敗：{e}）"
         ctx.status = "llm_unavailable" if isinstance(e, LLMUnavailable) else "llm_error"
         text = f"⚠️ AI 回覆失敗（{e}）"
         ctx.replies.append(text)
@@ -566,7 +570,11 @@ def chat_reply(ctx: Optional[ExecContext] = None) -> str:
     finally:
         step["chat_ms"] = (time.perf_counter() - t) * 1000
         step["chat"] = meta
-    reply = to_traditional(_strip_think(message.get("content") or "")) or "無法理解指令"
+    reply = to_traditional(_strip_think(message.get("content") or ""))
+    if not reply and fallback:
+        ctx.replies.append(fallback)
+        return f"💬 {fallback}"
+    reply = reply or "無法理解指令"
     ctx.replies.append(reply)
     ctx.ai_reply = True
     return f"🤖 AI 回覆：{reply}"

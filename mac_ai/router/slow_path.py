@@ -3,6 +3,7 @@ import json
 import re
 import time
 from typing import List, Optional, Set, Tuple
+from xml.sax.saxutils import escape
 
 from mac_ai.config import PLAN_TIMEOUT_S, WARMUP_TIMEOUT_S
 from mac_ai.router import cloud_client, context, memory, search_client
@@ -268,9 +269,10 @@ def plan_slow_path(utterance: str, meta: Optional[dict] = None, local_miss: Opti
 
 
 def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str],
-               local_miss: Optional[dict] = None) -> Tuple[List[Tuple[str, dict]], str, List[str]]:
+               local_miss: Optional[dict] = None, note: Optional[str] = None) -> Tuple[List[Tuple[str, dict]], str, List[str]]:
     """雲端規劃：工具＝TOOLS_SCHEMA（chat_reply 多一個 text 參數）＋front_action、site_search（有 BRAVE_API_KEY 再加 web_answer），同一套驗證（validate_calls）。user 訊息＝本機的 build_user_message＋最近對話（有 web_answer 時再加今天日期）。
     local_miss：本機 0 筆轉交過來（U4）→ 與本機規劃相同：附本機搜尋結果、網頁搜尋用原話、不導回本機。
+    note：程式已經在背景做了的事（「我住 X」記下居住地），放在 user 訊息最後的 <note>；system 與工具清單不變（紅線 2）。
     回傳 (通過驗證的呼叫, 文字回覆, 被拒絕的原因)；雲端不可用時拋 CloudError（呼叫端退回本機）"""
     user = build_user_message(utterance, local_miss, front=front_hint(ctx))
     mem = memory.STORE.render(ctx.calls)
@@ -282,6 +284,8 @@ def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str],
     if web:  # 不給日期時模型會把「今年」「最近」編成訓練資料的年份（2026-11-23 實測，計畫 §9.5）；沒有金鑰時訊息不變
         from mac_ai.router.local_actions import today_taipei  # 與回答那次同一個時鐘（local_actions._now，測試可注入）；函式內 import 不改變模組載入順序
         user += "\n\n## 今天日期\n" + today_taipei()
+    if note:
+        user += f"\n\n<note>{escape(note)}</note>"
     try:
         message = cloud_client.chat([{"role": "system", "content": cloud_client.CLOUD_SYSTEM_PROMPT},
                                      {"role": "user", "content": user}], tools=cloud_client.cloud_tools(web), meta=meta)
@@ -344,6 +348,36 @@ def _execute_cloud(utterance: str, step: dict, ctx: ExecContext, guard: Optional
         ctx.ai_reply = True
         logs.append(f"☁️ AI 回覆：{content}")
     return logs
+
+
+def execute_chat_only(utterance: str, step: dict, ctx: ExecContext, note: str, fallback: str) -> List[str]:
+    """已在背景處理、只需要聊天的一步（pipeline 的 escalate kind＝chat：「我住 X」，計畫 docs/plans/completed/2026-11-24-weather-city-and-answer-timeout.md §3.3）。
+    原句照原樣送出；模型提出的任何工具呼叫都不執行，只採用文字回覆（2026-11-24 熔斷時本機模型把「我住台北」選成 read_screen）。
+    有雲端走雲端規劃（user 訊息最後附 <note>）；沒有雲端、熔斷或雲端失敗走本機 chat call（chat_hint＝note，不帶工具）。
+    模型沒給文字或失敗回 fallback（固定句）"""
+    ctx.utterance = utterance
+    if cloud_client.available():
+        step["route"] = "cloud"
+        t0 = time.perf_counter()
+        try:
+            calls, content, rejected = plan_cloud(utterance, ctx, step, set(), note=note)
+        except CloudError as e:
+            step["route"], step["cloud_fallback"] = "local", str(e)
+            print(f"☁️ 雲端無法使用（{e}），改用本機")
+        finally:
+            step["llm_ms"] = (time.perf_counter() - t0) * 1000
+        if step["route"] == "cloud":
+            logs = []
+            if calls or rejected:
+                step["chat_dropped"] = [n for n, _ in calls] + ["rejected"] * len(rejected)
+                logs.append(f"🛡️ 只聊天，不執行模型提出的工具：{', '.join(step['chat_dropped'])}")
+            text = content or fallback
+            ctx.replies.append(text)
+            ctx.ai_reply = ctx.ai_reply or bool(content)
+            return logs + [f"☁️ AI 回覆：{text}" if content else f"💬 {text}"]
+    step.setdefault("route", "local")
+    ctx.chat_hint = note
+    return [chat_reply(ctx, fallback=fallback)]
 
 
 def execute_slow_path_llm(utterance: str, timing: Optional[dict] = None, ctx: Optional[ExecContext] = None,

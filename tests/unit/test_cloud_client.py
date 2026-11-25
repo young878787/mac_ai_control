@@ -85,6 +85,46 @@ def test_key_never_enters_os_environ_or_child_process_env(cloud):
         assert KEY not in "".join((svc.env or {}).values()) and "AI_API_KEY" not in (svc.env or {})
 
 
+# ---------- 熔斷範圍（計畫 2026-11-24-weather-city-and-answer-timeout.md T1、T3；A1）----------
+def _http_error(code):
+    import io
+    import urllib.error
+    return urllib.error.HTTPError("https://cloud.test", code, "err", {}, io.BytesIO(b""))
+
+
+def test_timeout_without_trip_raises_but_keeps_the_cloud_available(cloud):
+    cloud.reply = OSError("timed out")
+    meta: dict = {}
+    with pytest.raises(cloud_client.CloudError, match="逾時"):
+        cloud_client.chat([{"role": "user", "content": "x"}], meta=meta, trip_on_timeout=False)
+    assert meta["status"] == "timeout" and meta["breaker"] == "skipped" and cloud_client.available()
+
+
+@pytest.mark.parametrize("err,trip", [
+    (OSError("timed out"), True), (OSError("timed out"), None), (OSError("connection refused"), False),
+    (_http_error(429), False), (_http_error(500), False),
+])
+def test_timeout_by_default_and_other_failures_always_trip_the_breaker(cloud, err, trip):
+    """預設逾時照舊熔斷；連線失敗、429、5xx 不管 trip_on_timeout 都熔斷"""
+    cloud.reply = err
+    meta: dict = {}
+    kw = {} if trip is None else {"trip_on_timeout": trip}
+    with pytest.raises(cloud_client.CloudError):
+        cloud_client.chat([{"role": "user", "content": "x"}], meta=meta, **kw)
+    assert meta["breaker"] == "tripped" and not cloud_client.available()
+
+
+def test_success_and_bad_response_have_no_breaker_field(cloud, monkeypatch):
+    meta: dict = {}
+    cloud_client.chat([{"role": "user", "content": "x"}], meta=meta)
+    assert "breaker" not in meta
+    monkeypatch.setattr(cloud_client, "_post", lambda *a: {"oops": 1})
+    meta = {}
+    with pytest.raises(cloud_client.CloudError):
+        cloud_client.chat([{"role": "user", "content": "x"}], meta=meta)
+    assert "breaker" not in meta and cloud_client.available()
+
+
 # ---------- 回應快取開關 ----------
 def test_no_cache_flag_adds_cache_control_to_the_body_only_when_on(cloud, monkeypatch):
     r.process_voice_command("今天心情不錯")

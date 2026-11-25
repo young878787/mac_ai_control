@@ -218,9 +218,11 @@ def _post(url: str, key: str, body: dict, timeout: float) -> dict:
 
 
 def chat(messages: List[dict], *, tools: Optional[list] = None, timeout: float = config.CLOUD_TIMEOUT_S,
-         max_tokens: int = config.CLOUD_MAX_TOKENS, meta: Optional[dict] = None) -> dict:
-    """送一次請求，回傳第一個 choice 的 message（content 已清理）。meta 回填 model／status／total_ms／token 數。
-    連線錯誤、逾時、429、5xx → 熔斷 BREAKER_COOLDOWN_S；401／403 → 本次執行期間停用；都拋 CloudError"""
+         max_tokens: int = config.CLOUD_MAX_TOKENS, meta: Optional[dict] = None, trip_on_timeout: bool = True) -> dict:
+    """送一次請求，回傳第一個 choice 的 message（content 已清理）。meta 回填 model／status／total_ms／token 數，熔斷時記 breaker。
+    連線錯誤、逾時、429、5xx → 熔斷 BREAKER_COOLDOWN_S（meta["breaker"]="tripped"）；401／403 → 本次執行期間停用；都拋 CloudError。
+    trip_on_timeout=False：逾時只拋 CloudError、不熔斷（meta["breaker"]="skipped"）。依摘錄回答那次用：雲端單次變慢不該讓後面的句子
+    都改走本機（2026-11-24 實測，計畫 docs/plans/completed/2026-11-24-weather-city-and-answer-timeout.md §1.2）"""
     global _down_until, _disabled
     meta = meta if meta is not None else {}
     s = settings()
@@ -251,10 +253,15 @@ def chat(messages: List[dict], *, tools: Optional[list] = None, timeout: float =
             _warn_once("auth", f"⚠️ 雲端：HTTP {code}（金鑰錯誤或被拒），本次執行改用本機")
         elif code == 429 or code >= 500:
             _down_until = time.monotonic() + config.BREAKER_COOLDOWN_S
+            meta["breaker"] = "tripped"
         raise CloudError(f"HTTP {code}") from None
     except (OSError, http.client.HTTPException) as e:  # 連線被拒、DNS、逾時（socket.timeout 是 OSError）
         meta["status"] = "timeout" if "timed out" in str(e) else "unavailable"
-        _down_until = time.monotonic() + config.BREAKER_COOLDOWN_S
+        if meta["status"] == "timeout" and not trip_on_timeout:
+            meta["breaker"] = "skipped"
+        else:
+            _down_until = time.monotonic() + config.BREAKER_COOLDOWN_S
+            meta["breaker"] = "tripped"
         raise CloudError("逾時" if meta["status"] == "timeout" else "連線失敗") from None
     except (KeyError, IndexError, TypeError, ValueError) as e:
         meta["status"] = "bad_response"
