@@ -1,0 +1,43 @@
+id: prompt-prefix-immutable
+language: python
+severity: error
+message: SYSTEM_PROMPT＋TOOLS_SCHEMA 是 prefix cache，必須逐字穩定，不得在執行期修改或拼入動態內容（ADR 0002，紅線 2）
+note: |
+  動態資訊（本機搜尋結果、別名提示、前景）放 user 訊息；要改工具給雲端用時先 copy.deepcopy（見 cloud_client.cloud_tools）。
+  改 SYSTEM_PROMPT／TOOLS_SCHEMA 的原文要跑 pytest -m live（準確率與延遲）。
+files:
+  - mac_ai/**/*.py
+rule:
+  any:
+    # 拼入動態內容
+    - kind: assignment
+      all:
+        - has: { field: left, regex: (^|\.)(SYSTEM_PROMPT|TOOLS_SCHEMA)$ }
+        - has:
+            field: right
+            any:
+              - has: { stopBy: end, kind: interpolation }
+              - kind: interpolation
+              - has: { stopBy: end, kind: call, has: { field: function, regex: \.format$ } }
+              - kind: call
+                has: { field: function, regex: \.format$ }
+    # 函式內重新賦值（global）或從別的模組改屬性
+    - kind: assignment
+      has: { field: left, regex: ^(SYSTEM_PROMPT|TOOLS_SCHEMA)$ }
+      inside: { kind: function_definition, stopBy: end }
+    - kind: assignment
+      has: { field: left, kind: attribute, regex: \.(SYSTEM_PROMPT|TOOLS_SCHEMA)$ }
+    # 原地修改
+    - kind: augmented_assignment
+      has: { field: left, regex: (^|\.)(SYSTEM_PROMPT|TOOLS_SCHEMA)$ }
+    - kind: call
+      has:
+        field: function
+        regex: (^|\.)TOOLS_SCHEMA\.(append|extend|insert|remove|pop|clear|sort|reverse)$
+    - kind: assignment
+      has:
+        field: left
+        kind: subscript
+        has: { stopBy: end, kind: identifier, regex: ^TOOLS_SCHEMA$ }
+    - kind: delete_statement
+      has: { stopBy: end, kind: identifier, regex: ^TOOLS_SCHEMA$ }

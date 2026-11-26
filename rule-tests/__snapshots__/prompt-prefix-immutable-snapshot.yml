@@ -1,0 +1,129 @@
+id: prompt-prefix-immutable
+snapshots:
+  "SYSTEM_PROMPT += hint\n":
+    labels:
+    - source: SYSTEM_PROMPT += hint
+      style: primary
+      start: 0
+      end: 21
+    - source: SYSTEM_PROMPT
+      style: secondary
+      start: 0
+      end: 13
+  "SYSTEM_PROMPT = \"前景：{}\".format(front)\n":
+    labels:
+    - source: SYSTEM_PROMPT = "前景：{}".format(front)
+      style: primary
+      start: 0
+      end: 43
+    - source: SYSTEM_PROMPT
+      style: secondary
+      start: 0
+      end: 13
+    - source: "\"前景：{}\".format"
+      style: secondary
+      start: 16
+      end: 36
+    - source: "\"前景：{}\".format(front)"
+      style: secondary
+      start: 16
+      end: 43
+  "SYSTEM_PROMPT = f\"你是助手。前景：{front}\"\n":
+    labels:
+    - source: SYSTEM_PROMPT = f"你是助手。前景：{front}"
+      style: primary
+      start: 0
+      end: 50
+    - source: SYSTEM_PROMPT
+      style: secondary
+      start: 0
+      end: 13
+    - source: "{front}"
+      style: secondary
+      start: 42
+      end: 49
+    - source: f"你是助手。前景：{front}"
+      style: secondary
+      start: 16
+      end: 50
+  "TOOLS_SCHEMA += [tool]\n":
+    labels:
+    - source: TOOLS_SCHEMA += [tool]
+      style: primary
+      start: 0
+      end: 22
+    - source: TOOLS_SCHEMA
+      style: secondary
+      start: 0
+      end: 12
+  "TOOLS_SCHEMA.append(new_tool)\n":
+    labels:
+    - source: TOOLS_SCHEMA.append(new_tool)
+      style: primary
+      start: 0
+      end: 29
+    - source: TOOLS_SCHEMA.append
+      style: secondary
+      start: 0
+      end: 19
+  "TOOLS_SCHEMA[0][\"function\"][\"description\"] = desc\n":
+    labels:
+    - source: TOOLS_SCHEMA[0]["function"]["description"] = desc
+      style: primary
+      start: 0
+      end: 49
+    - source: TOOLS_SCHEMA
+      style: secondary
+      start: 0
+      end: 12
+    - source: TOOLS_SCHEMA[0]["function"]["description"]
+      style: secondary
+      start: 0
+      end: 42
+  "def warm():\n    global SYSTEM_PROMPT\n    SYSTEM_PROMPT = build()\n":
+    labels:
+    - source: SYSTEM_PROMPT = build()
+      style: primary
+      start: 41
+      end: 64
+    - source: |-
+        def warm():
+            global SYSTEM_PROMPT
+            SYSTEM_PROMPT = build()
+      style: secondary
+      start: 0
+      end: 64
+    - source: SYSTEM_PROMPT
+      style: secondary
+      start: 41
+      end: 54
+  "del TOOLS_SCHEMA[3]\n":
+    labels:
+    - source: del TOOLS_SCHEMA[3]
+      style: primary
+      start: 0
+      end: 19
+    - source: TOOLS_SCHEMA
+      style: secondary
+      start: 4
+      end: 16
+  "slow_path.SYSTEM_PROMPT = patched\n":
+    labels:
+    - source: slow_path.SYSTEM_PROMPT = patched
+      style: primary
+      start: 0
+      end: 33
+    - source: slow_path.SYSTEM_PROMPT
+      style: secondary
+      start: 0
+      end: 23
+  "tools.TOOLS_SCHEMA.extend(more)\n":
+    labels:
+    - source: tools.TOOLS_SCHEMA.extend(more)
+      style: primary
+      start: 0
+      end: 31
+    - source: tools.TOOLS_SCHEMA.extend
+      style: secondary
+      start: 0
+      end: 25

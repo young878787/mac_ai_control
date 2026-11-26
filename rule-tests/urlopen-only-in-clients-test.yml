@@ -1,0 +1,17 @@
+id: urlopen-only-in-clients
+valid:
+  - |
+    from mac_ai.router.llm_client import _llm
+    reply = _llm(messages, timeout=10)
+  - |
+    url = urllib.parse.quote(q)
+  - |
+    weather_client.fetch(city)
+invalid:
+  - |
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        pass
+  - |
+    resp = urlopen(url)
+  - |
+    conn = http.client.HTTPSConnection("api.example.com")

@@ -1,0 +1,39 @@
+id: prompt-prefix-immutable
+valid:
+  - |
+    SYSTEM_PROMPT = (
+        "你是 macOS 助手。"
+        "只能呼叫提供的工具。"
+    )
+  - |
+    TOOLS_SCHEMA = [{"type": "function", "function": {"name": "x"}}]
+  - |
+    tools = copy.deepcopy(TOOLS_SCHEMA)
+    tools.append(extra)
+  - |
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": f"{hint}\n{text}"}]
+  - |
+    names = {t["function"]["name"] for t in TOOLS_SCHEMA}
+invalid:
+  - |
+    SYSTEM_PROMPT = f"你是助手。前景：{front}"
+  - |
+    SYSTEM_PROMPT = "前景：{}".format(front)
+  - |
+    SYSTEM_PROMPT += hint
+  - |
+    def warm():
+        global SYSTEM_PROMPT
+        SYSTEM_PROMPT = build()
+  - |
+    slow_path.SYSTEM_PROMPT = patched
+  - |
+    TOOLS_SCHEMA.append(new_tool)
+  - |
+    tools.TOOLS_SCHEMA.extend(more)
+  - |
+    TOOLS_SCHEMA[0]["function"]["description"] = desc
+  - |
+    del TOOLS_SCHEMA[3]
+  - |
+    TOOLS_SCHEMA += [tool]

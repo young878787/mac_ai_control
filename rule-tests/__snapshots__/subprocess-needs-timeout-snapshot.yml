@@ -1,0 +1,60 @@
+id: subprocess-needs-timeout
+snapshots:
+  "ok, err = _run([\"open\", \"-a\", app])\n":
+    labels:
+    - source: _run(["open", "-a", app])
+      style: primary
+      start: 10
+      end: 35
+    - source: _run
+      style: secondary
+      start: 10
+      end: 14
+    - source: (["open", "-a", app])
+      style: secondary
+      start: 14
+      end: 35
+  "ok, err = actions._run([\"osascript\", \"-e\", script])\n":
+    labels:
+    - source: actions._run(["osascript", "-e", script])
+      style: primary
+      start: 10
+      end: 51
+    - source: actions._run
+      style: secondary
+      start: 10
+      end: 22
+    - source: (["osascript", "-e", script])
+      style: secondary
+      start: 22
+      end: 51
+  "out = subprocess.check_output([\"mdfind\", q])\n":
+    labels:
+    - source: subprocess.check_output(["mdfind", q])
+      style: primary
+      start: 6
+      end: 44
+    - source: subprocess.check_output
+      style: secondary
+      start: 6
+      end: 29
+  "ps = subprocess.run([\"ps\", \"-p\", str(pid)], capture_output=True, text=True)\n":
+    labels:
+    - source: subprocess.run(["ps", "-p", str(pid)], capture_output=True, text=True)
+      style: primary
+      start: 5
+      end: 75
+    - source: subprocess.run
+      style: secondary
+      start: 5
+      end: 19
+  "subprocess.call([\"pmset\", \"sleepnow\"])\n":
+    labels:
+    - source: subprocess.call(["pmset", "sleepnow"])
+      style: primary
+      start: 0
+      end: 38
+    - source: subprocess.call
+      style: secondary
+      start: 0
+      end: 15

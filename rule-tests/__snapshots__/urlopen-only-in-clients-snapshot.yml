@@ -1,0 +1,32 @@
+id: urlopen-only-in-clients
+snapshots:
+  "conn = http.client.HTTPSConnection(\"api.example.com\")\n":
+    labels:
+    - source: http.client.HTTPSConnection("api.example.com")
+      style: primary
+      start: 7
+      end: 53
+    - source: http.client.HTTPSConnection
+      style: secondary
+      start: 7
+      end: 34
+  "resp = urlopen(url)\n":
+    labels:
+    - source: urlopen(url)
+      style: primary
+      start: 7
+      end: 19
+    - source: urlopen
+      style: secondary
+      start: 7
+      end: 14
+  "with urllib.request.urlopen(req, timeout=5) as resp:\n    pass\n":
+    labels:
+    - source: urllib.request.urlopen(req, timeout=5)
+      style: primary
+      start: 5
+      end: 43
+    - source: urllib.request.urlopen
+      style: secondary
+      start: 5
+      end: 27

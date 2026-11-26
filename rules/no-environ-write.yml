@@ -1,0 +1,23 @@
+id: no-environ-write
+language: python
+severity: error
+message: 不得寫入 os.environ（子程序會繼承，金鑰會外洩給它們）（ADR 0010，紅線 10）
+note: |
+  設定值用 config.env_value 讀，讀到的值不寫回環境變數。
+  要給子程序額外的環境變數時，傳 env={**os.environ, "X": "1"} 給該次呼叫（見 services.llm_service）。
+files:
+  - mac_ai/**/*.py
+  - main.py
+  - build_vocab.py
+  - scripts/**/*.py
+  - bench/**/*.py
+rule:
+  any:
+    - pattern: os.environ[$K] = $V
+    - pattern: environ[$K] = $V
+    - pattern: os.environ |= $V
+    - pattern: os.environ.update($$$)
+    - pattern: os.environ.setdefault($$$)
+    - pattern: environ.update($$$)
+    - pattern: environ.setdefault($$$)
+    - pattern: os.putenv($$$)

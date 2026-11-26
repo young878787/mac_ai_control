@@ -1,0 +1,21 @@
+id: no-environ-write
+valid:
+  - |
+    key = os.environ.get("AI_API_KEY")
+  - |
+    subprocess.Popen(cmd, env={**os.environ, "APC_ENABLED": "1"})
+  - |
+    env = dict(os.environ)
+    env["X"] = "1"
+invalid:
+  - |
+    os.environ["AI_API_KEY"] = key
+  - |
+    os.environ.update(parse_env(text))
+  - |
+    os.environ.setdefault("BRAVE_API_KEY", key)
+  - |
+    from os import environ
+    environ["CWA_API_KEY"] = key
+  - |
+    os.putenv("AI_API_KEY", key)

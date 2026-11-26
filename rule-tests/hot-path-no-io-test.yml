@@ -1,0 +1,40 @@
+id: hot-path-no-io
+valid:
+  - |
+    import re
+    from mac_ai.router.domain import Intent
+  - |
+    from mac_ai.router.actions import ExecContext, run_tool
+    def run(self, ctx):
+        return [run_tool(n, a, ctx) for n, a in self.actions]
+  - |
+    from mac_ai.router import catalog as catalog_mod, context
+    site = context.site_exact(name)
+  - |
+    import unicodedata
+    from functools import lru_cache
+invalid:
+  - |
+    import subprocess
+  - |
+    import urllib.request
+  - |
+    import os, socket
+  - |
+    from urllib.parse import quote
+  - |
+    from http.client import HTTPSConnection
+  - |
+    from mac_ai.router.llm_client import _llm
+  - |
+    from mac_ai.router import cloud_client
+  - |
+    from mac_ai.router import context, search_client as sc
+  - |
+    ok, out = _run(["mdfind", q], 3)
+  - |
+    front = actions.front_context(ctx)
+  - |
+    app = front_app(ctx)
+  - |
+    os.system("open -a Safari")
