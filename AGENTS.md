@@ -18,6 +18,7 @@ Apple Silicon Mac 上的語音助手：麥克風 → macos-stt（Windows 改用�
 | 測試指令、基線、分層與 fixture | `docs/guides/testing.md` |
 | Lint 設定與 ESLint 自訂規則、CI | `ruff.toml`、`desktop/eslint.config.js`、`desktop/eslint-rules/`（測試 `desktop/test/eslint-rules.test.js`）、`.github/workflows/lint.yml`；分工見 ADR 0025 |
 | Python 專案規則（紅線的語法檢查） | `sgconfig.yml`、`rules/`（測試 `rule-tests/`） |
+| Python 模組依賴（分層、例外、結構債） | `.importlinter`、`docs/flows/module-deps.md`（0026） |
 | 計畫：進行中 `docs/plans/active/`，結案 `docs/plans/completed/`（不刪） | 新計畫用 `YYYY-MM-DD-slug.md`；結構規則見 ADR 0016 |
 
 改行為前先看對應的 ADR。要推翻 ADR 時先問使用者，再新增一份 ADR，並把舊的標成「被 NNNN 取代」。
@@ -32,6 +33,7 @@ pytest                            # L2：離線全部約 15 秒，commit 前跑�
 cd desktop && node --test && npm run typecheck
 uvx ruff@0.17.6 check . && (cd desktop && npm run lint)   # lint，CI（.github/workflows/lint.yml）也跑
 uvx --from ast-grep-cli@0.51.2 ast-grep test && uvx --from ast-grep-cli@0.51.2 ast-grep scan   # 專案規則，在 repo 根目錄跑
+uvx --from import-linter==2.16 --with grimp==3.19 lint-imports   # 依賴契約，在 repo 根目錄跑
 python main.py --text 打開小算盤   # 不起服務直接跑一句
 ```
 
@@ -67,7 +69,7 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 - 繁體中文（臺灣用語），先給結論。簡單任務直接做；多檔案、架構、資料流、行為變更、效能、安全性的任務先提計畫，等確認再做。
 - 只改需求必要的部分，不順手重構，不新增 dependency；產品行為與驗收標準由使用者決定，偏離時立即停下提出。
 - 新增行為要新增測試；修 bug 先寫能重現的測試；已知問題用 `xfail(strict=True)` 並寫日期。
-- commit 前 `ruff check`、`ast-grep scan`、`npm run lint` 必須 0 違規。不得為了過關放寬 `ruff.toml`／`eslint.config.js`／`rules/` 或自訂規則；確定是誤報或確有必要的例外才加 `noqa`／`eslint-disable`／`ast-grep-ignore`，並寫原因（ast-grep 的壓制要在上一行，原因寫在相鄰的註解）。CI 只跑 lint、typecheck、`node --test`，不跑 pytest，CI 綠燈不代表 pytest 通過。
+- commit 前 `ruff check`、`ast-grep scan`、`lint-imports`、`npm run lint` 必須 0 違規。不得為了過關放寬 `ruff.toml`／`eslint.config.js`／`rules/`／`.importlinter`（含新增 `ignore_imports`）或自訂規則；確定是誤報或確有必要的例外才加 `noqa`／`eslint-disable`／`ast-grep-ignore`，並寫原因（ast-grep 的壓制要在上一行，原因寫在相鄰的註解）。CI 只跑 lint、typecheck、`node --test`，不跑 pytest，CI 綠燈不代表 pytest 通過。
 - 不 commit、push、開 PR，除非使用者要求；commit 用 `feat:`／`fix:`／`docs:` 一行摘要，不加任何 AI 署名。
 - 回報分開寫「已實際執行確認」與「尚未驗證」。STT 語音實機沒有自動測試，不要聲稱已驗證。
 - 計畫結案時移到 `docs/plans/completed/`，把其中仍然有效的決策寫成 ADR，並同步 `ARCHITECTURE.md` 與 flows。

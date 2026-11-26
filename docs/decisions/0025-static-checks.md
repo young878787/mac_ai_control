@@ -39,4 +39,5 @@
 
 - 本機 commit 前與 CI（`.github/workflows/lint.yml` 的 `ruff`、`ast-grep`、`desktop` 三個 job）都會擋。CI 不跑 pytest（依賴 Apple 限定套件），綠燈不代表 pytest 通過。
 - ast-grep 逐檔比對，看不到間接 import；熱路徑的傳遞性保證仍靠行為測試（例如 `tests/unit/test_domain.py` 把 `_scan_installed` 換成會丟例外的版本）。
+- 模組依賴圖（含間接 import）後來改由 import-linter 檢查，見 [0026](0026-import-linter.md)。
 - 一般動作的外部指令卡住超過 15 秒時回 ❌（動作可能稍後仍完成）；正常情況不影響延遲。

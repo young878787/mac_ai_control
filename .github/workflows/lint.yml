@@ -1,4 +1,4 @@
-# Lint 與桌面端檢查：Ruff（Python）、ast-grep 專案規則（Python，rules/）、ESLint＋自訂規則、typecheck、node --test（含自訂規則的測試）。
+# Lint 與桌面端檢查：Ruff（Python）、ast-grep 專案規則（Python，rules/）、import-linter 依賴契約（.importlinter）、ESLint＋自訂規則、typecheck、node --test（含自訂規則的測試）。
 # pytest 依賴 mlx 等 Apple 限定套件，不在這裡跑；見 docs/guides/testing.md。
 name: lint
 
@@ -30,6 +30,14 @@ jobs:
       - uses: astral-sh/setup-uv@v10.4.0
       - run: uvx --from ast-grep-cli@0.51.2 ast-grep test        # 規則本身的 valid／invalid 案例
       - run: uvx --from ast-grep-cli@0.51.2 ast-grep scan --format github
+
+  import-linter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.4.0
+      - run: uvx --from import-linter==2.16 --with grimp==3.19 lint-imports   # 讀 repo 根目錄的 .importlinter；純靜態分析，不需要 mlx
 
   desktop:
     runs-on: ubuntu-latest
