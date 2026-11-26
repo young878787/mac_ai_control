@@ -12,7 +12,7 @@ Apple Silicon Mac 上的語音助手：麥克風 → macos-stt（Windows 改用�
 | 要找 | 看 |
 |---|---|
 | 模組職責、桌面分層、延遲目標 | `ARCHITECTURE.md` |
-| 輸入→路由→執行的完整流程、Slow Path 與 `validate_calls` 順序 | `docs/flows/main-flow.md`、`docs/flows/slow-path.md` |
+| 輸入→路由→執行的完整流程、Slow Path 與 `validate_calls` 順序；圖的寫法 | `docs/flows/main-flow.md`、`docs/flows/slow-path.md`；規範 `docs/flows/README.md`（0027） |
 | 為什麼這樣做（實測依據、使用者決定） | `docs/decisions/NNNN-*.md`（ADR） |
 | 「快」「準」守則全文、常見修改怎麼做、不要碰的東西 | `docs/guides/coding-style.md` |
 | 測試指令、基線、分層與 fixture | `docs/guides/testing.md` |

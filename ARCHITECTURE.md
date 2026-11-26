@@ -2,7 +2,7 @@
 
 Apple Silicon Mac 上的語音助手：麥克風 → 系統語音辨識（macos-stt；備用引擎 X-ASR）→ 路由 → 執行 macOS 動作。語音辨識、Fast Path、本機 LLM 都在本機；雲端模型是選用的加分（[0009](docs/decisions/0009-cloud-optional.md)）。
 
-流程細節：[docs/flows/main-flow.md](docs/flows/main-flow.md)、[docs/flows/slow-path.md](docs/flows/slow-path.md)。
+流程細節：[docs/flows/main-flow.md](docs/flows/main-flow.md)、[docs/flows/slow-path.md](docs/flows/slow-path.md)；模組依賴：[docs/flows/module-deps.md](docs/flows/module-deps.md)；圖的寫法：[docs/flows/README.md](docs/flows/README.md)。
 
 ## 延遲目標
 
