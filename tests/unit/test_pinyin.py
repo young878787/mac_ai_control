@@ -1,9 +1,9 @@
-"""music_prefs 的拼音（macOS ICU Han-Latin; Latin-ASCII; Lower，ctypes 呼叫）：放寬後的無聲調音節。
+"""pinyin（macOS ICU Han-Latin; Latin-ASCII; Lower，ctypes 呼叫）：放寬後的無聲調音節。
 放寬：zh→z、ch→c、sh→s、ing→in、eng→en。ICU 是本機系統函式庫，不連網、不開子程序。"""
 import pytest
 
-from mac_ai.router import music_prefs as mp
-from mac_ai.router.music_prefs import pinyin_key, pinyin_syllables, pinyin_units
+from mac_ai.router import pinyin
+from mac_ai.router.pinyin import pinyin_key, pinyin_syllables, pinyin_units
 
 
 @pytest.mark.parametrize("group", [
@@ -58,12 +58,12 @@ def test_traditional_and_simplified_share_key():
 
 def test_no_icu_falls_back_to_literal(monkeypatch):
     """ICU 取不到（非 macOS）：不丟例外，漢字退化成原字，字面比對仍可用"""
-    monkeypatch.setattr(mp, "_icu_transliterate", lambda text: text)
-    mp._han_syllable.cache_clear()
+    monkeypatch.setattr(pinyin, "_icu_transliterate", lambda text: text)
+    pinyin._han_syllable.cache_clear()
     try:
         assert pinyin_syllables("周杰倫") == ["周", "杰", "倫"]
         assert pinyin_syllables("Jay 周") == ["jay", "周"]
     finally:
         monkeypatch.undo()
-        mp._han_syllable.cache_clear()
+        pinyin._han_syllable.cache_clear()
     assert pinyin_syllables("周杰倫") == ["zou", "jie", "lun"]

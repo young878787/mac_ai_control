@@ -4,7 +4,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 import urllib.parse
@@ -18,24 +17,10 @@ from mac_ai.router import cloud_client, context
 from mac_ai.router.lexicon import APP_KIND, MAC_APP_ALIASES, project_index, resolve_project
 from mac_ai.router.llm_client import LLMError, LLMUnavailable, _llm
 from mac_ai.router.normalize import to_traditional
+from mac_ai.router.proc import _run
 
 
 _FAIL_PREFIXES = ("❌", "⚠️", "⏭️")
-
-
-def _run(cmd: List[str], timeout: Optional[float] = None) -> Tuple[bool, str]:
-    """執行外部指令並檢查結束碼。回傳 (成功?, 成功時的 stdout／失敗時 stderr 最後一行)；
-    timeout 用於可能卡在授權對話框的指令（逾時視為失敗）"""
-    try:
-        p = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return False, f"逾時 {timeout:g}s（可能在等待授權對話框）"
-    except OSError as e:  # 指令不存在或無法執行
-        return False, str(e)[:120]
-    if p.returncode == 0:
-        return True, (p.stdout or "").strip()
-    lines = (p.stderr or "").strip().splitlines()
-    return False, (lines[-1][:120] if lines else f"結束碼 {p.returncode}")
 
 
 def control_mac_app(app_name: str, action: str = "open") -> str:

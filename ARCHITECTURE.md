@@ -55,7 +55,7 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | `mac_ai/router/weather_prefs.py` | 天氣偏好（執行階段、`command_worker` 執行緒）：記明說的縣市、統計常問縣市當預設、冷啟動訊息 |
 | `mac_ai/router/profile_store.py` | 常駐資料 `profile`（執行階段、`command_worker` 執行緒）：目前只有居住地 `home_city`，只記使用者明說的，再說一次就覆寫；只在本機，不送雲端、不進對話記憶（[0024](docs/decisions/0024-home-city-and-answer-timeout.md)） |
 | `mac_ai/router/weather_followup.py` | 天氣冷啟動後的待答 `STORE`（記憶體、60 秒、每句開頭取走）：存原本要問的 day、part，下一句只說縣市就接著回答 |
-| `mac_ai/router/music_prefs.py` | 點歌偏好（執行階段、`command_worker` 執行緒）：事件、計分、常聽的歌、`terms` 詞表與拼音矯正（macOS ICU，ctypes）、快取 `queries`、定時整理的排程邏輯 |
+| `mac_ai/router/music_prefs.py` | 點歌偏好（執行階段、`command_worker` 執行緒）：事件、計分、常聽的歌、`terms` 詞表與拼音矯正（拼音在 `pinyin.py`）、快取 `queries`、定時整理的排程邏輯 |
 | `mac_ai/db/` | 偏好資料庫 `data/music.sqlite3`（點歌、天氣常問縣市、常搜名詞 `search_terms`、常駐資料 `profile` 共用；不入版控、永久保存）：`ensure_schema`（備份、在複本上升級、損毀改名）、`MusicDb`（背景準備、每執行緒一條連線）、`migrations/`（Alembic，只在 `ensure_schema` 內載入，日後可移除）、`rebuild.py`（從 `events` 重算 `terms`） |
 | `mac_ai/router/hant.py` | 簡轉繁（macOS ICU，ctypes）：只換 Big5 編不出來的字與一份精選的「只有簡體才這樣寫」清單，繁體字不動（整句轉換會把「退回路徑」改成「退迴路徑」）；雲端回覆經 `cloud_client.clean_text` 套用，**熱路徑（`normalize`、`completeness`）不得呼叫** |
 | `mac_ai/router/memory.py` | 對話記憶 `STORE`（最近 5 輪、60 秒；原句、工具與成功與否、回覆摘要；非 `TOOLS_SCHEMA` 工具的參數不留），給雲端 user 訊息與「它」的對象守門 |
@@ -63,6 +63,8 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | `mac_ai/router/sources.py` | 回答後「要打開來源嗎？」的待決來源 `STORE`（記憶體、60 秒、每句開頭取走）與肯定回答的判斷 `is_yes` |
 | `mac_ai/router/tools.py` | `TOOLS_SCHEMA`（LLM 看得到的工具）與 `validate_tool_call`（唯一信任邊界） |
 | `mac_ai/router/actions.py` | 實際執行器（`open -a`、`osascript`、`screencapture`…）、`ExecContext`、`read_screen`、`chat_reply`、`run_tool`；點歌開分頁（`open_music_video`：一支 osascript 找含 `list=RD` 的 YouTube 分頁並改網址，沒有才 `open -a` 開新分頁） |
+| `mac_ai/router/proc.py` | 外部指令的共用呼叫 `_run`（逾時、結束碼、錯誤訊息）；只依賴標準庫 |
+| `mac_ai/router/pinyin.py` | 拼音比對（macOS ICU，ctypes）：點歌接受規則與偏好矯正共用；純文字處理 |
 | `mac_ai/router/llm_client.py` | `mlx_vlm.server` OpenAI 相容呼叫；連不上即熔斷 30 秒 |
 | `desktop/` | 桌面角色（Electron）。依行程與層次分目錄，規則與依賴方向見下方「桌面前端分層」 |
 | `mac_ai/assistant.py` | 收音迴圈、`CommandRouter`、`command_worker`；`QueuedJob`（內部工作，不發事件、不寫指令紀錄）與 `MusicMaintenance`（點歌定時整理的計時器，只負責排進指令佇列） |
@@ -85,7 +87,7 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | 6 | `config` | 設定與常數 | 無 |
 
 - 規則寫在 `.importlinter`（import-linter，C1～C5：後端分層、router 編排順序、底層不往上依賴編排層、熱路徑不碰 IO、網路 client 只做網路與解析），本機與 CI 都會擋；函式內的 import 也算。
-- **新模組先決定層**；新的 `router/` 模組要加進 C2 或 C3（`tests/unit/test_docs_flows.py` 會檢查）。例外、唯一的循環與結構債見 [module-deps.md](docs/flows/module-deps.md)；新增或放寬契約、例外要先問使用者。
+- **新模組先決定層**；新的 `router/` 模組要加進 C2 或 C3（`tests/unit/test_docs_flows.py` 會檢查）。例外與結構債見 [module-deps.md](docs/flows/module-deps.md)；新增或放寬契約、例外要先問使用者。
 
 ## 桌面前端（`desktop/`）分層
 

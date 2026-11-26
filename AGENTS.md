@@ -65,7 +65,6 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 - `archive/`：唯讀參考，不改、不 import。`macos-stt/`：獨立 repo，不在本 repo 提交範圍。
 - 不入版控：`AI_models/`、`Rushia_hd/`、`desktop/vendor/`、`desktop/node_modules/`、`logs/`、`data/`、`bench/synth/`、`*.wav`、`.env*`。
 - 不修改 `.env`、production 設定或外部服務。`vocab/lexicon.json` 的 `project_roots`、`projects.path` 是個人設定。
-- `catalog._scan_installed` 在函式內 import `actions`（避免循環匯入），不要搬到檔案頂層。
 
 ## 工作流程
 

@@ -4,7 +4,7 @@ severity: error
 message: 外部指令一律設逾時（紅線 12）
 note: |
   指令在 command_worker 單執行緒依序執行，卡住會擋住下一句。
-  用 actions._run(cmd, timeout)：一般動作用 EXTERNAL_TIMEOUT_S，輪詢用 POLL_TIMEOUT_S，讀前景用 CONTEXT_TIMEOUT_S；
+  用 proc._run(cmd, timeout)：一般動作用 EXTERNAL_TIMEOUT_S，輪詢用 POLL_TIMEOUT_S，讀前景用 CONTEXT_TIMEOUT_S；
   直接呼叫 subprocess 時帶 timeout= 並處理 subprocess.TimeoutExpired。長駐服務用 Popen，不在此規則範圍。
 files:
   - mac_ai/**/*.py
@@ -24,7 +24,7 @@ rule:
     - all:
         - has:
             field: function
-            regex: ^(actions\.)?_run$
+            regex: ^((actions|proc)\.)?_run$
         - has:
             field: arguments
             not:

@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import actions, catalog, choices, local_actions as la
+from mac_ai.router import catalog, choices, local_actions as la
 from mac_ai.router.actions import ExecContext
 from support.clock import Clock
 
@@ -30,7 +30,7 @@ def test_scan_installed_parses_mdfind_and_skips_nested_apps(monkeypatch):
         seen.append(cmd)
         return True, MDFIND_APPS
 
-    monkeypatch.setattr(actions, "_run", fake_run)
+    monkeypatch.setattr(catalog, "_run", fake_run)
     index = REAL_SCAN()
     assert index == {"safari": "Safari", "calculator": "Calculator", "計算機": "Calculator", "photos": "Photos",
                      "照片": "Photos", "weirdapp": "Weird App"}  # 巢狀 Helper.app 不算；(null) 不當名稱；.dmg 不算
@@ -40,7 +40,7 @@ def test_scan_installed_parses_mdfind_and_skips_nested_apps(monkeypatch):
 
 
 def test_scan_installed_returns_empty_when_mdfind_fails(monkeypatch):
-    monkeypatch.setattr(actions, "_run", lambda cmd, timeout=None: (False, "boom"))
+    monkeypatch.setattr(catalog, "_run", lambda cmd, timeout=None: (False, "boom"))
     assert REAL_SCAN() == {}
 
 

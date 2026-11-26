@@ -20,10 +20,10 @@ def test_d6_runtime_modules_do_not_load_alembic(tmp_path):
     assert db.ensure_schema(path).ok
     code = (
         "import sys, random\n"
-        "import mac_ai.router.fast_path, mac_ai.router.local_actions, mac_ai.router.music_prefs as mp, mac_ai.db.rebuild as rb\n"
+        "import mac_ai.router.fast_path, mac_ai.router.local_actions, mac_ai.router.music_prefs as mp, mac_ai.router.pinyin as py, mac_ai.db.rebuild as rb\n"
         "from mac_ai import db\n"
         f"c = db.connect({str(path)!r})\n"
-        "mp.warm()\n"
+        "py.warm()\n"
         "mp.learn_play(c, query='晴天', source='ytm', title='晴天', channel='周杰倫', artists=['周杰倫'], now=1.0, video_id='abcdefghijk')\n"
         "mp.record_event(c, 'play', now=1.0, query='晴天', video_id='abcdefghijk', source='ytm')\n"
         "mp.cache_put(c, '晴天', 'abcdefghijk', [], 1.0)\n"

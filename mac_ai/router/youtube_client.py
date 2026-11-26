@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from mac_ai import config
-from mac_ai.router.music_prefs import pinyin_units
+from mac_ai.router.pinyin import pinyin_units
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) "
       "Version/18.0 Safari/605.1.15")

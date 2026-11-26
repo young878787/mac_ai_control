@@ -17,11 +17,12 @@ from mac_ai import config
 from mac_ai.config import CONTEXT_TIMEOUT_S, FILE_SEARCH_TIMEOUT_S, FIND_RESULTS_MAX
 from mac_ai.router import choices, context, native
 from mac_ai.router.actions import (
-    EXTERNAL_TIMEOUT_S, LOCAL_TOOLS, POLL_TIMEOUT_S, _FAIL_PREFIXES, ExecContext, _dispatch, _skipped, front_app, front_context, front_site, mark_page, _run,
+    EXTERNAL_TIMEOUT_S, LOCAL_TOOLS, POLL_TIMEOUT_S, _FAIL_PREFIXES, ExecContext, _dispatch, _skipped, front_app, front_context, front_site, mark_page,
     google_search_url, open_music_video, open_search_page, web_search_or_open_url,
 )
 from mac_ai.router.domain import Intent
 from mac_ai.router.lexicon import LEXICON
+from mac_ai.router.proc import _run
 from mac_ai import db as music_db
 from mac_ai.router import (
     cloud_client, music_prefs, profile_store, search_client, search_prefs, sources, weather_client, weather_followup, weather_prefs,

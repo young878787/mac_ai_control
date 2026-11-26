@@ -10,7 +10,7 @@ import urllib.error
 import pytest
 
 from mac_ai import config
-from mac_ai.router import music_prefs, youtube_client as yt
+from mac_ai.router import pinyin, youtube_client as yt
 from support.youtube import QUERY, Block, home, load, music_items, net, set_real, video, web_response  # noqa: F401
 
 T = 0.25  # 測試用的 YT_TIMEOUT_S
@@ -256,18 +256,18 @@ def test_requests_carry_no_user_info_and_module_is_silent(net, capsys, caplog):
 
 # ---------- 拼音在多執行緒下一致（搜尋執行緒與 command_worker 可能同時用）----------
 def test_pinyin_thread_safe():
-    music_prefs._han_syllable.cache_clear()  # 從冷快取開始，讓各執行緒都真的去問 ICU
+    pinyin._han_syllable.cache_clear()  # 從冷快取開始，讓各執行緒都真的去問 ICU
     texts = ["周杰倫", "稻香", "晴天", "告白氣球", "光年之外", "鄧紫棋", "七里香", "夜曲", "Shape of You", "五月天的晴天"]
-    want = {t: music_prefs.pinyin_syllables(t) for t in texts}
-    music_prefs._han_syllable.cache_clear()
+    want = {t: pinyin.pinyin_syllables(t) for t in texts}
+    pinyin._han_syllable.cache_clear()
     errors, results = [], []
 
     def work():
         try:
             for _ in range(200):
                 for t in texts:
-                    results.append((t, music_prefs.pinyin_syllables(t)))
-                music_prefs._han_syllable.cache_clear() if _ % 50 == 0 else None
+                    results.append((t, pinyin.pinyin_syllables(t)))
+                pinyin._han_syllable.cache_clear() if _ % 50 == 0 else None
         except Exception as e:  # noqa: BLE001
             errors.append(e)
 
