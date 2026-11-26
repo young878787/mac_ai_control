@@ -31,8 +31,8 @@ def rebuild(conn: sqlite3.Connection, now: Optional[float] = None) -> int:
                 mp.apply_play(conn, query=query or "", source=source, title=title or "", channel=channel or "",
                               artists=artists, now=ts)
             elif query:
-                {"like": lambda: mp.apply_like(conn, query, ts), "dislike": lambda: mp.apply_dislike(conn, query),
-                 "replace": lambda: mp.apply_replace(conn, query, ts)}[kind]()
+                {"like": lambda: mp.apply_like(conn, query, ts), "dislike": lambda: mp.apply_dislike(conn, query),  # noqa: B023  # lambda 建立後立刻呼叫
+                 "replace": lambda: mp.apply_replace(conn, query, ts)}[kind]()  # noqa: B023
             count += 1
         if now is not None:
             mp.decay_terms(conn, now)

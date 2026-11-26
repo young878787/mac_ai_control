@@ -12,7 +12,7 @@ def _info(path):
     return f'"Code" ASN:0x0-0x1459458: (in front) \n    bundle path="{path}"\n'
 
 
-def _runner(front_ok=True, info_ok=True, asn="ASN:0x0-0x1459458:", info=_info("/Applications/Safari.app")):
+def _runner(front_ok=True, info_ok=True, asn="ASN:0x0-0x1459458:", info=_info("/Applications/Safari.app")):  # noqa: B008
     calls = []
 
     def run(cmd, timeout=None):

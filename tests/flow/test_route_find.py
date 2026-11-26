@@ -171,7 +171,7 @@ def test_search_failure_is_reported_not_escalated(monkeypatch, find_env):
 
 @pytest.mark.parametrize("utterance", ["找到了", "找不到我的鑰匙", "找最近的電影", "找影片教學"])
 def test_exception_sentences_go_straight_to_the_model(monkeypatch, find_env, utterance):
-    llm = FakeLLM({"content": "x"}, {"content": "這是回覆"}).install(monkeypatch)
+    FakeLLM({"content": "x"}, {"content": "這是回覆"}).install(monkeypatch)
     out = r.process_voice_command(utterance)
     (step,) = out["steps"]
     assert step["kind"] == "slow" and find_env.mdfinds() == []  # 不搜檔案

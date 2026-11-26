@@ -63,9 +63,9 @@ function listSources(dir) {
   for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
     const rel = dir ? `${dir}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
-      if (['node_modules', 'vendor', 'test'].includes(entry.name)) continue;
+      if (['node_modules', 'vendor', 'test', 'eslint-rules'].includes(entry.name)) continue;   // eslint-rules：lint 工具，不是程式的一層
       out.push(...listSources(rel));
-    } else if (/\.(c|m)?js$/.test(entry.name)) out.push(rel);
+    } else if (/\.(c|m)?js$/.test(entry.name) && rel !== 'eslint.config.js') out.push(rel);
   }
   return out;
 }

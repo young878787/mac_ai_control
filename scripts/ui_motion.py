@@ -107,7 +107,7 @@ def main() -> int:
             print(f"\n聆聽階段 {args.rounds} 輪（不要動滑鼠）…")
 
             def listen():
-                for r in range(args.rounds):
+                for _r in range(args.rounds):
                     for _ in range(LISTEN_S):
                         bus.publish({"type": "partial", "text": "露西婭", "wake": True})
                         time.sleep(1.0)

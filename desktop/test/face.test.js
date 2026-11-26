@@ -133,7 +133,7 @@ test('連眨兩下：符合條件的眨眼中約 7.5%，第二下後 8 秒冷卻
   const ratio = doubles / eligible;
   assert.ok(ratio > 0.06 && ratio < 0.09, `連眨比例 ${ratio.toFixed(4)}（${doubles}/${eligible}）`);
   // 第二下與第一下的間隔：第一下結束後 100～180 ms 才開始
-  const gaps = pairs.map(([a, b], i) => b - a);
+  const gaps = pairs.map(([a, b]) => b - a);
   assert.ok(gaps.every(g => g >= MIN_BLINK_MS + 100 - 8 && g <= MAX_BLINK_MS + 180 + 8), `連眨間隔 ${Math.min(...gaps)}～${Math.max(...gaps)}`);
 });
 

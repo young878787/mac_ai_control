@@ -15,7 +15,7 @@ from mac_ai import config
 from mac_ai.router import actions, lexicon, llm_client, slow_path
 from support.expect import APP, CHROME, MUTE, SEARCH, VOL, VSCODE
 from support.llm import FakeLLM, forbid_llm, llm_always, tc
-from support.real import REAL_URLOPEN, real_run
+from support.real import REAL_URLOPEN
 from support.screen import Screen
 
 

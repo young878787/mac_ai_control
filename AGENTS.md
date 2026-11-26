@@ -28,6 +28,7 @@ pytest <相關測試檔>                # L0：改什麼跑什麼，對照表見
 pytest -m "unit or flow"          # L1：約 3 秒，一個功能改完跑
 pytest                            # L2：離線全部約 15 秒，commit 前跑，必須 0 failed
 cd desktop && node --test && npm run typecheck
+uvx ruff@0.17.6 check . && (cd desktop && npm run lint)   # lint，CI（.github/workflows/lint.yml）也跑
 python main.py --text 打開小算盤   # 不起服務直接跑一句
 ```
 

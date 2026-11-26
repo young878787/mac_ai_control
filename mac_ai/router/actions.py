@@ -157,7 +157,7 @@ def browser_tab(action: str, browser: Optional[str] = None) -> str:
         return f"⚠️ 未知的分頁動作：{action}"
     target, err = _pick_tab_browser(browser)
     if target is None:
-        return f"❌ 找不到可操作的瀏覽器（支援 Safari、Google Chrome，請先開啟）" + (f"（{err}）" if err else "")
+        return "❌ 找不到可操作的瀏覽器（支援 Safari、Google Chrome，請先開啟）" + (f"（{err}）" if err else "")
     ok, err = _run(["osascript", "-e", _TAB_SCRIPTS[target][action]], EXTERNAL_TIMEOUT_S)
     return f"✅ {target}：{_TAB_DONE_TEXT[action]}" if ok else f"❌ 分頁操作失敗：{target}（{err}）"
 

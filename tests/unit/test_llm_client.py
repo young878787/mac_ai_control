@@ -46,7 +46,9 @@ def test_default_plan_timeout_is_10s(monkeypatch):
 
 def test_chat_request_body(monkeypatch):
     """請求必須帶 tools、關閉 thinking、使用官方建議取樣參數"""
-    import io, json, urllib.request
+    import io
+    import json
+    import urllib.request
     captured = {}
 
     def fake_urlopen(req, timeout):

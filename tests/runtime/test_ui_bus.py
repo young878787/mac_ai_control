@@ -210,7 +210,7 @@ def test_publish_never_blocks_on_a_client_that_does_not_read(bus):
     with open_client(bus, close_timeout=0.1):  # 連上後完全不讀（關閉握手收不到回應，不等預設的 10 s）
         assert wait_until(lambda: bus.client_count() == 1)
         t = time.perf_counter()
-        for i in range(10000):
+        for _ in range(10000):
             bus.publish({"type": "partial", "text": "x" * 200, "wake": False})
         elapsed = time.perf_counter() - t
         assert elapsed <= 0.1, f"{elapsed * 1000:.1f}ms"

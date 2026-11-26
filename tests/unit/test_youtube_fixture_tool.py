@@ -60,7 +60,7 @@ def test_strip_drops_tracking_and_thumbnails_but_keeps_parse_paths():
     needed = {"videoId", "title", "ownerText", "runs", "text", "navigationEndpoint", "browseEndpoint", "browseId", "watchEndpoint", "playlistItemData",
               "flexColumns", "flexColumnItems", "musicResponsiveListItemFlexColumnRenderer", "pageType", "browseEndpointContextSupportedConfigs",
               "browseEndpointContextMusicConfig", "contents", "subtitle", "onTap", "videoRenderer", "musicResponsiveListItemRenderer",
-              "musicCardShelfRenderer", "itemSectionRenderer", "navigationEndpoint"}
+              "musicCardShelfRenderer", "itemSectionRenderer"}
     assert not needed & tool.DROP
 
 
