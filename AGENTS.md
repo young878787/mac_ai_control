@@ -34,6 +34,7 @@ cd desktop && node --test && npm run typecheck
 uvx ruff@0.17.6 check . && (cd desktop && npm run lint)   # lint，CI（.github/workflows/lint.yml）也跑
 uvx --from ast-grep-cli@0.51.2 ast-grep test && uvx --from ast-grep-cli@0.51.2 ast-grep scan   # 專案規則，在 repo 根目錄跑
 uvx --from import-linter==2.16 --with grimp==3.19 lint-imports   # 依賴契約，在 repo 根目錄跑
+python3 scripts/check_file_lines.py   # 程式檔行數上限 800，在 repo 根目錄跑
 python main.py --text 打開小算盤   # 不起服務直接跑一句
 ```
 
@@ -56,6 +57,8 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 13. 桌面：依賴只能往下（`layers.test.js`）；匯流排只綁 127.0.0.1＋token＋不收 Origin；聊天室主動展開只用 `showInactive()`。ESLint 自訂規則擋 `.show()`、非 127.0.0.1 網址、`webPreferences` 缺安全設定、非常值的 IPC 頻道。（0012、0014）
 14. 擬人化的指標門檻在 `desktop/dev/motion-metrics.js`，不得為了過關放寬。（0015）
 15. 辨識引擎的切換點是 WS 協定：`xasr_server` 與 macos-stt 行為要一致，`SttClient`、端點偵測、`EP_*` 不為單一引擎改；CPU 門檻用整機百分比；Windows 只在 macOS 上模擬過，不可說成實機驗證。（0020）
+16. 後端依賴只能往下：`.importlinter` 的 C1～C5（分層、router 編排順序、熱路徑不碰 IO、網路 client 不碰資料庫與子程序，函式內 import 也算）。新模組先決定層，新的 `router/` 模組加進 C2 或 C3；新增 `ignore_imports` 或放寬契約先問使用者，依賴消失就刪例外並同步 `module-deps.md`。（0026）
+17. 程式檔（含測試）不超過 800 行（`scripts/check_file_lines.py`）。超過時依職責拆到既有模組；需要新模組先向使用者提計畫，確認後再拆；不得調高上限或加排除。（0028）
 
 ## 不要碰
 
@@ -69,7 +72,8 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 - 繁體中文（臺灣用語），先給結論。簡單任務直接做；多檔案、架構、資料流、行為變更、效能、安全性的任務先提計畫，等確認再做。
 - 只改需求必要的部分，不順手重構，不新增 dependency；產品行為與驗收標準由使用者決定，偏離時立即停下提出。
 - 新增行為要新增測試；修 bug 先寫能重現的測試；已知問題用 `xfail(strict=True)` 並寫日期。
-- commit 前 `ruff check`、`ast-grep scan`、`lint-imports`、`npm run lint` 必須 0 違規。不得為了過關放寬 `ruff.toml`／`eslint.config.js`／`rules/`／`.importlinter`（含新增 `ignore_imports`）或自訂規則；確定是誤報或確有必要的例外才加 `noqa`／`eslint-disable`／`ast-grep-ignore`，並寫原因（ast-grep 的壓制要在上一行，原因寫在相鄰的註解）。CI 只跑 lint、typecheck、`node --test`，不跑 pytest，CI 綠燈不代表 pytest 通過。
+- commit 前 `ruff check`、`ast-grep scan`、`lint-imports`、`check_file_lines.py`、`npm run lint` 必須 0 違規。不得為了過關放寬 `ruff.toml`／`eslint.config.js`／`rules/`／`.importlinter`（含新增 `ignore_imports`）或自訂規則；確定是誤報或確有必要的例外才加 `noqa`／`eslint-disable`／`ast-grep-ignore`，並寫原因（ast-grep 的壓制要在上一行，原因寫在相鄰的註解）。CI 只跑 lint、typecheck、`node --test`，不跑 pytest，CI 綠燈不代表 pytest 通過。
 - 不 commit、push、開 PR，除非使用者要求；commit 用 `feat:`／`fix:`／`docs:` 一行摘要，不加任何 AI 署名。
 - 回報分開寫「已實際執行確認」與「尚未驗證」。STT 語音實機沒有自動測試，不要聲稱已驗證。
+- 改到流程（函式、順序、退回鏈、守門）的 commit 要同時更新 `docs/flows/`，照 `docs/flows/README.md` 的規範；`tests/unit/test_docs_flows.py` 檢查圖的寫法、文件裡的 `模組.名稱`、例外表與 `.importlinter` 一致。（0027）
 - 計畫結案時移到 `docs/plans/completed/`，把其中仍然有效的決策寫成 ADR，並同步 `ARCHITECTURE.md` 與 flows。

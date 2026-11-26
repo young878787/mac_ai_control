@@ -1,4 +1,4 @@
-# Lint 與桌面端檢查：Ruff（Python）、ast-grep 專案規則（Python，rules/）、import-linter 依賴契約（.importlinter）、ESLint＋自訂規則、typecheck、node --test（含自訂規則的測試）。
+# Lint 與桌面端檢查：Ruff（Python）、ast-grep 專案規則（Python，rules/）、import-linter 依賴契約（.importlinter）、程式檔行數上限、ESLint＋自訂規則、typecheck、node --test（含自訂規則的測試）。
 # pytest 依賴 mlx 等 Apple 限定套件，不在這裡跑；見 docs/guides/testing.md。
 name: lint
 
@@ -38,6 +38,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.4.0
       - run: uvx --from import-linter==2.16 --with grimp==3.19 lint-imports   # 讀 repo 根目錄的 .importlinter；純靜態分析，不需要 mlx
+
+  file-lines:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 scripts/check_file_lines.py   # 程式檔（含測試）超過 800 行即失敗；見 ADR 0028
 
   desktop:
     runs-on: ubuntu-latest
