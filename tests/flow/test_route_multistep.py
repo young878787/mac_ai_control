@@ -409,6 +409,28 @@ def test_hanging_command_times_out_instead_of_blocking(monkeypatch):
     assert ok is False and "逾時" in msg
 
 
+@pytest.mark.parametrize("call", [
+    lambda: actions.control_mac_app("Safari"),
+    lambda: actions.control_mac_app("Safari", "quit"),
+    lambda: actions.set_system_volume(level=30),
+    lambda: actions.set_system_volume(mute=True),
+    lambda: actions.adjust_screen_brightness("up"),
+    lambda: actions.web_search_or_open_url("天氣"),
+    lambda: actions.system_power_action("toggle_dark_mode"),
+    lambda: actions.system_power_action("dark_mode_on"),
+    lambda: actions.system_power_action("sleep"),
+    lambda: actions.system_power_action("lock_screen"),
+])
+def test_plain_actions_have_timeout_and_report_failure(monkeypatch, call):
+    """2026-11-26：一般動作的 open／osascript／pmset 也有上限（EXTERNAL_TIMEOUT_S），卡住回 ❌ 而不是一直擋住 command_worker"""
+    def hang(cmd, **kw):
+        assert kw["timeout"] == actions.EXTERNAL_TIMEOUT_S
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", hang)
+    assert call().startswith("❌")
+
+
 def test_page_poll_timeout_does_not_block_read_screen(monkeypatch, tmp_path):
     s = Screen(monkeypatch, tmp_path)
     real_run = s.run

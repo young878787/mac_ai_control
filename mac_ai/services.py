@@ -140,7 +140,10 @@ def kill_stt_backend(pid_file: str = config.STT_PID_FILE) -> None:
         return
 
     def is_backend() -> bool:
-        ps = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True)
+        try:
+            ps = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=2.0)
+        except subprocess.TimeoutExpired:
+            return False  # 確認不了就不動手
         return "MacSTT.app" in ps.stdout
 
     for sig in (signal.SIGTERM, signal.SIGKILL):

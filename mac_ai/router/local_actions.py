@@ -17,7 +17,7 @@ from mac_ai import config
 from mac_ai.config import CONTEXT_TIMEOUT_S, FILE_SEARCH_TIMEOUT_S, FIND_RESULTS_MAX
 from mac_ai.router import choices, context, native
 from mac_ai.router.actions import (
-    LOCAL_TOOLS, POLL_TIMEOUT_S, _FAIL_PREFIXES, ExecContext, _dispatch, _skipped, front_app, front_context, front_site, mark_page, _run,
+    EXTERNAL_TIMEOUT_S, LOCAL_TOOLS, POLL_TIMEOUT_S, _FAIL_PREFIXES, ExecContext, _dispatch, _skipped, front_app, front_context, front_site, mark_page, _run,
     google_search_url, open_music_video, open_search_page, web_search_or_open_url,
 )
 from mac_ai.router.domain import Intent
@@ -95,7 +95,7 @@ def open_folder(path_key: str, ctx: Optional[ExecContext] = None) -> str:
     path = _folder_path(path_key)
     if not path or not os.path.isdir(path):
         return f"❌ 資料夾不存在：{path or path_key}"
-    ok, err = _run(["open", path])
+    ok, err = _run(["open", path], EXTERNAL_TIMEOUT_S)
     label = _FOLDERS[path_key]["names"][0]
     return f"✅ 已開啟資料夾：{label}（{path}）" if ok else f"❌ 開啟資料夾失敗：{label}（{err}）"
 
@@ -178,9 +178,9 @@ def _act(path: str, action: str) -> Tuple[bool, str]:
     """reveal＝在 Finder 中顯示；open＝開檔（可執行檔改成只顯示）。回傳 (成功?, 訊息)"""
     name, where = os.path.basename(path), choices.short_dir(path)
     if action == "open" and not is_dangerous(path):
-        ok, err = _run(["open", path])
+        ok, err = _run(["open", path], EXTERNAL_TIMEOUT_S)
         return ok, f"✅ 已開啟：{name}（{where}）" if ok else f"❌ 開啟失敗：{name}（{err}）"
-    ok, err = _run(["open", "-R", path])
+    ok, err = _run(["open", "-R", path], EXTERNAL_TIMEOUT_S)
     if not ok:
         return False, f"❌ 在 Finder 中顯示失敗：{name}（{err}）"
     if action == "open":
@@ -302,7 +302,7 @@ def _web_hits(query: str) -> Tuple[List[choices.WebItem], str]:
 def _open_web(item: choices.WebItem, ctx: Optional[ExecContext]) -> str:
     """網路項目：前景是瀏覽器就用它開，否則交給預設瀏覽器（U11）。結果文字不帶標題與網址（會寫進紀錄）"""
     browser = (ctx.last_browser or front_app(ctx, "browser")) if ctx is not None else None
-    ok, err = _run(["open", "-a", browser, item.url] if browser else ["open", item.url])
+    ok, err = _run(["open", "-a", browser, item.url] if browser else ["open", item.url], EXTERNAL_TIMEOUT_S)
     res = "✅ 已用瀏覽器打開網路結果" if ok else f"❌ 開啟瀏覽器失敗（{err}）"
     if ctx is not None:
         mark_page(ctx, res)
@@ -388,7 +388,7 @@ def context_search(query: str, ctx: Optional[ExecContext] = None) -> str:
         site = front_site(ctx)
         if site is not None:
             url = site["search_url"].replace("{q}", urllib.parse.quote(query))
-            ok, err = _run(["open", "-a", ctx.front.app, url])
+            ok, err = _run(["open", "-a", ctx.front.app, url], EXTERNAL_TIMEOUT_S)
             res = f"✅ 已在 {site['name']} 搜尋：{query}" if ok else f"❌ 開啟瀏覽器失敗（{err}）"
             mark_page(ctx, res)
             return res
