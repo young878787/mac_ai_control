@@ -402,7 +402,7 @@ python scripts/acceptance.py list                   # 歷次結果
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
 | `mac_ai/wake.py` | 喚醒詞閘門與會話 |
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
-| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `local_actions.py`（執行），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站；點歌：`youtube_client.py`（InnerTube 搜尋）、`music_prefs.py`（偏好、計分、拼音矯正）；天氣：`weather_client.py`（氣象署→Open-Meteo）、`weather_prefs.py`（常問縣市）；長尾回答：`search_client.py`（Brave 搜尋）、`sources.py`（來源追問）；查詢分類：`query_intent.py`（純函式）、`search_prefs.py`（常搜名詞統計） |
+| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `find_tools.py`（執行；本機工具依功能分在 `*_tools.py`，由 `local_actions.py` 登錄），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站；點歌：`youtube_client.py`（InnerTube 搜尋）、`music_prefs.py`（偏好、計分、拼音矯正）；天氣：`weather_client.py`（氣象署→Open-Meteo）、`weather_prefs.py`（常問縣市）；長尾回答：`search_client.py`（Brave 搜尋）、`sources.py`（來源追問）；查詢分類：`query_intent.py`（純函式）、`search_prefs.py`（常搜名詞統計） |
 | `mac_ai/db/` | 偏好資料庫（`data/music.sqlite3`，點歌、天氣常問縣市、常搜名詞共用）的建立、備份與升級（Alembic migration）、從事件重算詞表（`rebuild.py`） |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`）；備用辨識引擎的伺服器（`xasr_server.py`）與熱詞編碼（`xasr_hotwords.py`） |
 | `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、注意力導演、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`animation/` 程序動畫、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 [ARCHITECTURE.md](ARCHITECTURE.md) |

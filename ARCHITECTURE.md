@@ -42,7 +42,12 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | `mac_ai/router/fast_path.py` | `canonicalize_clause`、安全守門、各類 regex 規則 `_r_*`；天氣、搜尋、找的規則呼叫 `classify_query`，由 `_route_query` 換成動作；`answer_mode()`（包裝 `query_intent.answer_mode_of`）；回傳只有資料的 `Match`（要呼叫的工具與參數，帶 `query`＝分類結果），由 `pipeline` 執行 |
 | `mac_ai/router/query_intent.py` | 查詢分類的唯一一處（[0023](docs/decisions/0023-query-routing.md)）：`classify_query` → `QueryIntent`（target knowledge／local／either、mode show／answer、evidence…），會變的事實 `verify_query`、開網頁或回答 `answer_mode_of`、「我住 X」`_home_city`、冷啟動後的縣市回答 `parse_city_reply`（[0024](docs/decisions/0024-home-city-and-answer-timeout.md)）；詞表在詞庫 `query_cues`；**純函式，不碰網路、LLM、子程序、資料庫、前景** |
 | `mac_ai/router/domain.py` | 第一層：範圍判斷（App／專案／資料夾／檔案／網頁），**純函式、無副作用** |
-| `mac_ai/router/local_actions.py` | 第二層：執行本機工具（開資料夾、`mdfind`、選擇清單）。也放點歌工具（`play_media`、`music_replace`、`music_feedback`、`music_top`）、天氣工具 `get_weather`（記縣市、預設依序是居住地→常問縣市→冷啟動、冷啟動時登記待答、呼叫 `weather_client`、結果放 `ctx.replies`）與 `remember_home`（背景記下居住地，接著只聊天）、長尾回答 `web_answer`（搜尋→雲端摘要→退回開搜尋頁；沒有搜尋金鑰時開搜尋頁或交給本機 AI）與 `open_source`、聯合搜尋 `federated_search`（mdfind 與 Brave 並行、合併清單、讀寫常搜名詞統計）與 `record_explicit_search`，以及前景不是媒體 App 時的背景音樂控制（`_background_control`）；`front_action` 成功後寫控制事件（`_record_control`） |
+| `mac_ai/router/local_actions.py` | 第二層的入口：載入時把下面 4 個模組的本機工具登錄進 `actions.LOCAL_TOOLS`（LLM 看不到）；`pipeline`、`slow_path` 在頂層 import 它 |
+| `mac_ai/router/find_tools.py` | 找東西：開資料夾、檔案搜尋 `find_file`（`mdfind`、範圍與危險檔規則）、選擇清單 `pick_choice`、聯合搜尋 `federated_search`（mdfind 與 Brave 並行、合併清單、讀寫常搜名詞統計）與 `record_explicit_search` |
+| `mac_ai/router/front_tools.py` | 前景視窗的工具：站內搜尋 `context_search`、常用功能 `front_action`（詞庫 `app_shortcuts`）；播放控制在前景不支援時交給 `music_tools` 控制背景音樂，成功後寫控制事件 |
+| `mac_ai/router/music_tools.py` | 音樂：點歌 `play_media`、開啟／重複使用 YouTube 合輯分頁（`open_music_video`：一支 osascript 找含 `list=RD` 的分頁並改網址，沒有才 `open -a` 開新分頁）、背景音樂控制（`_background_control`）、控制事件（`_record_control`）、`music_replace`、`music_feedback`、`music_top` |
+| `mac_ai/router/answer_tools.py` | 直接回答：天氣 `get_weather`（記縣市、預設依序是居住地→常問縣市→冷啟動、冷啟動時登記待答、呼叫 `weather_client`、結果放 `ctx.replies`）與 `remember_home`（背景記下居住地，接著只聊天）、長尾回答 `web_answer`（搜尋→雲端摘要→退回開搜尋頁；沒有搜尋金鑰時開搜尋頁或交給本機 AI）與 `open_source`、`today_taipei` |
+| `mac_ai/router/prefs_db.py` | 偏好資料庫 `MUSIC_DB` 與可注入的 `_now`、`_rng`、`_db_call`；點歌、聯合搜尋、天氣共用，其他模組一律用 `prefs_db.<名稱>` 存取（測試會整個換掉） |
 | `mac_ai/router/action_plan.py` | 範圍判斷結果（`Intent`）→ 工具呼叫的對應表 `ACTION_TABLE`／`plan_actions`；純資料轉換，比對階段使用 |
 | `mac_ai/router/catalog.py` | 詞庫 App＋Spotlight 掃出的已安裝 App（快取，每指令開始檢查是否逾 60 秒） |
 | `mac_ai/router/context.py` | 前景視窗上下文：`lsappinfo` 讀最前面的 App（含 pid）、`osascript` 讀瀏覽器 host、`sites`／`app_shortcuts` 查表。**只在執行階段呼叫** |
@@ -63,7 +68,10 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | `mac_ai/router/search_client.py` | 長尾回答的網頁搜尋（Brave Search API，`urllib`）：query → 最多 5 筆摘錄；**只做網路與解析，不碰資料庫與子程序；金鑰 `BRAVE_API_KEY` 只在這裡讀、只放標頭；摘錄只活在記憶體**（[0022](docs/decisions/0022-web-answer.md)） |
 | `mac_ai/router/sources.py` | 回答後「要打開來源嗎？」的待決來源 `STORE`（記憶體、60 秒、每句開頭取走）與肯定回答的判斷 `is_yes` |
 | `mac_ai/router/tools.py` | `TOOLS_SCHEMA`（LLM 看得到的工具）與 `validate_tool_call`（唯一信任邊界） |
-| `mac_ai/router/actions.py` | 實際執行器（`open -a`、`osascript`、`screencapture`…）、`ExecContext`、`read_screen`、`chat_reply`、`run_tool`；點歌開分頁（`open_music_video`：一支 osascript 找含 `list=RD` 的 YouTube 分頁並改網址，沒有才 `open -a` 開新分頁） |
+| `mac_ai/router/actions.py` | 工具的分派：`AVAILABLE_FUNCTIONS`（`TOOLS_SCHEMA` 的工具）、`LOCAL_TOOLS`、`_dispatch`（記住剛開的瀏覽器／編輯器與網頁、前置失敗就略過）、`run_tool` |
+| `mac_ai/router/exec_context.py` | 執行基礎：`ExecContext`、前景的讀取（`front_context`／`front_app`／`front_site`，用到才讀、同句快取）、`mark_page`、外部指令逾時 `EXTERNAL_TIMEOUT_S`／`POLL_TIMEOUT_S`；不引用任何工具 |
+| `mac_ai/router/system_tools.py`、`browser_tools.py` | `TOOLS_SCHEMA` 的系統工具（開關 App、音量、亮度、深色模式／睡眠／鎖定、開專案）與瀏覽器工具（開網址或搜尋、分頁操作、`TAB_BROWSERS`）；實際執行 `open -a`、`osascript`、`pmset` |
+| `mac_ai/router/screen_tools.py`、`chat_tools.py` | 讀畫面 `read_screen`（等網頁載入、`screencapture`、縮圖、本機 VL 或雲端）與 chat call `chat_reply` |
 | `mac_ai/router/proc.py` | 外部指令的共用呼叫 `_run`（逾時、結束碼、錯誤訊息）；只依賴標準庫 |
 | `mac_ai/router/pinyin.py` | 拼音比對（macOS ICU，ctypes）：點歌接受規則與偏好矯正共用；純文字處理 |
 | `mac_ai/router/llm_client.py` | `mlx_vlm.server` OpenAI 相容呼叫；連不上即熔斷 30 秒 |
@@ -76,14 +84,14 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 
 ## 後端（`mac_ai/`）分層
 
-決策見 [0026](docs/decisions/0026-import-linter.md)、[0029](docs/decisions/0029-deps-converge.md)。依賴只能往下；同一層的兩個模組互不 import。
+決策見 [0026](docs/decisions/0026-import-linter.md)、[0029](docs/decisions/0029-deps-converge.md)、[0030](docs/decisions/0030-router-feature-modules.md)。依賴只能往下；同一層的兩個模組互不 import。
 
 | 層 | 模組 | 內容 | 可以 import |
 |---|---|---|---|
 | 1 | `assistant`、`services` | 收音迴圈與指令執行緒；啟動與清理子程序（STT、LLM server） | 以下全部 |
 | 2 | `stt/`、`ui_bus` | 收音、端點偵測、辨識引擎；桌面匯流排 | `wake`、`router`、`db`、`config` |
 | 3 | `wake` | 喚醒詞與會話 | `router`、`db`、`config` |
-| 4 | `router/` | 路由、規劃、執行；內部再分編排層（`pipeline` > `slow_path` > `fast_path` > `local_actions` > `actions`）與底層 | `db`、`config` |
+| 4 | `router/` | 路由、規劃、執行；內部再分編排與執行層（`pipeline` > `slow_path` > `fast_path` > `local_actions` > 各功能的 `*_tools` > `actions` > `exec_context`，完整順序見 [module-deps.md](docs/flows/module-deps.md)）與底層 | `db`、`config` |
 | 5 | `db/` | 點歌資料庫的 schema、migration、維護 CLI | `config`（例外：`db.rebuild` 用 `router.music_prefs`） |
 | 6 | `config` | 設定與常數 | 無 |
 
