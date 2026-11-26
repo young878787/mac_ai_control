@@ -2,7 +2,7 @@
 
 - 狀態：採用
 - 日期：2026-11-26
-- 來源：[計畫書](../plans/active/2026-11-26-import-linter-flows.md) §2、§3；使用者 2026-11-26 的決定
+- 來源：[計畫書](../plans/completed/2026-11-26-import-linter-flows.md) §2、§3；使用者 2026-11-26 的決定
 
 ## 背景
 
