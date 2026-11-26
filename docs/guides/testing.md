@@ -65,6 +65,7 @@ Fast Path 與正規化的改動，flow 層的整條路由都會跑到，所以 L
 | `ui_bus.py`、UI 協定 | `tests/unit/test_ui_contract.py tests/runtime/test_ui_bus.py`＋`node --test test/ipc-channels.test.js test/protocol.test.js` | `ui_demo.py --chat-test` |
 | `services.py`、`main.py`、`config.py` 的 `STT_ENGINE`／`XASR_*` | `tests/runtime/test_services.py tests/runtime/test_main.py`（含引擎選擇、非 macOS 拒絕 macos、monkeypatch `sys.platform='win32'` 的預設引擎） | `python main.py --stt-engine xasr` 能起、`/health` 回 `engine: xasr`、Ctrl+C 收乾淨（需 `AI_models/x-asr-zh-tw-native-itn/`） |
 | `scripts/acceptance.py` | `tests/unit/test_acceptance.py` | — |
+| `docs/flows/`、`.importlinter`、新增或改名 `mac_ai/` 的模組與函式 | `tests/unit/test_docs_flows.py`（流程圖規範、文件識別字、例外表與 router 模組分層）＋`lint-imports` | GitHub 或 VS Code 預覽 Mermaid 能渲染 |
 | `desktop/` 任一檔 | `cd desktop && node --test test/<同名或相關>.test.js` | 見下一節 |
 
 ## 視覺驗收：以量化為準

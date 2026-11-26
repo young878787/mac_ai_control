@@ -1,30 +1,35 @@
 # 主流程：輸入 → 路由 → 執行 → 回報
 
-從三種輸入到執行結果回到桌面角色。Slow Path（LLM 規劃）的細節見 [slow-path.md](slow-path.md)。
+從三種輸入到執行結果回到桌面角色。Slow Path（LLM 規劃）的細節見 [slow-path.md](slow-path.md)；模組依賴見 [module-deps.md](module-deps.md)；圖的寫法見 [README.md](README.md)。
 
 ```mermaid
 flowchart TD
-    Mic[麥克風 MicSource] --> Stt[SttClient<br/>送音訊到 STT 伺服器 WS :8765<br/>macos-stt 或 xasr_server]
-    Stt --> Ep[EndpointDetector<br/>Silero VAD＋completeness.classify]
-    Ep -- 說完了 → flush --> Stt
-    Stt -- final --> Router[CommandRouter → WakeGate]
-    UI[桌面角色 ui_bus :8766] -- command／choose --> Q
-    Router -- command --> Q[(指令佇列)]
-    CLI[main.py --text] --> PVC
-    Q --> W[command_worker<br/>單執行緒依序]
-    W -- str --> PVC[process_voice_command]
-    W -- dict --> Choice[process_choice → pick_choice]
-    PVC --> Norm[normalize_utterance] --> Split[split_clauses] --> Match{逐子句<br/>FastPathMatcher.match}
-    Match -- 命中 --> Fast[fast 步驟 → Match.run → run_tool]
-    Match -- 未命中 --> Slow[slow 段 → execute_slow_path_llm]
-    Fast -- find_file 0 筆且沒有本機證據 --> Esc[轉交：瀏覽器在前景 → context_search<br/>否則 Slow Path local_miss（雲端優先）]
-    Fast & Slow & Esc & Choice --> Run[actions.run_tool → _dispatch]
-    Run --> Res[result 事件＋commands.jsonl]
-    Res --> Role[角色視窗＋泡泡]
-    Res --> Chat[聊天室視窗<br/>有 expand 時 showInactive]
+    Mic["麥克風 MicSource"] --> Stt["SttClient<br/>送音訊到 STT 伺服器 WS :8765<br/>macos-stt 或 xasr_server"]
+    Stt --> Endpoint["EndpointDetector<br/>Silero VAD＋completeness.classify"]
+    Endpoint -- "說完了 → flush" --> Stt
+    Stt -- "final" --> Router["CommandRouter → WakeGate"]
+    DesktopUi["桌面角色 ui_bus :8766"] -- "command／choose" --> Queue
+    Router -- "command" --> Queue[("指令佇列")]
+    Cli["main.py --text"] --> ProcessVoice
+    Queue --> Worker["command_worker<br/>單執行緒依序"]
+    Worker -- "str" --> ProcessVoice["process_voice_command"]
+    Worker -- "dict" --> Choice["process_choice → pick_choice"]
+    ProcessVoice --> Norm["normalize_utterance"] --> Split["split_clauses"] --> Match{"逐子句<br/>FastPathMatcher.match"}
+    Match -- "命中" --> Fast["fast 步驟 → Match.run → run_tool"]
+    Match -- "未命中" --> Slow["slow 段 → execute_slow_path_llm"]
+    Fast -- "find_file 0 筆且沒有本機證據" --> Escalate["轉交：瀏覽器在前景 → context_search<br/>否則 Slow Path local_miss（雲端優先）"]
+    Fast --> Run["actions.run_tool → _dispatch"]
+    Slow --> Run
+    Escalate --> Run
+    Choice --> Run
+    Run --> Result["result 事件＋commands.jsonl"]
+    Result --> Role["角色視窗＋泡泡"]
+    Result --> Chat["聊天室視窗<br/>有 expand 時 showInactive"]
 ```
 
 ## A. 輸入來源
+
+階段：STT 執行緒（麥克風）與 `ui-bus` 執行緒（桌面角色）只收輸入、放進佇列；`--text` 在主執行緒直接執行。
 
 三種輸入，最後都匯進同一個佇列（`--text` 除外）。
 
@@ -46,6 +51,8 @@ flowchart TD
 
 ## B. command_worker
 
+階段：執行階段（`command_worker` 執行緒）。
+
 單執行緒、依序執行；單一指令出例外只記錯，不停下。
 
 - `QueuedJob`（內部工作，例如點歌定時整理）→ 直接 `run()`；不發 executing／result 事件、不寫 `commands.jsonl`，出錯只印錯誤
@@ -57,7 +64,9 @@ flowchart TD
 
 ## C. process_voice_command
 
-0. `catalog.refresh_if_stale()`：已安裝 App 清單超過 60 s 才重掃，在指令執行緒上做。
+階段：`command_worker` 執行緒；步驟 3 的 `match()` 是比對階段（純函式），其餘是執行階段。
+
+0. `catalog.DEFAULT.refresh_if_stale()`：已安裝 App 清單超過 60 s 才重掃，在指令執行緒上做。
 1. `normalize_utterance`：NFKC＋空白 → 簡轉繁（詞庫 s2t）→ 誤聽詞（記下 misheard，供還原原話）→ 中文數字（只在數值語境）→ 疊詞。接著 `log_normalization`，只記詞庫造成的改動。
 2. `split_clauses`：依標點與「然後／接著／再幫我／順便／還有／並且／以及」切，不以空白切。
 3. 逐子句跑 `FastPathMatcher.match`。這是純比對：不執行、不讀前景、不碰網路或 LLM。順序：
@@ -84,6 +93,8 @@ flowchart TD
 
 ## E. 執行
 
+階段：執行階段（`command_worker` 執行緒）；結果顯示在桌面行程（Electron）。
+
 `actions.run_tool` → `_dispatch`（記 `exec_ms`、`ctx.results`、`ctx.calls`）
 
 - `control_mac_app` 開瀏覽器或編輯器 → 記下 `last_browser`／`last_editor`，成功時重置前景快取；失敗 → `ctx.failed`。
@@ -99,20 +110,20 @@ flowchart TD
 
 ## F. 點歌與播放控制
 
-決策見 [0019](../decisions/0019-music-play.md)。比對（`match()`）只看句子，下面全是執行階段；全部在 `command_worker` 執行緒。
+階段：執行階段（`command_worker` 執行緒）；比對（`match()`）只看句子。決策見 [0019](../decisions/0019-music-play.md)。
 
 ```mermaid
 flowchart TD
-    M[Fast Path：_r_music 命中] --> P[play_media query]
-    P -- query 空字串 --> Fav[music_prefs.favorite<br/>常聽的歌，不連網]
-    P --> Fix[拼音矯正 correct]
-    Fix --> Cache{queries 快取<br/>30 天內或 pinned}
-    Cache -- 命中 --> Open
-    Cache -- 沒有 --> S[youtube_client.search<br/>InnerTube 一般搜尋＋YouTube Music 並行，YT_TIMEOUT_S]
-    S -- 挑到 --> Open[open_music_video<br/>找 list=RD 分頁改網址，沒有才開新分頁]
-    S -- 兩邊都沒有可播的 --> Page[開搜尋頁，回 ⚠️]
-    Fav --> Open
-    Open --> Rec[寫 play 事件、videos、terms、快取]
+    MusicHit["Fast Path：_r_music 命中"] --> PlayMedia["play_media query"]
+    PlayMedia -- "query 空字串" --> Favorite["music_prefs.favorite<br/>常聽的歌，不連網"]
+    PlayMedia --> Correct["拼音矯正 correct"]
+    Correct --> Cache{"queries 快取<br/>30 天內或 pinned"}
+    Cache -- "命中" --> OpenVideo
+    Cache -- "沒有" --> Search[["youtube_client.search<br/>InnerTube 一般搜尋＋YouTube Music 並行，YT_TIMEOUT_S"]]
+    Search -- "挑到" --> OpenVideo["open_music_video<br/>找 list=RD 分頁改網址，沒有才開新分頁"]
+    Search -- "兩邊都沒有可播的" --> SearchPage["⚠️ 開搜尋頁"]
+    Favorite --> OpenVideo
+    OpenVideo --> Record["寫 play 事件、videos、terms、快取"]
 ```
 
 **點歌 `play_media(query)`**
@@ -137,26 +148,27 @@ flowchart TD
 
 ## G. 天氣
 
-決策見 [0021](../decisions/0021-weather-answer.md)、[0024](../decisions/0024-home-city-and-answer-timeout.md)。比對（`match()`）只看句子，產生 `get_weather(city, day, part)`（「我住 X＋天氣」另帶 `set_home`）或 `remember_home(city)`；下面全是執行階段，在 `command_worker` 執行緒。
+階段：執行階段（`command_worker` 執行緒）；比對（`match()`）只看句子，產生 `get_weather(city, day, part)`（「我住 X＋天氣」另帶 `set_home`）或 `remember_home(city)`。決策見 [0021](../decisions/0021-weather-answer.md)、[0024](../decisions/0024-home-city-and-answer-timeout.md)。
 
 ```mermaid
 flowchart TD
-    M["Fast Path：_r_weather 命中（answer_mode＝answer）"] --> C{句子有縣市？}
-    C -- 有 --> R["記一筆 weather_queries<br/>帶 set_home 時也寫 profile.home_city"]
-    C -- 沒有 --> H{"profile.home_city"}
-    H -- 有 --> L
-    H -- 沒有 --> D{default_city}
-    D -- 有 --> L
-    D -- 冷啟動 --> W["⚠️ 請使用者說縣市（不連網）<br/>weather_followup.STORE.put(day, part)"]
-    W -. 下一句只說縣市（60 秒內） .-> R
-    R --> L{有 CWA_API_KEY？}
-    L -- 有 --> G[氣象署 F-C0032-001]
-    L -- 沒有 --> O
-    G -- 成功且有這個時段 --> T[套固定模板＋標示來源]
-    G -- 失敗／逾時／沒有這個時段 --> O[Open-Meteo]
-    O -- 成功 --> T
-    O -- 失敗／逾時 --> E["❌ 查不到（不開網頁）"]
-    T --> P["ctx.replies 泡泡＋✅"]
+    WeatherHit["Fast Path：_r_weather 命中（answer_mode＝answer）"] --> HasCity{"句子有縣市？"}
+    HasCity -- "有" --> Record["記一筆 weather_queries<br/>帶 set_home 時也寫 profile.home_city"]
+    HasCity -- "沒有" --> Home{"profile.home_city"}
+    Home -- "有" --> HasKey
+    Home -- "沒有" --> DefaultCity{"default_city"}
+    DefaultCity -- "有" --> HasKey
+    DefaultCity -- "冷啟動" --> AskCity["⚠️ 請使用者說縣市（不連網）"]
+    AskCity --> Pending[("weather_followup.STORE.put(day, part)")]
+    Pending -. "下一句只說縣市（60 秒內）" .-> Record
+    Record --> HasKey{"有 CWA_API_KEY？"}
+    HasKey -- "有" --> Cwa[["氣象署 F-C0032-001"]]
+    HasKey -- "沒有" --> OpenMeteo
+    Cwa -- "成功且有這個時段" --> Template["套固定模板＋標示來源"]
+    Cwa -- "失敗／逾時／沒有這個時段" --> OpenMeteo[["Open-Meteo"]]
+    OpenMeteo -- "成功" --> Template
+    OpenMeteo -- "失敗／逾時" --> NoData["❌ 查不到（不開網頁）"]
+    Template --> Reply["✅ ctx.replies 泡泡"]
 ```
 
 - 預設縣市：居住地 `profile.home_city` → 最近 90 天明說次數最多（同票取最近）→ 全部歷史 → 冷啟動。用預設補上的縣市不記。`step["weather"]` 記 `default`（`home`／`stats`）。
@@ -169,23 +181,26 @@ flowchart TD
 
 ## H. 長尾回答與來源追問
 
-決策見 [0022](../decisions/0022-web-answer.md)、[0023](../decisions/0023-query-routing.md)。兩條入口：會變的事實與查／找＋問句由 Fast Path 直接產生 `web_answer`（不經規劃）；其他問句在雲端規劃時由模型選。`match()` 不看金鑰，缺金鑰怎麼退回由 `web_answer` 執行時決定（見 I）。
+階段：入口由比對階段（純函式）或雲端規劃決定；搜尋、回答與來源追問是執行階段（`command_worker` 執行緒）。決策見 [0022](../decisions/0022-web-answer.md)、[0023](../decisions/0023-query-routing.md)。
+
+兩條入口：會變的事實與查／找＋問句由 Fast Path 直接產生 `web_answer`（不經規劃）；其他問句在雲端規劃時由模型選。`match()` 不看金鑰，缺金鑰怎麼退回由 `web_answer` 執行時決定（見 I）。
 
 ```mermaid
 flowchart TD
-    FP["Fast Path：會變的事實、查／找＋問句"] --> B
-    S[Fast Path 沒命中、守門沒擋的問句] --> P["雲端規劃（工具含 web_answer）"]
-    P -- 只回文字、原句是會變的事實 --> B
-    P -- 模型呼叫 web_answer --> V{validate_calls：answer_mode}
-    V -- 原句明說要看畫面 --> O["改成 web_search_or_open_url → 開 Google 頁（照舊）"]
-    V -- 原句在問事情 --> B["Brave 搜尋，只送 query（原句有「最近／今天／今年…」時加 freshness；近期沒結果就不過濾再搜一次）"]
-    B -- 失敗／逾時／沒有結果 --> F["開 Google 搜尋頁 + ⚠️"]
-    B -- 摘錄 --> A["第二次雲端呼叫（不帶工具）：依摘錄回答 1～2 句"]
-    A -- 失敗／逾時／查不到／被 max_tokens 截斷 --> F
-    A -- 答案 --> R["ctx.replies：答案＋要打開來源嗎？ + ✅；第一筆網址進 sources.STORE"]
-    R --> N{下一句}
-    N -- 單一子句且是「好／要／打開來源」，60 秒內 --> OS["open_source：開第一筆來源（不呼叫任何模型）"]
-    N -- 其他任何一句／過期 --> D[作廢]
+    FastHit["Fast Path：會變的事實、查／找＋問句"] --> Brave
+    Question["Fast Path 沒命中、守門沒擋的問句"] --> CloudPlan[["雲端規劃（工具含 web_answer）"]]
+    CloudPlan -- "只回文字、原句是會變的事實" --> Brave
+    CloudPlan -- "模型呼叫 web_answer" --> Validate{"validate_calls：answer_mode"}
+    Validate -- "原句明說要看畫面" --> OpenPage["改成 web_search_or_open_url → 開 Google 頁（照舊）"]
+    Validate -- "原句在問事情" --> Brave[["Brave 搜尋，只送 query（原句有「最近／今天／今年…」時加 freshness；近期沒結果就不過濾再搜一次）"]]
+    Brave -- "失敗／逾時／沒有結果" --> Fallback["⚠️ 開 Google 搜尋頁"]
+    Brave -- "摘錄" --> Answer[["第二次雲端呼叫（不帶工具）：依摘錄回答 1～2 句"]]
+    Answer -- "失敗／逾時／查不到／被 max_tokens 截斷" --> Fallback
+    Answer -- "答案" --> Reply["✅ ctx.replies：答案＋要打開來源嗎？"]
+    Reply --> Sources[("sources.STORE：第一筆網址")]
+    Sources -.-> Next{"下一句"}
+    Next -- "單一子句且是「好／要／打開來源」，60 秒內" --> OpenSource["open_source：開第一筆來源（不呼叫任何模型）"]
+    Next -- "其他任何一句／過期" --> Discard["作廢"]
 ```
 
 - 待決來源在每句開頭 `sources.STORE.take()`（取走就清掉），所以下一句不是肯定回答就作廢；沒有待決時，「好」照平常的路由走。
@@ -194,30 +209,32 @@ flowchart TD
 
 ## I. 查詢路由與聯合搜尋
 
-決策見 [0023](../decisions/0023-query-routing.md)。分類 `query_intent.classify_query` 是純函式，Fast Path 用它決定路線；下面的聯合搜尋與統計都在執行階段（`command_worker`）。
+階段：分類 `query_intent.classify_query` 是比對階段（純函式），Fast Path 用它決定路線；聯合搜尋與統計是執行階段（`command_worker` 執行緒）。決策見 [0023](../decisions/0023-query-routing.md)。
 
 ```mermaid
 flowchart TD
-    C["classify_query"] -- 明說網路 --> W["web_search_or_open_url／context_search"]
-    C -- 本機證據 --> L["find_file 等（0005）"]
-    C -- 天氣 --> G[get_weather]
-    C -- 會變的事實、查／找＋問句 --> A{web_answer：金鑰}
-    A -- 兩把都有 --> H["Brave＋雲端回答（H）"]
-    A -- 只有雲端 --> GP["開 Google 搜尋頁＋⚠️<br/>web_fallback=no_search_key"]
-    A -- 都沒有 --> E["_escalate_to_llm：match(answer=False) 舊路線或本機 AI"]
-    C -- 查／找＋名詞、沒有證據 --> F{federated_search}
-    F -- 前景是詞庫網站／同句剛開瀏覽器 --> CS[context_search]
-    F -- U8 偏本機且路徑還在 --> R[Finder 顯示記錄的路徑]
-    F -- U8 偏網路 --> CS
-    F -- 其餘 --> P["mdfind ∥ Brave（沒有金鑰＝一筆 Google 搜尋）"]
-    P -- 只剩 1 筆，或本機 1 筆＋只有 Google --> D[直接執行]
-    P -- 多筆 --> LST["choices 清單：本機 ≤ 3＋網路 ≤ 2"]
-    LST -- 第 N 個／點選 --> PK["pick_choice：本機顯示，網路用瀏覽器開；記 picked"]
+    Classify["classify_query"] -- "明說網路" --> WebSearch["web_search_or_open_url／context_search"]
+    Classify -- "本機證據" --> FindFile["find_file 等（0005）"]
+    Classify -- "天氣" --> Weather["get_weather"]
+    Classify -- "會變的事實、查／找＋問句" --> Keys{"web_answer：金鑰"}
+    Keys -- "兩把都有" --> BraveAnswer[["Brave＋雲端回答（H）"]]
+    Keys -- "只有雲端" --> GooglePage["⚠️ 開 Google 搜尋頁<br/>web_fallback=no_search_key"]
+    Keys -- "都沒有" --> Escalate["_escalate_to_llm：match(answer=False) 舊路線或本機 AI"]
+    Classify -- "查／找＋名詞、沒有證據" --> Federated{"federated_search"}
+    Federated -- "前景是詞庫網站／同句剛開瀏覽器" --> ContextSearch["context_search"]
+    Federated -- "U8 偏本機且路徑還在" --> Reveal["Finder 顯示記錄的路徑"]
+    Federated -- "U8 偏網路" --> ContextSearch
+    Federated -- "其餘" --> Parallel["mdfind ∥ Brave（沒有金鑰＝一筆 Google 搜尋）"]
+    Parallel -- "只剩 1 筆，或本機 1 筆＋只有 Google" --> Direct["直接執行"]
+    Parallel -- "多筆" --> Choices[("choices 清單：本機 ≤ 3＋網路 ≤ 2")]
+    Choices -. "第 N 個／點選" .-> Pick["pick_choice：本機顯示，網路用瀏覽器開；記 picked"]
 ```
 
 - **統計** `search_terms`（`data/music.sqlite3`）：只記 picked（從清單選的那一邊，本機連同路徑）與 explicit（Fast Path 成功、明說範圍）。網路不記網址。`lean` 要同一個詞 90 天內同一邊 ≥ 2 次、另一邊 0 次才直接執行，沒達門檻的只決定清單順序。資料庫還沒準備好時當成沒有歷史。
 - **不寫進紀錄的**：Brave 的標題與網址只在記憶體的清單裡（60 秒）。log 的清單行只寫「（網路）」，`commands.jsonl` 不寫 `choices`，`step["federated"]` 只記筆數、毫秒、lean、錯誤分類。
 
-## 量測鏈
+## J. 量測鏈
+
+階段：STT 執行緒編號、`command_worker` 執行緒寫入。
 
 語音指令的 latency 與 commands 紀錄以 `utt_id` 對應：`SttClient` 編號 → `SpokenCommand` 帶進佇列 → `command_worker` 寫入。改這條鏈時要保持。
