@@ -4,12 +4,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from mac_ai.router import catalog as catalog_mod
 from mac_ai.router import context
-from mac_ai.router.actions import ExecContext, run_tool
+from mac_ai.router.action_plan import plan_actions
 from mac_ai.router.domain import Intent, parse_find, resolve_intent, starts_with_find_verb
 from mac_ai.router.lexicon import (
     APP_KIND, LEXICON, QUERY_CUES, _FILLERS, _LONG_VERB, _OPEN, _QUIT, _VERB, _alt, _compact, resolve_project,
 )
-from mac_ai.router.local_actions import plan_actions
 from mac_ai.router.query_intent import QueryIntent, answer_mode_of, classify_query
 
 
@@ -97,7 +96,7 @@ def answer_mode(utterance: str) -> str:
 
 
 class Match:
-    """Fast Path 比對結果：可呼叫（執行全部動作）。比對與執行分開，路由器才能依說話順序決定何時執行"""
+    """Fast Path 比對結果：只有資料（要依序呼叫哪些工具），執行在 pipeline。比對與執行分開，路由器才能依說話順序決定何時執行"""
 
     def __init__(self, actions: List[Tuple[str, dict]], confidence: str = "exact", note: str = "",
                  intent: Optional[Intent] = None, query: Optional[QueryIntent] = None):
@@ -106,13 +105,6 @@ class Match:
         self.note = note
         self.intent = intent  # 範圍判斷的結果（找／搜尋／打開走這條路時才有），給 step["intent"] 追查用
         self.query = query  # 查詢分類（查／找／搜尋走這條路時才有）：執行成功後記常搜名詞（pipeline）
-
-    def run(self, ctx: Optional[ExecContext] = None) -> List[str]:
-        ctx = ctx or ExecContext()
-        return [run_tool(name, args, ctx) for name, args in self.actions]
-
-    def __call__(self, ctx: Optional[ExecContext] = None) -> str:
-        return "；".join(self.run(ctx))
 
 
 def _route_query(q: QueryIntent) -> Match:
@@ -473,8 +465,3 @@ class FastPathMatcher:
         action = "quit" if re.fullmatch(_QUIT, m["v"]) else "open"
         intent = Intent("app", action, m["app"], {"app": name}, "catalog", conf, note)
         return Match([("control_mac_app", {"app_name": name, "action": action})], conf, note, intent)
-
-    def try_execute(self, clause: str) -> Optional[str]:
-        """嘗試以 Fast Path 匹配並立即執行單一子句，若未命中則回傳 None"""
-        run = self.match(clause)
-        return run() if run else None

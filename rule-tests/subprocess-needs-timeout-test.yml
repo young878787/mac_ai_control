@@ -16,6 +16,8 @@ invalid:
   - |
     ok, err = actions._run(["osascript", "-e", script])
   - |
+    ok, err = proc._run(["osascript", "-e", script])
+  - |
     ps = subprocess.run(["ps", "-p", str(pid)], capture_output=True, text=True)
   - |
     out = subprocess.check_output(["mdfind", q])

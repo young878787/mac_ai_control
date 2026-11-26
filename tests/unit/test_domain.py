@@ -244,10 +244,13 @@ def test_domain_layer_has_no_execution_dependencies():
 
 
 def test_action_layer_does_not_read_the_utterance():
-    """第二層只吃 Intent：local_actions 不 import 句子解析（parse_find、canonicalize_clause、FastPathMatcher）"""
-    tree = ast.parse((ROUTER_DIR / "local_actions.py").read_text(encoding="utf-8"))
-    imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
-    assert not imported & {"parse_find", "resolve_intent", "canonicalize_clause", "FastPathMatcher"}
+    """第二層只吃 Intent：本機工具（local_actions 與各 *_tools 模組）不 import 句子解析（parse_find、canonicalize_clause、FastPathMatcher）"""
+    files = [ROUTER_DIR / "local_actions.py", *sorted(ROUTER_DIR.glob("*_tools.py"))]
+    assert len(files) >= 9
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
+        assert not imported & {"parse_find", "resolve_intent", "canonicalize_clause", "FastPathMatcher"}, path.name
 
 
 # ---------- 網頁查詢：用使用者的原話（只去頭尾的指令詞與指示詞）----------

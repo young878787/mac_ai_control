@@ -14,7 +14,7 @@ from _pytest.monkeypatch import MonkeyPatch
 import mac_ai.router as r
 from mac_ai import config
 from mac_ai.router import cloud_client, hant, memory, slow_path
-from mac_ai.router.actions import ExecContext
+from mac_ai.router.exec_context import ExecContext
 from mac_ai.router.fast_path import FastPathMatcher
 from mac_ai.router.normalize import normalize_utterance
 from support.route_corpus import CORPUS

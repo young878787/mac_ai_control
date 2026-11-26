@@ -73,7 +73,7 @@ def test_chat_request_body(monkeypatch):
     ("只有思考</think>", ""),
 ])
 def test_strip_think(raw, expected):
-    from mac_ai.router.actions import _strip_think
+    from mac_ai.router.chat_tools import _strip_think
     assert _strip_think(raw) == expected
 
 

@@ -5,6 +5,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 from mac_ai.config import APP_INDEX_REFRESH_S
 from mac_ai.router.lexicon import _compact, resolve_app, resolve_project
+from mac_ai.router.proc import _run
 
 APP_DIRS = ("/Applications", "/System/Applications", "~/Applications")
 _DISPLAY_SEP = "   kMDItemDisplayName = "
@@ -14,7 +15,6 @@ _SCAN_TIMEOUT_S = 5.0
 def _scan_installed() -> Dict[str, str]:
     """用 Spotlight 列出已安裝 App → {compact 名稱: 標準名稱（.app 檔名）}。
     bundle 檔名與系統語言的顯示名稱（『計算機』『郵件』）都查得到；包在其他 .app 裡面的不算"""
-    from mac_ai.router.actions import _run  # 函式內才匯入：actions → llm_client → tools → catalog，頂層匯入會循環
     cmd = ["mdfind"]
     for d in APP_DIRS:
         cmd += ["-onlyin", os.path.expanduser(d)]

@@ -15,7 +15,7 @@ flowchart TD
     Worker -- "str" --> ProcessVoice["process_voice_command"]
     Worker -- "dict" --> Choice["process_choice → pick_choice"]
     ProcessVoice --> Norm["normalize_utterance"] --> Split["split_clauses"] --> Match{"逐子句<br/>FastPathMatcher.match"}
-    Match -- "命中" --> Fast["fast 步驟 → Match.run → run_tool"]
+    Match -- "命中" --> Fast["fast 步驟 → pipeline._run_match → run_tool"]
     Match -- "未命中" --> Slow["slow 段 → execute_slow_path_llm"]
     Fast -- "find_file 0 筆且沒有本機證據" --> Escalate["轉交：瀏覽器在前景 → context_search<br/>否則 Slow Path local_miss（雲端優先）"]
     Fast --> Run["actions.run_tool → _dispatch"]
@@ -78,7 +78,7 @@ flowchart TD
    - 例外：天氣冷啟動的待答在每句開頭 `weather_followup.STORE.take()` 取走。這句只有一個子句、而且 `parse_city_reply` 認得是縣市回答 → 不跑 `match()`，直接 `get_weather`（見 G）。
    - 命中 → `("fast", [子句], Match)`，各自成一步；未命中 → 併進前一個 slow 段（連續的才合併），否則新開 slow 段。
 4. 建立 `ExecContext`（整句共用、不跨語句），依說話順序跑每一段：
-   - **fast** → `Match.run` → `run_tool`（逐個動作）
+   - **fast** → `pipeline._run_match` → `run_tool`（逐個動作）
      - `find_file` 0 筆且不是 `local_only` → `ctx.escalate` → `_escalate_to_llm`（查詢用原話＋`restore_misheard`）
        - 前景是瀏覽器 → `context_search`（不問模型）
        - 否則 → `execute_slow_path_llm(local_miss=…)`（有雲端金鑰走雲端規劃，否則本機 LLM）；LLMError → `local_miss_reply`
@@ -99,7 +99,7 @@ flowchart TD
 
 - `control_mac_app` 開瀏覽器或編輯器 → 記下 `last_browser`／`last_editor`，成功時重置前景快取；失敗 → `ctx.failed`。
 - `web_search`／`browser_tab`／`open_project`／`read_screen`：前置失敗就 ⏭️ 略過；對象依序是明說 → 同句剛開 → 前景 → 預設。
-- `LOCAL_TOOLS`（`open_folder`、`find_file`、`federated_search`、`pick_choice`、`context_search`、`front_action`、`play_media`、`music_replace`、`music_feedback`、`music_top`、`get_weather`、`remember_home`）→ `local_actions`。
+- `LOCAL_TOOLS`（`open_folder`、`find_file`、`federated_search`、`pick_choice`、`context_search`、`front_action`、`play_media`、`music_replace`、`music_feedback`、`music_top`、`get_weather`、`remember_home`）→ 依功能在 `find_tools`、`front_tools`、`music_tools`、`answer_tools`（由 `local_actions` 登錄）。
 - `front_action` → `native.py`（視窗、選單、按鈕、App 指令；最後才送按鍵，送前重讀前景 pid）。
 - `read_screen` → `screencapture`；雲端路線且 `CLOUD_VISION_ENABLED` 時，看圖走雲端。
 

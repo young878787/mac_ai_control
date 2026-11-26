@@ -4,13 +4,14 @@ severity: error
 message: 熱路徑（match／completeness／classify_query／domain／normalize）不碰網路、LLM、子程序，也不讀前景（ADR 0001、0003，紅線 1）
 note: |
   這些函式在收音熱路徑與每句路由上被呼叫，任何 IO 都會拖慢端點偵測與 Fast Path。
-  需要 IO 的事放到執行階段（actions／local_actions 的執行函式，經 Match.run／run_tool 呼叫）；
+  需要 IO 的事放到執行階段（各 *_tools 模組的執行函式，經 pipeline 的 run_tool 呼叫）；
   前景只在執行階段、用到才讀（ADR 0006）。
 files:
   - mac_ai/router/fast_path.py
   - mac_ai/stt/completeness.py
   - mac_ai/router/query_intent.py
   - mac_ai/router/domain.py
+  - mac_ai/router/action_plan.py
   - mac_ai/router/normalize.py
 rule:
   any:

@@ -28,6 +28,20 @@ snapshots:
       style: secondary
       start: 22
       end: 51
+  "ok, err = proc._run([\"osascript\", \"-e\", script])\n":
+    labels:
+    - source: proc._run(["osascript", "-e", script])
+      style: primary
+      start: 10
+      end: 48
+    - source: proc._run
+      style: secondary
+      start: 10
+      end: 19
+    - source: (["osascript", "-e", script])
+      style: secondary
+      start: 19
+      end: 48
   "out = subprocess.check_output([\"mdfind\", q])\n":
     labels:
     - source: subprocess.check_output(["mdfind", q])

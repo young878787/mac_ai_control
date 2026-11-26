@@ -30,12 +30,19 @@ layers =
     slow_path
     fast_path
     local_actions
+    find_tools
+    front_tools
+    music_tools | answer_tools
     actions
+    screen_tools | chat_tools | system_tools
+    browser_tools
+    exec_context
 
 [importlinter:contract:c3-router-leaves]
 name = C3 底層不往上依賴編排層
 type = forbidden
 source_modules =
+    mac_ai.router.action_plan
     mac_ai.router.catalog
     mac_ai.router.choices
     mac_ai.router.cloud_client
@@ -48,6 +55,9 @@ source_modules =
     mac_ai.router.music_prefs
     mac_ai.router.native
     mac_ai.router.normalize
+    mac_ai.router.pinyin
+    mac_ai.router.prefs_db
+    mac_ai.router.proc
     mac_ai.router.profile_store
     mac_ai.router.query_intent
     mac_ai.router.search_client
@@ -64,15 +74,22 @@ forbidden_modules =
     mac_ai.router.fast_path
     mac_ai.router.local_actions
     mac_ai.router.actions
-ignore_imports =
-    # _scan_installed 用 actions._run 跑 Spotlight；函式內 import 是為了避開循環（AGENTS「不要碰」）
-    mac_ai.router.catalog -> mac_ai.router.actions
+    mac_ai.router.find_tools
+    mac_ai.router.front_tools
+    mac_ai.router.music_tools
+    mac_ai.router.answer_tools
+    mac_ai.router.screen_tools
+    mac_ai.router.chat_tools
+    mac_ai.router.system_tools
+    mac_ai.router.browser_tools
+    mac_ai.router.exec_context
 
 [importlinter:contract:c4-hot-path]
 name = C4 熱路徑不碰 IO
 type = forbidden
 source_modules =
     mac_ai.router.fast_path
+    mac_ai.router.action_plan
     mac_ai.router.query_intent
     mac_ai.router.domain
     mac_ai.router.normalize
@@ -93,12 +110,8 @@ forbidden_modules =
     socket
     http
 ignore_imports =
-    # 結構債（棘輪）：Match.run 呼叫 run_tool，比對結果和執行寫在同一個類別
-    mac_ai.router.fast_path -> mac_ai.router.actions
-    # 結構債（棘輪）：比對階段呼叫 plan_actions（查 ACTION_TABLE 的純函式），但它放在執行模組裡
-    mac_ai.router.fast_path -> mac_ai.router.local_actions
-    # _scan_installed 用 actions._run 跑 Spotlight；函式內 import 是為了避開循環（AGENTS「不要碰」）
-    mac_ai.router.catalog -> mac_ai.router.actions
+    # catalog 掃描已安裝 App 要跑 mdfind；只在快取是空的或過期時執行（main.py 啟動時先掃）
+    mac_ai.router.catalog -> mac_ai.router.proc
 
 [importlinter:contract:c5-clients]
 name = C5 網路 client 只做網路與解析
@@ -114,7 +127,5 @@ forbidden_modules =
     sqlite3
     subprocess
 ignore_imports =
-    # _scan_installed 用 actions._run 跑 Spotlight；函式內 import 是為了避開循環（AGENTS「不要碰」）
-    mac_ai.router.catalog -> mac_ai.router.actions
-    # 用純函式 pinyin_units；music_prefs 的 sqlite3 只用在型別標註（連線由呼叫端傳入）
-    mac_ai.router.youtube_client -> mac_ai.router.music_prefs
+    # catalog 掃描已安裝 App 要跑 mdfind；只在快取是空的或過期時執行（main.py 啟動時先掃）
+    mac_ai.router.catalog -> mac_ai.router.proc

@@ -71,7 +71,7 @@ def test_pipeline_mixed_routes_unmatched_to_llm(monkeypatch, sh):
 def test_match_does_not_execute(sh):
     run = r.FastPathMatcher().match("開 Chrome")
     assert sh == []
-    run()
+    r.pipeline._run_match(run, r.ExecContext())
     assert sh == [["open", "-a", "Google Chrome"]]
 
 
@@ -118,7 +118,7 @@ def test_pipeline_returns_timing(monkeypatch, sh):
     ("只有思考</think>", "無法理解指令"),
 ])
 def test_chat_reply_strips_leaked_think(monkeypatch, content, expected):
-    from mac_ai.router.actions import chat_reply
+    from mac_ai.router.chat_tools import chat_reply
     llm_always(monkeypatch, {"content": content})
     ctx = r.ExecContext()
     ctx.utterance = "Python 是什麼"

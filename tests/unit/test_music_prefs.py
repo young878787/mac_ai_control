@@ -9,7 +9,7 @@ import urllib.request
 import pytest
 
 from mac_ai import config, db
-from mac_ai.router import music_prefs as mp
+from mac_ai.router import music_prefs as mp, pinyin
 
 DAY = 86400.0
 T0 = 1_800_000_000.0
@@ -522,8 +522,8 @@ def test_s9_all_database_work_happens_on_the_callers_thread(tmp_path):
 
 
 def test_warm_runs_and_module_has_no_global_clock_or_random():
-    mp.warm()
+    pinyin.warm()
     import inspect
-    src = inspect.getsource(mp)
+    src = inspect.getsource(mp) + inspect.getsource(pinyin)
     assert "time.time" not in src and "random.random" not in src and "random.choice" not in src
     assert "threading.Thread" not in src

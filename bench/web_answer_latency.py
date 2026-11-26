@@ -1,5 +1,5 @@
 """依摘錄回答那次呼叫的延遲拆解（計畫 docs/plans/completed/2026-11-24-weather-city-and-answer-timeout.md §3.8、§8.2 R1）。
-每題用真的 Brave 搜尋一次，同一組摘錄重送回答呼叫 N 次（與 local_actions.web_answer 相同的訊息、上限與推理強度），
+每題用真的 Brave 搜尋一次，同一組摘錄重送回答呼叫 N 次（與 answer_tools.web_answer 相同的訊息、上限與推理強度），
 用串流拆成首位元組、推理段、答案段，印推理 tokens 與速度，最後算各逾時上限的失敗率。
 需要 .env 同時有 AI_API_KEY 與 BRAVE_API_KEY；會連網、會產生費用（每題 1 次搜尋＋N 次雲端呼叫）。
 一律帶 cache no-cache（避免 proxy 回快取）。Brave 條款：不存檔，也不印網址、摘錄與回答內容（只印有沒有回「查不到」）。
@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from mac_ai import config  # noqa: E402
 from mac_ai.router import cloud_client, search_client  # noqa: E402
 from mac_ai.router.fast_path import FastPathMatcher  # noqa: E402
-from mac_ai.router.local_actions import today_taipei  # noqa: E402
+from mac_ai.router.answer_tools import today_taipei  # noqa: E402
 
 # 計畫 §7 的 6 題（2026-11-24 log 的原句）。查詢字 None＝用現在的 Fast Path 算（與正式流程相同）；D 當天走雲端規劃，用 log 裡模型給的查詢字
 QUESTIONS = [

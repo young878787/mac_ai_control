@@ -167,7 +167,9 @@ def test_split_clauses(text, expected):
     ("取消靜音", [["osascript", "-e", "set volume output muted false"]]),
 ])
 def test_fast_path_hit(sh, clause, expected):
-    assert r.FastPathMatcher().try_execute(clause) is not None
+    match = r.FastPathMatcher().match(clause)
+    assert match is not None
+    r.pipeline._run_match(match, r.ExecContext())
     assert sh == expected
 
 
@@ -175,7 +177,7 @@ def test_fast_path_hit(sh, clause, expected):
     "把音量調大一點", "今天過得如何", "",
 ])
 def test_fast_path_miss(sh, clause):
-    assert r.FastPathMatcher().try_execute(clause) is None
+    assert r.FastPathMatcher().match(clause) is None
     assert sh == []
 
 

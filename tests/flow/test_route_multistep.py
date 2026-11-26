@@ -12,7 +12,7 @@ import pytest
 
 import mac_ai.router as r
 from mac_ai import config
-from mac_ai.router import actions, lexicon, llm_client, slow_path
+from mac_ai.router import browser_tools, chat_tools, exec_context, lexicon, llm_client, proc, screen_tools, slow_path, system_tools
 from support.expect import APP, CHROME, MUTE, SEARCH, VOL, VSCODE
 from support.llm import FakeLLM, forbid_llm, llm_always, tc
 from support.real import REAL_URLOPEN
@@ -215,7 +215,7 @@ def test_read_screen_waits_fixed_time_for_non_chrome(monkeypatch, tmp_path):
     s = Screen(monkeypatch, tmp_path)
     r.process_voice_command("開 Safari，搜尋台北天氣，辨識這頁")
     assert not any("loading of active tab" in " ".join(c) for c in s.calls)  # Safari 無法查載入狀態
-    assert sum(s.sleeps) >= actions.PAGE_FIXED_WAIT_S - 0.5
+    assert sum(s.sleeps) >= screen_tools.PAGE_FIXED_WAIT_S - 0.5
 
 
 def test_read_screen_without_page_does_not_wait(monkeypatch, tmp_path):
@@ -343,7 +343,7 @@ def test_chat_reply_tool_triggers_chat_call_without_tools(monkeypatch, sh):
     assert plan_kw.get("tools", True) is True and plan_kw["max_tokens"] == 192
     assert chat_kw["tools"] is False and chat_kw["max_tokens"] == 128 and chat_kw["timeout"] == config.CHAT_TIMEOUT_S
     assert llm.chats[0][-1] == {"role": "user", "content": "Python 是什麼"}  # 原句直接送入模型
-    assert llm.chats[0][0]["content"] == actions.CHAT_SYSTEM_PROMPT
+    assert llm.chats[0][0]["content"] == chat_tools.CHAT_SYSTEM_PROMPT
     assert out["replies"] == ["Python 是一種程式語言"]
     assert out["steps"][0]["status"] == "ok" and out["steps"][0]["chat_ms"] >= 0
     assert sh == []
@@ -405,26 +405,26 @@ def test_hanging_command_times_out_instead_of_blocking(monkeypatch):
         raise subprocess.TimeoutExpired(cmd, kw["timeout"])
 
     monkeypatch.setattr(subprocess, "run", hang)
-    ok, msg = actions._run(["osascript", "-e", "x"], timeout=0.1)
+    ok, msg = proc._run(["osascript", "-e", "x"], timeout=0.1)
     assert ok is False and "逾時" in msg
 
 
 @pytest.mark.parametrize("call", [
-    lambda: actions.control_mac_app("Safari"),
-    lambda: actions.control_mac_app("Safari", "quit"),
-    lambda: actions.set_system_volume(level=30),
-    lambda: actions.set_system_volume(mute=True),
-    lambda: actions.adjust_screen_brightness("up"),
-    lambda: actions.web_search_or_open_url("天氣"),
-    lambda: actions.system_power_action("toggle_dark_mode"),
-    lambda: actions.system_power_action("dark_mode_on"),
-    lambda: actions.system_power_action("sleep"),
-    lambda: actions.system_power_action("lock_screen"),
+    lambda: system_tools.control_mac_app("Safari"),
+    lambda: system_tools.control_mac_app("Safari", "quit"),
+    lambda: system_tools.set_system_volume(level=30),
+    lambda: system_tools.set_system_volume(mute=True),
+    lambda: system_tools.adjust_screen_brightness("up"),
+    lambda: browser_tools.web_search_or_open_url("天氣"),
+    lambda: system_tools.system_power_action("toggle_dark_mode"),
+    lambda: system_tools.system_power_action("dark_mode_on"),
+    lambda: system_tools.system_power_action("sleep"),
+    lambda: system_tools.system_power_action("lock_screen"),
 ])
 def test_plain_actions_have_timeout_and_report_failure(monkeypatch, call):
     """2026-11-26：一般動作的 open／osascript／pmset 也有上限（EXTERNAL_TIMEOUT_S），卡住回 ❌ 而不是一直擋住 command_worker"""
     def hang(cmd, **kw):
-        assert kw["timeout"] == actions.EXTERNAL_TIMEOUT_S
+        assert kw["timeout"] == exec_context.EXTERNAL_TIMEOUT_S
         raise subprocess.TimeoutExpired(cmd, kw["timeout"])
 
     monkeypatch.setattr(subprocess, "run", hang)
@@ -437,7 +437,7 @@ def test_page_poll_timeout_does_not_block_read_screen(monkeypatch, tmp_path):
 
     def run(cmd, **kw):
         if cmd[0] == "osascript":
-            assert kw["timeout"] == actions.POLL_TIMEOUT_S
+            assert kw["timeout"] == exec_context.POLL_TIMEOUT_S
             raise subprocess.TimeoutExpired(cmd, kw["timeout"])
         return real_run(cmd, **kw)
 

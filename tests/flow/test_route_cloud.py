@@ -9,7 +9,7 @@ import mac_ai.router as r
 from mac_ai import config
 from mac_ai.assistant import command_record
 from mac_ai.router import cloud_client, memory, slow_path
-from mac_ai.router.actions import ExecContext
+from mac_ai.router.exec_context import ExecContext
 from mac_ai.stt import completeness
 from support.clock import Clock
 from support.cloud import KEY
@@ -469,7 +469,7 @@ def test_vision_flag_off_uses_local_vl_and_sends_no_image(cloud, monkeypatch, tm
 
 
 def test_oversized_image_falls_back_to_local_vl(cloud, monkeypatch, tmp_path):
-    monkeypatch.setattr("mac_ai.router.actions.CLOUD_IMAGE_MAX_BYTES", 3)
+    monkeypatch.setattr("mac_ai.router.screen_tools.CLOUD_IMAGE_MAX_BYTES", 3)
     s = Screen(monkeypatch, tmp_path)
     cloud.reply = _vision_reply
     out = r.process_voice_command(SCREEN_TEXT)

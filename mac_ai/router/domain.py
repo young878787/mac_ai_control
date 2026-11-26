@@ -1,8 +1,8 @@
 """第一層：範圍判斷（Domain）。把『找／搜尋／打開 X』判成 App、專案、資料夾、檔案或網頁。
 
-純函式、沒有副作用：不執行任何動作，也不 import subprocess／actions／local_actions；
+純函式、沒有副作用：不執行任何動作，也不 import subprocess、actions、local_actions 與各 *_tools；
 只透過傳入的 catalog 唯讀查詢（resolve_app、resolve_project）。結果是 Intent，
-第二層（local_actions）只讀 Intent.slots，不看原句。"""
+第二層（find_tools 等本機工具）只讀 Intent.slots，不看原句。"""
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple

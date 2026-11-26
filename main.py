@@ -17,7 +17,7 @@ import build_vocab
 from mac_ai import config
 from mac_ai.assistant import MusicMaintenance, run_voice_loop
 from mac_ai.router import (
-    LEXICON, catalog, cloud_client, local_actions, music_prefs, process_choice, process_voice_command, warmup_llm,
+    LEXICON, catalog, cloud_client, music_prefs, pinyin, prefs_db, process_choice, process_voice_command, warmup_llm,
     youtube_client,
 )
 from mac_ai.services import ServiceError, check_ui_ready, llm_service, stop_all, stt_service, ui_service, xasr_stt_service
@@ -134,10 +134,10 @@ def run(args: argparse.Namespace) -> int:
             wait_forever()
             return 0
 
-        music_db = local_actions.MUSIC_DB  # 執行時才取（測試會換成暫存目錄）
+        music_db = prefs_db.MUSIC_DB  # 執行時才取（測試會換成暫存目錄）
         music_db.start()  # 背景準備 schema（不阻塞）；準備好之前點歌照常播放、只是不寫紀錄
         threading.Thread(target=announce_music_db, args=(music_db,), daemon=True).start()
-        threading.Thread(target=music_prefs.warm, daemon=True).start()  # 先付掉第一次開 ICU 的 42 ms
+        threading.Thread(target=pinyin.warm, daemon=True).start()  # 先付掉第一次開 ICU 的 42 ms
         voice_args = {"maintenance": music_maintenance(music_db)}
         if args.ui:
             bus = UiBus(token=secrets.token_urlsafe(32))
@@ -186,7 +186,7 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     if args.text:
-        music_db = local_actions.MUSIC_DB  # 一次性模式：同步準備好資料庫再執行，點歌的事件才寫得進去（約增加 alembic 的載入時間）
+        music_db = prefs_db.MUSIC_DB  # 一次性模式：同步準備好資料庫再執行，點歌的事件才寫得進去（約增加 alembic 的載入時間）
         music_db.start()
         music_db.wait_ready(MUSIC_DB_WAIT_S)
         if music_db.message:
