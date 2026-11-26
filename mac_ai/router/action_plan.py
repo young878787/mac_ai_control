@@ -1,5 +1,5 @@
 """範圍判斷的結果（Intent）→ 工具呼叫的對應表。純資料轉換：只讀 Intent.slots，不看原句、不做 IO、不執行。
-比對階段（fast_path）使用；工具的實作在 actions／local_actions。"""
+比對階段（fast_path）使用；工具的實作在各 *_tools 模組，由 actions 分派。"""
 from typing import Callable, Dict, List, Tuple
 
 from mac_ai.router.domain import Intent

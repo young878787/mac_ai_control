@@ -7,12 +7,15 @@ from xml.sax.saxutils import escape
 
 from mac_ai.config import PLAN_TIMEOUT_S, WARMUP_TIMEOUT_S
 from mac_ai.router import cloud_client, context, memory, search_client
-from mac_ai.router.actions import _FAIL_PREFIXES, ExecContext, chat_reply, front_context, run_tool
+from mac_ai.router import local_actions  # noqa: F401  匯入即登錄本機工具（LOCAL_TOOLS），本模組的 run_tool 要靠它
+from mac_ai.router.actions import run_tool
+from mac_ai.router.answer_tools import today_taipei
+from mac_ai.router.chat_tools import chat_reply
 from mac_ai.router.cloud_client import CloudError
+from mac_ai.router.exec_context import _FAIL_PREFIXES, ExecContext, front_context
 from mac_ai.router.fast_path import _NARR_RE, _NEG_RE, FastPathMatcher, Match, answer_mode, canonicalize_clause
 from mac_ai.router.lexicon import QUERY_CUES, _OPEN, _alias_index, _alt, _compact, build_hint_lines, project_index
 from mac_ai.router.llm_client import LLMError, _llm, reset_llm_breaker
-from mac_ai.router.local_actions import today_taipei  # 匯入也會登錄 LOCAL_TOOLS，本模組的 run_tool 要靠它
 from mac_ai.router.query_intent import verify_query
 from mac_ai.router.tools import validate_tool_call
 
@@ -283,7 +286,7 @@ def plan_cloud(utterance: str, ctx: ExecContext, step: dict, targets: Set[str],
     meta: dict = {}
     web = search_client.available()  # 有搜尋金鑰才多給 web_answer；沒有時工具清單與以前逐字相同
     if web:  # 不給日期時模型會把「今年」「最近」編成訓練資料的年份（2026-11-23 實測，計畫 §9.5）；沒有金鑰時訊息不變
-        user += "\n\n## 今天日期\n" + today_taipei()  # 與回答那次同一個時鐘（local_actions._now，測試可注入）
+        user += "\n\n## 今天日期\n" + today_taipei()  # 與回答那次同一個時鐘（prefs_db._now，測試可注入）
     if note:
         user += f"\n\n<note>{escape(note)}</note>"
     try:

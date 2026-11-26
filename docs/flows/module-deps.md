@@ -25,7 +25,7 @@ flowchart TD
     Stt -- "completeness 用 wake 的喚醒詞" --> Wake
     Stt -- "completeness 用 fast_path、normalize（0003）" --> Router
     Wake -- "lexicon" --> Router
-    Router -- "local_actions" --> Db["db"]
+    Router -- "prefs_db" --> Db["db"]
     Db -- "例外：rebuild 用 music_prefs" --> Router
     Config["config（每一層都可以 import，邊省略）"]
 ```
@@ -47,34 +47,57 @@ flowchart TD
 
 ## router 編排流向（C2、C3）
 
-主流程的方向：`pipeline` > `slow_path` > `fast_path` > `local_actions` > `actions`（C2，只能往下）。其餘 25 個 router 模組是底層，不得 import（含間接）這 5 個（C3）。`fast_path` 只比對、不執行：回傳的 `Match` 只有資料，由 `pipeline` 呼叫工具。
+主流程的方向（C2，只能往下；同一列用 `｜` 分隔的彼此互不 import）：
+
+`pipeline` > `slow_path` > `fast_path` > `local_actions` > `find_tools` > `front_tools` > `music_tools`｜`answer_tools` > `actions` > `screen_tools`｜`chat_tools`｜`system_tools` > `browser_tools` > `exec_context`
+
+- `fast_path` 只比對、不執行：回傳的 `Match` 只有資料，由 `pipeline` 呼叫工具。
+- `local_actions` 只做本機工具的登錄（載入時把 4 個功能模組的工具放進 `actions.LOCAL_TOOLS`）。
+- `*_tools` 依功能分（[0030](../decisions/0030-router-feature-modules.md)）；`actions` 只做分派（`AVAILABLE_FUNCTIONS`、`_dispatch`、`run_tool`），`exec_context` 是所有工具共用的 `ExecContext` 與前景讀取。
+- 其餘 26 個 router 模組是底層，不得 import（含間接）上面這 14 個（C3）。
 
 ```mermaid
 flowchart TD
     Pipeline["pipeline"] --> SlowPath["slow_path"]
     Pipeline --> FastPath["fast_path"]
-    Pipeline --> LocalActions["local_actions"]
-    Pipeline --> Actions["actions"]
     SlowPath --> FastPath
-    SlowPath -- "today_taipei；匯入即登錄本機工具" --> LocalActions
-    SlowPath --> Actions
-    LocalActions --> Actions
-    Pipeline --> Low["底層模組 25 個<br/>不得 import 上面 5 個（C3）"]
-    SlowPath --> Low
-    FastPath --> Low
-    LocalActions --> Low
-    Actions --> Low
+    Pipeline -- "匯入即登錄本機工具" --> LocalActions["local_actions"]
+    SlowPath -- "匯入即登錄本機工具" --> LocalActions
+    LocalActions --> FindTools["find_tools"]
+    LocalActions --> FrontTools["front_tools"]
+    LocalActions --> MusicTools["music_tools"]
+    LocalActions --> AnswerTools["answer_tools"]
+    FindTools -- "context_search" --> FrontTools
+    FrontTools -- "背景音樂控制、控制事件" --> MusicTools
+    FindTools -- "_dispatch" --> Actions["actions"]
+    FrontTools -- "_dispatch" --> Actions
+    Pipeline -- "run_tool" --> Actions
+    SlowPath -- "run_tool" --> Actions
+    Actions --> ToolsLow["screen_tools、chat_tools、system_tools、browser_tools"]
+    ToolsLow --> ExecContext["exec_context"]
+    Low["底層模組 26 個<br/>不得 import 上面 14 個（C3）"]
 ```
 
-`router/__init__.py` 對外提供 `pipeline`、`slow_path`、`fast_path`、`actions` 等模組的名稱給 `main.py` 與測試使用，**用到才 import**（PEP 562 的 `__getattr__`），不屬於任何一層。載入任何 router 子模組前 Python 都會先執行它，所以不能在裡面頂層 import 子模組；import-linter 看不到這條路，由 `tests/runtime/test_import_footprint.py` 守住。
+圖只畫主要的邊；`slow_path` 直接用 `answer_tools.today_taipei`、`chat_tools.chat_reply`，`pipeline` 直接用 `find_tools.record_explicit_search`，各模組都用 `exec_context`，完整的依賴見下表。上面每個模組都可以 import 底層模組。
+
+`router/__init__.py` 對外提供 `pipeline`、`slow_path`、`fast_path`、`exec_context`、`system_tools`、`browser_tools`、`screen_tools` 等模組的名稱給 `main.py` 與測試使用，**用到才 import**（PEP 562 的 `__getattr__`），不屬於任何一層。載入任何 router 子模組前 Python 都會先執行它，所以不能在裡面頂層 import 子模組；import-linter 看不到這條路，由 `tests/runtime/test_import_footprint.py` 守住。
 
 | 類別 | 模組 | 直接 import（`mac_ai` 內部，不含 `config`） |
 |---|---|---|
-| 編排 | `router.pipeline` | `actions`、`catalog`、`fast_path`、`llm_client`、`local_actions`、`memory`、`normalize`、`query_intent`、`slow_path`、`sources`、`weather_followup` |
-| 編排 | `router.slow_path` | `actions`、`cloud_client`、`context`、`fast_path`、`lexicon`、`llm_client`、`local_actions`、`memory`、`query_intent`、`search_client`、`tools` |
+| 編排 | `router.pipeline` | `actions`、`catalog`、`exec_context`、`fast_path`、`find_tools`、`llm_client`、`local_actions`、`memory`、`normalize`、`query_intent`、`slow_path`、`sources`、`weather_followup` |
+| 編排 | `router.slow_path` | `actions`、`answer_tools`、`chat_tools`、`cloud_client`、`context`、`exec_context`、`fast_path`、`lexicon`、`llm_client`、`local_actions`、`memory`、`query_intent`、`search_client`、`tools` |
 | 編排 | `router.fast_path` | `action_plan`、`catalog`、`context`、`domain`、`lexicon`、`query_intent` |
-| 編排 | `router.local_actions` | `db`、`actions`、`choices`、`cloud_client`、`context`、`lexicon`、`music_prefs`、`native`、`proc`、`profile_store`、`search_client`、`search_prefs`、`sources`、`weather_client`、`weather_followup`、`weather_prefs`、`youtube_client` |
-| 編排 | `router.actions` | `cloud_client`、`context`、`lexicon`、`llm_client`、`normalize`、`proc`、`youtube_client`（函式內） |
+| 本機工具登錄 | `router.local_actions` | `actions`、`answer_tools`、`find_tools`、`front_tools`、`music_tools` |
+| 本機工具 | `router.find_tools` | `actions`、`browser_tools`、`choices`、`exec_context`、`front_tools`、`lexicon`、`prefs_db`、`proc`、`search_client`、`search_prefs` |
+| 本機工具 | `router.front_tools` | `actions`、`context`、`exec_context`、`music_tools`、`native`、`proc` |
+| 本機工具 | `router.music_tools` | `browser_tools`、`context`、`exec_context`、`music_prefs`、`native`、`prefs_db`、`proc`、`youtube_client` |
+| 本機工具 | `router.answer_tools` | `browser_tools`、`cloud_client`、`exec_context`、`prefs_db`、`profile_store`、`search_client`、`sources`、`weather_client`、`weather_followup`、`weather_prefs` |
+| 分派 | `router.actions` | `browser_tools`、`chat_tools`、`exec_context`、`lexicon`、`screen_tools`、`system_tools` |
+| LLM 看得到的工具 | `router.screen_tools` | `browser_tools`、`cloud_client`、`exec_context`、`llm_client`、`normalize`、`proc` |
+| LLM 看得到的工具 | `router.chat_tools` | `exec_context`、`llm_client`、`normalize` |
+| LLM 看得到的工具 | `router.system_tools` | `exec_context`、`lexicon`、`proc` |
+| LLM 看得到的工具 | `router.browser_tools` | `exec_context`、`proc` |
+| 執行基礎 | `router.exec_context` | `context`、`proc` |
 | 純比對 | `router.lexicon` | — |
 | 純比對 | `router.normalize`、`router.domain` | `lexicon` |
 | 純比對 | `router.query_intent` | `domain`、`lexicon` |
@@ -89,6 +112,7 @@ flowchart TD
 | 網路 client | `router.youtube_client` | `pinyin` |
 | 網路 client | `router.weather_client` | `lexicon` |
 | 網路 client | `router.search_client` | — |
+| 狀態與偏好 | `router.prefs_db` | `db` |
 | 狀態與偏好 | `router.memory` | `tools` |
 | 狀態與偏好 | `router.search_prefs` | `lexicon` |
 | 狀態與偏好 | `router.music_prefs` | `pinyin` |
@@ -112,5 +136,5 @@ flowchart TD
 
 ## 結構債（記錄現況，不在任何計畫內處理）
 
-- **`local_actions` 是最大的樞紐**：本機工具、點歌、天氣、長尾回答、聯合搜尋都在這裡，直接依賴的 router 模組最多。拆分要另開計畫（盤點計畫見 `docs/plans/active/`）。
 - **`LOCAL_TOOLS` 靠 import 副作用登錄**：`local_actions` 載入時登錄，會呼叫 `run_tool` 的 `pipeline`、`slow_path` 都在頂層 import 它（`tests/runtime/test_import_footprint.py` 檢查）。
+- **跨模組用私有名稱**：`find_tools`、`front_tools` 用 `actions._dispatch`（沿用「瀏覽器失敗就略過」與 `mark_page`），`front_tools` 用 `music_tools` 的 `_background_control`、`_control_op`、`_record_control`，各模組用 `prefs_db._now`、`_rng`、`_db_call`。搬移時沒有改名（[0030](../decisions/0030-router-feature-modules.md)）。

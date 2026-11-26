@@ -55,7 +55,7 @@ def main() -> int:
         return msg
 
     search_client.search, cloud_client.chat = search, chat
-    import mac_ai.router.local_actions as la  # 執行時才取 search_client.search，所以上面的替換有效
+    import mac_ai.router.answer_tools as la  # 執行時才取 search_client.search，所以上面的替換有效
     assert la.search_client is search_client
 
     rows, n = [], 0

@@ -99,7 +99,7 @@ flowchart TD
 
 - `control_mac_app` 開瀏覽器或編輯器 → 記下 `last_browser`／`last_editor`，成功時重置前景快取；失敗 → `ctx.failed`。
 - `web_search`／`browser_tab`／`open_project`／`read_screen`：前置失敗就 ⏭️ 略過；對象依序是明說 → 同句剛開 → 前景 → 預設。
-- `LOCAL_TOOLS`（`open_folder`、`find_file`、`federated_search`、`pick_choice`、`context_search`、`front_action`、`play_media`、`music_replace`、`music_feedback`、`music_top`、`get_weather`、`remember_home`）→ `local_actions`。
+- `LOCAL_TOOLS`（`open_folder`、`find_file`、`federated_search`、`pick_choice`、`context_search`、`front_action`、`play_media`、`music_replace`、`music_feedback`、`music_top`、`get_weather`、`remember_home`）→ 依功能在 `find_tools`、`front_tools`、`music_tools`、`answer_tools`（由 `local_actions` 登錄）。
 - `front_action` → `native.py`（視窗、選單、按鈕、App 指令；最後才送按鍵，送前重讀前景 pid）。
 - `read_screen` → `screencapture`；雲端路線且 `CLOUD_VISION_ENABLED` 時，看圖走雲端。
 

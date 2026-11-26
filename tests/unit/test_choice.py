@@ -2,8 +2,8 @@
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import choices, local_actions as la
-from mac_ai.router.actions import ExecContext
+from mac_ai.router import choices, find_tools as la
+from mac_ai.router.exec_context import ExecContext
 
 
 @pytest.fixture

@@ -4,10 +4,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from mac_ai import config
 from mac_ai.router import catalog, memory, sources, weather_followup
-from mac_ai.router.actions import ExecContext, front_app, run_tool
+from mac_ai.router import local_actions  # noqa: F401  匯入即登錄本機工具（LOCAL_TOOLS），本模組的 run_tool 要靠它
+from mac_ai.router.actions import run_tool
+from mac_ai.router.exec_context import ExecContext, front_app
 from mac_ai.router.fast_path import FastPathMatcher, Match
+from mac_ai.router.find_tools import record_explicit_search
 from mac_ai.router.llm_client import LLMError, LLMUnavailable
-from mac_ai.router.local_actions import record_explicit_search
 from mac_ai.router.normalize import log_normalization, normalize_utterance, restore_misheard
 from mac_ai.router.query_intent import parse_city_reply
 from mac_ai.router.slow_path import execute_chat_only, execute_slow_path_llm, local_miss_reply

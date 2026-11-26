@@ -246,13 +246,13 @@ def test_d4_upgrade_failure_leaves_original_bytes_untouched(tmp_path, monkeypatc
     assert r.backup is not None and r.backup.exists()
     assert sorted(p.name for p in tmp_path.glob("music.sqlite3*")) == ["music.sqlite3", "music.sqlite3.bak-1"]
     # play_media 照常回 ✅（用假網路與假瀏覽器），但資料庫沒有任何改動（db.conn() 為 None 的路徑）
-    from mac_ai.router import local_actions
+    from mac_ai.router import music_tools, prefs_db
     mdb = db.MusicDb(path, ensure=lambda p: db.ensure_schema(p, script_location=loc))
     mdb.start()
     assert mdb.wait_ready(30) and mdb.conn() is None and mdb.message.startswith("⚠️")
-    monkeypatch.setattr(local_actions, "MUSIC_DB", mdb)
+    monkeypatch.setattr(prefs_db, "MUSIC_DB", mdb)
     set_real(net, "qingtian")
-    assert local_actions.play_media("晴天").startswith("✅ 播放：") and any(c[0] == "open" for c in sh)
+    assert music_tools.play_media("晴天").startswith("✅ 播放：") and any(c[0] == "open" for c in sh)
     assert path.read_bytes() == original
 
 

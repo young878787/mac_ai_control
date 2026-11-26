@@ -21,5 +21,5 @@
 
 - 沒有循環。熱路徑單獨 import 的範圍變小（`lexicon` 31 → 4 個模組，`stt.completeness` 34 → 15）。`main.py` 仍載入全部模組，啟動與每句指令的速度沒有變；`match()` p95 不變。
 - C3 的底層 router 模組從 22 個變 25 個。
-- `local_actions.py` 仍超過 [0028](0028-file-line-limit.md) 的 800 行，拆分另開計畫。
+- `local_actions.py` 仍超過 [0028](0028-file-line-limit.md) 的 800 行，拆分另開計畫。後來依功能拆成多個模組，登錄方式不變，見 [0030](0030-router-feature-modules.md)。
 - 結案時沒有跑：`pytest -m app`、CI、語音實機。

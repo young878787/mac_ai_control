@@ -7,7 +7,7 @@ import tempfile
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import actions, local_actions
+from mac_ai.router import browser_tools, music_tools, proc, screen_tools
 from support.real import real_run
 
 
@@ -50,7 +50,7 @@ def test_tab_scripts_compile(browser, action):
     if not _app_installed(browser):
         pytest.skip(f"沒有安裝 {browser}，無法編譯它的 AppleScript")
     with tempfile.TemporaryDirectory() as tmp:
-        p = subprocess.run(["osacompile", "-e", actions._TAB_SCRIPTS[browser][action], "-o", os.path.join(tmp, "x.scpt")],
+        p = subprocess.run(["osacompile", "-e", browser_tools._TAB_SCRIPTS[browser][action], "-o", os.path.join(tmp, "x.scpt")],
                            capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
 
@@ -58,7 +58,7 @@ def test_tab_scripts_compile(browser, action):
 @pytest.mark.skipif(sys.platform != "darwin", reason="需要 osacompile")
 def test_front_and_running_script_compiles():
     with tempfile.TemporaryDirectory() as tmp:
-        p = subprocess.run(["osacompile", "-e", actions._FRONT_AND_RUNNING_SCRIPT, "-o", os.path.join(tmp, "x.scpt")],
+        p = subprocess.run(["osacompile", "-e", browser_tools._FRONT_AND_RUNNING_SCRIPT, "-o", os.path.join(tmp, "x.scpt")],
                            capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
 
@@ -69,7 +69,7 @@ def test_safari_tabs_script_compiles():
     if not _app_installed("Safari"):
         pytest.skip("沒有安裝 Safari，無法編譯它的 AppleScript")
     with tempfile.TemporaryDirectory() as tmp:
-        p = subprocess.run(["osacompile", "-e", local_actions._SAFARI_TABS_SCRIPT, "-o", os.path.join(tmp, "x.scpt")],
+        p = subprocess.run(["osacompile", "-e", music_tools._SAFARI_TABS_SCRIPT, "-o", os.path.join(tmp, "x.scpt")],
                            capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
 
@@ -77,11 +77,11 @@ def test_safari_tabs_script_compiles():
 @pytest.mark.skipif(sys.platform != "darwin", reason="需要 osacompile")
 @pytest.mark.parametrize("browser", ["Safari", "Google Chrome"])
 def test_music_tab_scripts_compile(browser):
-    """點歌的『找音樂分頁並改網址』腳本（actions._MUSIC_TAB_SCRIPTS）：只編譯、不執行（執行會對瀏覽器下指令）"""
+    """點歌的『找音樂分頁並改網址』腳本（music_tools._MUSIC_TAB_SCRIPTS）：只編譯、不執行（執行會對瀏覽器下指令）"""
     if not _app_installed(browser):
         pytest.skip(f"沒有安裝 {browser}，無法編譯它的 AppleScript")
     with tempfile.TemporaryDirectory() as tmp:
-        p = subprocess.run(["osacompile", "-e", actions._MUSIC_TAB_SCRIPTS[browser], "-o", os.path.join(tmp, "x.scpt")],
+        p = subprocess.run(["osacompile", "-e", music_tools._MUSIC_TAB_SCRIPTS[browser], "-o", os.path.join(tmp, "x.scpt")],
                            capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
 
@@ -89,7 +89,7 @@ def test_music_tab_scripts_compile(browser):
 @pytest.mark.skipif(sys.platform != "darwin", reason="需要 osascript／CoreGraphics")
 def test_front_browser_window_script_runs_on_this_mac():
     """真的執行 JXA（唯讀）：語法與 CoreGraphics 呼叫要正確；有瀏覽器視窗時回傳數字編號，沒有就是 None"""
-    res = actions._front_browser_window(None)
-    assert res is None or (res[0].isdigit() and res[1] in actions.TAB_BROWSERS)
-    ok, _ = actions._run(["osascript", "-l", "JavaScript", "-e", actions._FRONT_BROWSER_WINDOW_SCRIPT.replace("__OWNERS__", "[]")])
+    res = screen_tools._front_browser_window(None)
+    assert res is None or (res[0].isdigit() and res[1] in browser_tools.TAB_BROWSERS)
+    ok, _ = proc._run(["osascript", "-l", "JavaScript", "-e", screen_tools._FRONT_BROWSER_WINDOW_SCRIPT.replace("__OWNERS__", "[]")])
     assert ok

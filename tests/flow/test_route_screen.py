@@ -4,7 +4,7 @@ import subprocess
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import actions, llm_client
+from mac_ai.router import exec_context, llm_client
 from support.expect import fast_matches
 from support.llm import llm_always, tc
 from support.screen import Screen
@@ -212,7 +212,7 @@ def test_llm_planned_read_screen_also_uses_page_scope(monkeypatch, tmp_path):
 
 def test_website_word_also_means_page_scope(monkeypatch, tmp_path):
     s = Screen(monkeypatch, tmp_path, window_out=WIN)
-    ctx = actions.ExecContext(utterance="看一下這個網站")
+    ctx = exec_context.ExecContext(utterance="看一下這個網站")
     assert r.read_screen(ctx).startswith("✅ 畫面內容（Safari視窗")
     assert _shots(s)[0][:5] == ["screencapture", "-x", "-o", "-l", "16304"]
 

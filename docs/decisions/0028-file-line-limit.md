@@ -12,7 +12,7 @@
 
 1. `scripts/check_file_lines.py`：`git ls-files` 中的 `.py`、`.js`、`.mjs`、`.cjs`、`.ts` 超過 800 行（含空行、註解）即結束碼 1。**測試檔也算**。只排除不歸本 repo 管的 `archive/`、`macos-stt/`、`desktop/vendor/`。
 2. 錯誤訊息直接指示：依職責拆到既有模組；需要新模組先向使用者提出計畫（屬於哪一層、名稱、`.importlinter` 位置），確認後再拆。
-3. **不設既有超標清單**：上線時 `tests/flow/test_route_music.py`（1226）、`desktop/test/attention.test.js`（1041）、`mac_ai/router/local_actions.py`（1011）超標，CI 紅燈直到拆完，由使用者另行處理。
+3. **不設既有超標清單**：上線時 `tests/flow/test_route_music.py`（1226）、`desktop/test/attention.test.js`（1041）、`mac_ai/router/local_actions.py`（1011）超標，CI 紅燈直到拆完，由使用者另行處理。（2026-11-26 三個都已拆完，見 [0030](0030-router-feature-modules.md)。）
 4. 不靠任何套件，CI 的 `file-lines` job 直接用 runner 的 `python3`。調高上限或新增排除等於改決策，先問使用者（比照 0025 第 5 條）。
 
 ## 後果

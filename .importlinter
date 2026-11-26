@@ -30,7 +30,13 @@ layers =
     slow_path
     fast_path
     local_actions
+    find_tools
+    front_tools
+    music_tools | answer_tools
     actions
+    screen_tools | chat_tools | system_tools
+    browser_tools
+    exec_context
 
 [importlinter:contract:c3-router-leaves]
 name = C3 底層不往上依賴編排層
@@ -50,6 +56,7 @@ source_modules =
     mac_ai.router.native
     mac_ai.router.normalize
     mac_ai.router.pinyin
+    mac_ai.router.prefs_db
     mac_ai.router.proc
     mac_ai.router.profile_store
     mac_ai.router.query_intent
@@ -67,6 +74,15 @@ forbidden_modules =
     mac_ai.router.fast_path
     mac_ai.router.local_actions
     mac_ai.router.actions
+    mac_ai.router.find_tools
+    mac_ai.router.front_tools
+    mac_ai.router.music_tools
+    mac_ai.router.answer_tools
+    mac_ai.router.screen_tools
+    mac_ai.router.chat_tools
+    mac_ai.router.system_tools
+    mac_ai.router.browser_tools
+    mac_ai.router.exec_context
 
 [importlinter:contract:c4-hot-path]
 name = C4 熱路徑不碰 IO

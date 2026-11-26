@@ -10,7 +10,7 @@ import urllib.request
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import local_actions, weather_prefs
+from mac_ai.router import prefs_db, weather_prefs
 from support.expect import fast_matches
 from support.llm import FakeLLM, forbid_llm
 from support.weather import CWA_TODAY, CWA_TOMORROW, KEY, METEO_TODAY, METEO_TOMORROW, NOW_EPOCH, net  # noqa: F401
@@ -101,7 +101,7 @@ def test_open_the_web_sentences_keep_their_current_behaviour(monkeypatch, sh):
 # ---------- 執行：固定時間、有金鑰 ----------
 @pytest.fixture
 def at_noon(monkeypatch):
-    monkeypatch.setattr(local_actions, "_now", lambda: NOW_EPOCH)
+    monkeypatch.setattr(prefs_db, "_now", lambda: NOW_EPOCH)
 
 
 @pytest.fixture
@@ -224,7 +224,7 @@ def test_clock_is_taipei_time_even_if_machine_timezone_differs(monkeypatch, sh, 
     import os
     import time
     forbid_llm(monkeypatch)
-    monkeypatch.setattr(local_actions, "_now", lambda: NOW_EPOCH)
+    monkeypatch.setattr(prefs_db, "_now", lambda: NOW_EPOCH)
     old = os.environ.get("TZ")
     os.environ["TZ"] = "America/Los_Angeles"
     time.tzset()

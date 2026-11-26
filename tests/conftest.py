@@ -129,22 +129,22 @@ def _copy_template_ensure(path: Path) -> db.EnsureResult:
 @pytest.fixture(autouse=True)
 def _isolate_music_db(monkeypatch, tmp_path):
     """點歌偏好資料庫一律指到暫存目錄，絕對不寫專案的 data/。預設『還沒啟動』（conn() 是 None：照常播放、不寫紀錄）；
-    需要資料庫的測試用 music_db fixture 啟動它。亂數固定種子；時間（local_actions._now）由需要的測試自己 monkeypatch"""
-    from mac_ai.router import local_actions
+    需要資料庫的測試用 music_db fixture 啟動它。亂數固定種子；時間（prefs_db._now）由需要的測試自己 monkeypatch"""
+    from mac_ai.router import prefs_db
     path = tmp_path / "data" / "music.sqlite3"
-    monkeypatch.setattr(local_actions, "MUSIC_DB", db.MusicDb(path, ensure=_copy_template_ensure))
-    monkeypatch.setattr(local_actions, "_rng", random.Random(0))
+    monkeypatch.setattr(prefs_db, "MUSIC_DB", db.MusicDb(path, ensure=_copy_template_ensure))
+    monkeypatch.setattr(prefs_db, "_rng", random.Random(0))
     yield
-    local_actions.MUSIC_DB.close()
+    prefs_db.MUSIC_DB.close()
 
 
 @pytest.fixture
 def music_db():
-    """啟動並等準備好的點歌資料庫（暫存目錄、schema 是複製來的空 head 庫）。回傳 local_actions.MUSIC_DB；conn() 給呼叫端執行緒自己的連線"""
-    from mac_ai.router import local_actions
-    local_actions.MUSIC_DB.start()
-    assert local_actions.MUSIC_DB.wait_ready(30) and local_actions.MUSIC_DB.ready
-    return local_actions.MUSIC_DB
+    """啟動並等準備好的點歌資料庫（暫存目錄、schema 是複製來的空 head 庫）。回傳 prefs_db.MUSIC_DB；conn() 給呼叫端執行緒自己的連線"""
+    from mac_ai.router import prefs_db
+    prefs_db.MUSIC_DB.start()
+    assert prefs_db.MUSIC_DB.wait_ready(30) and prefs_db.MUSIC_DB.ready
+    return prefs_db.MUSIC_DB
 
 
 FAKE_PID = 4242

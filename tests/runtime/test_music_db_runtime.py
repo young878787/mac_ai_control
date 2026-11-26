@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 
 from mac_ai import db
-from mac_ai.router import local_actions
+from mac_ai.router import music_tools, prefs_db
 from support.youtube import FIX, net, set_real  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,11 +56,11 @@ def test_d6_fake_play_media_does_not_load_alembic(tmp_path):
         "subprocess.run = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, '', '')\n"
         "import mac_ai.router.fast_path\n"
         "from mac_ai import db\n"
-        "from mac_ai.router import local_actions as la\n"
-        f"la.MUSIC_DB = db.MusicDb({str(path)!r}, ensure=lambda p: db.EnsureResult(True))\n"
-        "la.MUSIC_DB.start(); assert la.MUSIC_DB.wait_ready(10)\n"
+        "from mac_ai.router import music_tools as la, prefs_db\n"
+        f"prefs_db.MUSIC_DB = db.MusicDb({str(path)!r}, ensure=lambda p: db.EnsureResult(True))\n"
+        "prefs_db.MUSIC_DB.start(); assert prefs_db.MUSIC_DB.wait_ready(10)\n"
         "out = la.play_media('晴天')\n"
-        "n = la.MUSIC_DB.conn().execute(\"SELECT COUNT(*) FROM events WHERE kind='play'\").fetchone()[0]\n"
+        "n = prefs_db.MUSIC_DB.conn().execute(\"SELECT COUNT(*) FROM events WHERE kind='play'\").fetchone()[0]\n"
         "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('alembic', 'sqlalchemy'))\n"
         "print(json.dumps({'out': out, 'events': n, 'bad': bad}, ensure_ascii=False))\n"
     )
@@ -165,14 +165,14 @@ def test_d7_play_media_plays_without_records_until_ready_then_writes(tmp_path, m
     path = tmp_path / "music.sqlite3"
     ensure, started, release, calls = _gated_ensure()
     m = db.MusicDb(path, ensure=ensure)
-    monkeypatch.setattr(local_actions, "MUSIC_DB", m)
+    monkeypatch.setattr(prefs_db, "MUSIC_DB", m)
     m.start()
     assert started.wait(5)
     set_real(net, "qingtian")
-    assert local_actions.play_media("晴天").startswith("✅ 播放：") and not path.exists()   # 準備中：沒有紀錄
+    assert music_tools.play_media("晴天").startswith("✅ 播放：") and not path.exists()   # 準備中：沒有紀錄
     release.set()
     assert m.wait_ready(10)
-    assert local_actions.play_media("晴天").startswith("✅ 播放：")
+    assert music_tools.play_media("晴天").startswith("✅ 播放：")
     n = m.conn().execute("SELECT COUNT(*) FROM events WHERE kind='play'").fetchone()[0]
     assert n == 1
     m.close()

@@ -128,7 +128,7 @@ class QueryIntent:
     """target：knowledge（世界知識）／local（本機的 App、專案、資料夾、檔案）；mode：show（開給使用者看）／answer（直接回答）。
     evidence：判斷依據（category／explicit_web／verify／question／realtime／verb，或範圍判斷的 source）。category：weather／verify。
     slots：天氣的 city／day／part；show 的 where（google＝直接開 Google、context＝依前景網站決定）與 app（要先開的瀏覽器）。
-    intent：範圍判斷（domain.resolve_intent）的結果；有它就照 local_actions 的對應表執行"""
+    intent：範圍判斷（domain.resolve_intent）的結果；有它就照 action_plan 的對應表執行"""
     target: str
     mode: str
     evidence: str

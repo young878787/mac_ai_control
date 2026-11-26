@@ -12,6 +12,9 @@ HEAVY = (
     "mac_ai.router.llm_client", "mac_ai.router.cloud_client", "mac_ai.router.search_client",
     "mac_ai.router.weather_client", "mac_ai.router.youtube_client",
     "mac_ai.router.actions", "mac_ai.router.local_actions", "mac_ai.router.pipeline", "mac_ai.router.slow_path",
+    "mac_ai.router.exec_context", "mac_ai.router.browser_tools", "mac_ai.router.system_tools", "mac_ai.router.screen_tools",
+    "mac_ai.router.chat_tools", "mac_ai.router.prefs_db", "mac_ai.router.music_tools", "mac_ai.router.answer_tools",
+    "mac_ai.router.front_tools", "mac_ai.router.find_tools",
     "mac_ai.db", "sqlite3", "subprocess",
 )
 LOCAL_TOOL_NAMES = {

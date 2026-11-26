@@ -5,8 +5,8 @@ import subprocess
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import catalog, choices, local_actions as la
-from mac_ai.router.actions import ExecContext
+from mac_ai.router import catalog, choices, find_tools as la
+from mac_ai.router.exec_context import ExecContext
 from support.clock import Clock
 
 REAL_SCAN = catalog._scan_installed  # conftest 的 autouse fixture 會把它換成空清單，這裡要測真的解析邏輯

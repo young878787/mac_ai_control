@@ -8,7 +8,7 @@ import pytest
 import mac_ai.router as r
 from mac_ai import config
 from mac_ai.assistant import command_record
-from mac_ai.router import cloud_client, local_actions, memory, slow_path, sources
+from mac_ai.router import answer_tools, cloud_client, memory, prefs_db, slow_path, sources
 from support.cloud import KEY as AI_KEY
 from support.llm import FakeLLM, tc
 from support.web import KEY as BRAVE_KEY
@@ -98,7 +98,7 @@ def test_search_key_adds_web_answer_as_the_last_tool(web, brave, sh):
 
 
 def test_planning_message_ends_with_taipei_date_only_when_web_answer_is_offered(web, brave, sh, monkeypatch):
-    monkeypatch.setattr(local_actions, "_now", lambda: 1795365000.0)  # 2026-11-22 16:30 UTC＝台北 2026-11-23 00:30
+    monkeypatch.setattr(prefs_db, "_now", lambda: 1795365000.0)  # 2026-11-22 16:30 UTC＝台北 2026-11-23 00:30
     say(ASK)
     (plan,) = planning(web)
     assert plan["messages"][0]["content"] == cloud_client.CLOUD_SYSTEM_PROMPT  # system 不變，日期只放 user
@@ -447,7 +447,7 @@ def test_follow_up_is_not_remembered_with_the_url(answered, web, brave):
 
 def test_open_source_tool_refuses_non_http_urls(sh):
     for url in ("file:///etc/passwd", "javascript:alert(1)", "ftp://x/y", "", "zh.wikipedia.org"):
-        assert local_actions.open_source(url).startswith("❌") and opened(sh) == []
+        assert answer_tools.open_source(url).startswith("❌") and opened(sh) == []
 
 
 # ---------- 金鑰與摘錄不外洩 ----------

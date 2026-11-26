@@ -2,7 +2,7 @@
 
 > **歸檔（2026-11-26 結案）**：S0～S6 都已實作，目前有效的決策見 [ADR 0029](../../decisions/0029-deps-converge.md)。以下內文保留結案時的樣子，原檔名 `docs/plans/active/2026-11-26-deps-converge.md`。實作差異與結果見 §10。**結案時沒有做的**：R1（`pytest -m app` 真實 App）、R2（CI）、H1（語音實機）。
 
-狀態：**已結案（2026-11-26）**。原狀態：S0～S6 已實作（分支 `refactor/deps-converge`），自動化驗收通過；使用者已同意 D1～D8。不改任何行為；只搬程式碼、改 import、改契約與文件。P3（`actions`／`local_actions` 依功能拆分）另見 [盤點計畫](../active/2026-11-26-router-split-inventory.md)。
+狀態：**已結案（2026-11-26）**。原狀態：S0～S6 已實作（分支 `refactor/deps-converge`），自動化驗收通過；使用者已同意 D1～D8。不改任何行為；只搬程式碼、改 import、改契約與文件。P3（`actions`／`local_actions` 依功能拆分）另見 [盤點計畫](2026-11-26-router-split-inventory.md)。
 
 ## 0. 目標與結論
 

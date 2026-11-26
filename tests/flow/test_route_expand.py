@@ -5,7 +5,7 @@ import pytest
 import mac_ai.router as r
 from mac_ai import config
 from mac_ai.router import llm_client, slow_path
-from mac_ai.router.actions import ExecContext
+from mac_ai.router.exec_context import ExecContext
 from mac_ai.router.pipeline import expand_reason
 from support.llm import FakeLLM, forbid_llm, tc
 from support.screen import Screen

@@ -9,7 +9,7 @@ import urllib.request
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import context, local_actions
+from mac_ai.router import actions, context, front_tools, music_tools, prefs_db
 from mac_ai.router.fast_path import FastPathMatcher
 from mac_ai.router.slow_path import NO_ACTION_REPLY
 from support.expect import fast_matches
@@ -82,7 +82,7 @@ def test_c1_positive_routes_without_llm(monkeypatch, sh, text, query):
     """整條路由：Fast Path → play_media(query)，LLM 0 次。play_media 本身換成記錄用的假函式（它的行為在 Y 段落測）"""
     forbid_llm(monkeypatch)
     calls = []
-    monkeypatch.setitem(local_actions.LOCAL_TOOLS, "play_media", lambda query="", ctx=None: calls.append(query) or f"✅ 播放：{query}")
+    monkeypatch.setitem(actions.LOCAL_TOOLS, "play_media", lambda query="", ctx=None: calls.append(query) or f"✅ 播放：{query}")
     out = r.process_voice_command(text)
     assert len(out["steps"]) == 1 and out["steps"][0]["logs"] == [f"✅ 播放：{query}"]
     assert calls == [query] and sh == []
@@ -104,7 +104,7 @@ def test_c2_guarded_sentences_never_call_llm(monkeypatch, sh, text):
 @pytest.mark.parametrize("text", C2_GUARD_GAP)
 def test_c2_guard_gap_sentences_may_reach_llm_but_never_play_media(monkeypatch, sh, text):
     played = []
-    monkeypatch.setitem(local_actions.LOCAL_TOOLS, "play_media", lambda *a, **k: played.append((a, k)) or "⏭️")
+    monkeypatch.setitem(actions.LOCAL_TOOLS, "play_media", lambda *a, **k: played.append((a, k)) or "⏭️")
     FakeLLM().install(monkeypatch)  # 允許交給 LLM（預設只回聊天內容）
     r.process_voice_command(text)
     assert played == [] and sh == []
@@ -276,7 +276,7 @@ def test_k3_never_launches_or_activates_anything(bg, front):
     r.process_voice_command("下一首")
     assert [c[0] for c in bg.cmds] == ["pgrep", "osascript"]
     assert bg.cmds[0] == ["pgrep", "-x", "Safari"]
-    assert bg.cmds[1][2] == local_actions._SAFARI_TABS_SCRIPT and bg.cmds[1][2].startswith('if application "Safari" is running then')  # 競態時也不會把 Safari 開起來
+    assert bg.cmds[1][2] == music_tools._SAFARI_TABS_SCRIPT and bg.cmds[1][2].startswith('if application "Safari" is running then')  # 競態時也不會把 Safari 開起來
     assert "activate" not in bg.cmds[1][2] and "open" not in {c[0] for c in bg.cmds}
 
 
@@ -478,7 +478,7 @@ def test_k9_by_direction_entries_match_background_plans():
 def test_k9_cloud_style_call_without_direction_keeps_toggle(bg, native_calls, front):
     """雲端只傳 id、不帶 direction：維持切換（使用者已決定，不改）"""
     front("Safari", host="www.youtube.com")
-    assert local_actions.front_action("play_pause").startswith("✅")
+    assert front_tools.front_action("play_pause").startswith("✅")
     assert native_calls == [f"button {LEGACY_YT_BUTTON}"]
 
 
@@ -530,7 +530,7 @@ def tabs(monkeypatch):
 @pytest.fixture
 def mclock(monkeypatch):
     clock = Clock(T0)
-    monkeypatch.setattr(local_actions, "_now", clock)
+    monkeypatch.setattr(prefs_db, "_now", clock)
     return clock
 
 
@@ -679,8 +679,7 @@ def test_y13_chrome_is_used_when_safari_is_not_running(net, tabs, monkeypatch, m
 def test_y13_script_guards_zero_tab_ghost_windows():
     """P0-8：關窗後 windows 清單可能留 0 個分頁的幽靈視窗，URL of every tab 對它回空字串（不是 list）。腳本要先包成 list、略過空值。
     （腳本只能在真的 Safari 上執行；這裡只檢查防護寫法與 osacompile，實機行為見計畫 §9 P0-8）"""
-    from mac_ai.router import actions
-    sc = actions._SAFARI_MUSIC_TAB_SCRIPT
+    sc = music_tools._SAFARI_MUSIC_TAB_SCRIPT
     assert "if class of u is not list then set u to {u}" in sc and "if s is not missing value then" in sc
     assert sc.index("try") < sc.index('tell application "Safari"') < sc.index("set URL of tab j of window i")  # 整段搜尋包在 try 裡，錯誤時回 none
 
@@ -727,8 +726,7 @@ def youtube_search_url(q):
 # ---------- Y11：不合法的 videoId 不進 subprocess ----------
 @pytest.mark.parametrize("bad", ['abc"; do shell script "x', "abcdefghij", "abcdefghijkl", "abcdefghij\n", ""])
 def test_y11_invalid_ids_never_reach_osascript_or_open(net, tabs, bad):
-    from mac_ai.router import actions
-    assert actions.open_music_video(bad)[0] is False and tabs.cmds == []
+    assert music_tools.open_music_video(bad)[0] is False and tabs.cmds == []
 
 
 def test_y11_invalid_id_is_skipped_end_to_end(net, tabs, mclock):
@@ -777,7 +775,7 @@ SPECIAL = ["O'Brien \"quoted\"; DROP TABLE events; --", "--;'\"\\ \U0001F3B5 emo
 def test_y15_special_characters_round_trip(net, tabs, music_db, mclock, title):
     net.set("web", web_response([video("AAAAAAAAAA1", title, title[::-1])])).set("ytm", urllib.error.URLError("d"))
     q = title + " 歌"
-    out = local_actions.play_media(q)
+    out = music_tools.play_media(q)
     assert out == f"✅ 播放：{title}（{title[::-1]}）"
     assert _rows(music_db, "SELECT title, channel FROM videos") == [(title, title[::-1])]
     ev = _events(music_db, "play")[0]
@@ -838,7 +836,7 @@ def test_s6_favorite_plays_cached_song_without_network_and_is_recorded(net, tabs
 
 def test_s6_without_db_favorite_says_db_not_ready(net, tabs):
     step = _step("我想聽歌")
-    assert step["logs"] == [local_actions.NO_DB_FAVORITE_MESSAGE] and net.calls == [] and tabs.cmds == []
+    assert step["logs"] == [music_tools.NO_DB_FAVORITE_MESSAGE] and net.calls == [] and tabs.cmds == []
 
 
 def test_y_db_errors_never_break_playing(net, tabs, music_db, mclock, monkeypatch):
@@ -915,9 +913,8 @@ def test_p5_routes_complete_for_endpoint(text):
 
 def test_p5_music_tools_are_local_only():
     from mac_ai.router import tools
-    from mac_ai.router.actions import LOCAL_TOOLS
     names = {t["function"]["name"] for t in tools.TOOLS_SCHEMA}
-    assert P5_TOOLS <= set(LOCAL_TOOLS) and not (P5_TOOLS & names)
+    assert P5_TOOLS <= set(actions.LOCAL_TOOLS) and not (P5_TOOLS & names)
 
 
 # ---------- K7：換一首 ----------
@@ -927,7 +924,7 @@ def _play_qingtian(net, mclock):
     assert step["logs"][0].startswith("✅ 播放：")
     net.calls.clear()
     mclock.now += 10
-    return music_prefs.cache_get(local_actions.MUSIC_DB.conn(), Y_QUERY, mclock.now).candidates
+    return music_prefs.cache_get(prefs_db.MUSIC_DB.conn(), Y_QUERY, mclock.now).candidates
 
 
 def _open_ids(tabs):
@@ -949,7 +946,7 @@ def test_k7_replace_walks_the_candidates_pins_and_runs_out(net, tabs, music_db, 
         mclock.now += 10
     opened = len(tabs.of("open"))
     step = _step("不是這首")  # 5 個都播過了
-    assert step["logs"] == [local_actions.NO_CANDIDATE_MESSAGE] and step["status"] == "exec_failed"
+    assert step["logs"] == [music_tools.NO_CANDIDATE_MESSAGE] and step["status"] == "exec_failed"
     assert len(tabs.of("open")) == opened and net.calls == []  # 不再開、不連網
     assert seen == cands[1:]
 
@@ -1008,7 +1005,7 @@ def test_k7_open_failure_changes_nothing(net, tabs, music_db, mclock):
 def test_k7_nothing_played_yet(music_db, tabs, monkeypatch):
     forbid_llm(monkeypatch)
     step = _step("換一首")
-    assert step["logs"] == [local_actions.NO_RECENT_PLAY_MESSAGE] and tabs.cmds == [] and _events(music_db) == []
+    assert step["logs"] == [music_tools.NO_RECENT_PLAY_MESSAGE] and tabs.cmds == [] and _events(music_db) == []
 
 
 def test_k7_favorite_play_has_no_candidates(net, tabs, music_db, mclock):
@@ -1016,18 +1013,18 @@ def test_k7_favorite_play_has_no_candidates(net, tabs, music_db, mclock):
     _step("放音樂")  # 常聽的歌：query 是空字串
     opened = len(tabs.of("open"))
     step = _step("換一首")
-    assert step["logs"] == [local_actions.NO_RECENT_PLAY_MESSAGE] and len(tabs.of("open")) == opened
+    assert step["logs"] == [music_tools.NO_RECENT_PLAY_MESSAGE] and len(tabs.of("open")) == opened
 
 
 def test_k7_expired_unpinned_cache_has_no_candidates(net, tabs, music_db, mclock):
     _play_qingtian(net, mclock)
     mclock.now += 31 * DAY
-    assert _step("換一首")["logs"] == [local_actions.NO_CANDIDATE_MESSAGE]
+    assert _step("換一首")["logs"] == [music_tools.NO_CANDIDATE_MESSAGE]
 
 
 def test_k7_without_db_says_so_and_runs_nothing(tabs, tmp_path):
     step = _step("換一首")
-    assert step["logs"] == [local_actions.NO_DB_MUSIC_MESSAGE] and tabs.cmds == [] and not (tmp_path / "data").exists()
+    assert step["logs"] == [music_tools.NO_DB_MUSIC_MESSAGE] and tabs.cmds == [] and not (tmp_path / "data").exists()
 
 
 # ---------- K8：喜歡、不要再放 ----------
@@ -1053,7 +1050,7 @@ def test_k8_like_reads_the_music_tab_with_one_osascript_and_writes_one_event(bg,
     bg.url = RD(VID_A)
     step = _step("我喜歡這首")
     assert step["logs"] == ["✅ 記下了，你喜歡：晴天"] and step["status"] == "ok"
-    assert bg.cmds == [["pgrep", "-x", "Safari"], ["osascript", "-e", local_actions._SAFARI_TABS_SCRIPT]]  # 一支 osascript、沒有啟動任何東西
+    assert bg.cmds == [["pgrep", "-x", "Safari"], ["osascript", "-e", music_tools._SAFARI_TABS_SCRIPT]]  # 一支 osascript、沒有啟動任何東西
     assert all(t for t in timeouts)  # 每個子程序都有逾時
     likes = _events(music_db, "like")
     assert len(likes) == 1 and likes[0][2] == "晴天" and likes[0][4] == VID_A and likes[0][7] == 1
@@ -1072,7 +1069,7 @@ def test_k8_dislike_writes_event_removes_cache_and_excludes_the_song(bg, music_d
     assert len(ev) == 1 and ev[0][4] == VID_A and ev[0][2] == "晴天"
     assert _rows(music_db, "SELECT COUNT(*) FROM queries WHERE video_id=?", VID_A) == [(0,)]
     assert _rows(music_db, "SELECT COUNT(*) FROM terms WHERE term='晴天' AND kind='title'") == [(0,)]
-    assert music_prefs.favorite(music_db.conn(), mclock.now, local_actions._rng) is None
+    assert music_prefs.favorite(music_db.conn(), mclock.now, prefs_db._rng) is None
     assert [c[0] for c in bg.cmds] == ["pgrep", "osascript"]  # 不會順便跳下一首（沒有任何控制動作）
 
 
@@ -1109,7 +1106,7 @@ def test_k8_unreadable_tab_warns_and_writes_nothing(bg, music_db, monkeypatch, k
     n = len(_events(music_db))
     bg.url, bg.tabs = url, tabs_
     step = _step(kind_text)
-    assert step["logs"] == [local_actions.NO_MUSIC_TAB_MESSAGE] and step["status"] == "exec_failed"
+    assert step["logs"] == [music_tools.NO_MUSIC_TAB_MESSAGE] and step["status"] == "exec_failed"
     assert len(_events(music_db)) == n and _rows(music_db, "SELECT COUNT(*) FROM queries") == [(1,)]
 
 
@@ -1117,17 +1114,17 @@ def test_k8_unreadable_tab_warns_and_writes_nothing(bg, music_db, monkeypatch, k
 def test_k8_safari_not_running_runs_no_osascript(bg, music_db, text):
     bg.pid = 0
     step = _step(text)
-    assert bg.cmds == [["pgrep", "-x", "Safari"]] and step["logs"] == [local_actions.NO_MUSIC_TAB_MESSAGE] and _events(music_db) == []
+    assert bg.cmds == [["pgrep", "-x", "Safari"]] and step["logs"] == [music_tools.NO_MUSIC_TAB_MESSAGE] and _events(music_db) == []
 
 
 @pytest.mark.parametrize("text", ["我喜歡這首", "不要再放這首"])
 def test_k8_without_db_runs_nothing(bg, tmp_path, text):
     step = _step(text)
-    assert step["logs"] == [local_actions.NO_DB_MUSIC_MESSAGE] and bg.cmds == [] and not (tmp_path / "data").exists()
+    assert step["logs"] == [music_tools.NO_DB_MUSIC_MESSAGE] and bg.cmds == [] and not (tmp_path / "data").exists()
 
 
 def test_k8_unknown_kind_is_rejected(bg, music_db):
-    assert local_actions.music_feedback("delete").startswith("❌") and bg.cmds == [] and _events(music_db) == []
+    assert music_tools.music_feedback("delete").startswith("❌") and bg.cmds == [] and _events(music_db) == []
 
 
 # ---------- S8：我最常聽什麼 ----------
@@ -1163,7 +1160,7 @@ def test_s8_empty_database_says_no_history(music_db, monkeypatch):
 
 def test_s8_without_db_says_so(tmp_path):
     out = r.process_voice_command("我最常聽什麼")
-    assert out["steps"][0]["logs"] == [local_actions.NO_DB_MUSIC_MESSAGE] and not (tmp_path / "data").exists()
+    assert out["steps"][0]["logs"] == [music_tools.NO_DB_MUSIC_MESSAGE] and not (tmp_path / "data").exists()
 
 
 def test_s8_disliked_song_is_not_listed(music_db, mclock):

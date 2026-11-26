@@ -4,21 +4,21 @@ import subprocess
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import actions
+from mac_ai.router import browser_tools
 from support.expect import APP, CHROME, SAFARI, fast_matches
 from support.llm import forbid_llm, llm_always, tc
 
 
 # ---------- 4. 瀏覽器分頁 ----------
 def NEW_TAB(browser):
-    return actions._TAB_SCRIPTS[browser]["new"]
+    return browser_tools._TAB_SCRIPTS[browser]["new"]
 
 
 def TAB(browser, action):
-    return ["osascript", "-e", actions._TAB_SCRIPTS[browser][action]]
+    return ["osascript", "-e", browser_tools._TAB_SCRIPTS[browser][action]]
 
 
-QUERY = ["osascript", "-e", actions._FRONT_AND_RUNNING_SCRIPT]
+QUERY = ["osascript", "-e", browser_tools._FRONT_AND_RUNNING_SCRIPT]
 
 
 class Browsers:

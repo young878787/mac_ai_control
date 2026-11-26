@@ -38,3 +38,4 @@
 - 一個 import 可能同時違反好幾份契約（例如 `router.tools` import `assistant` 會經 `stt.completeness → fast_path` 同時打破 C1、C2、C3、C5），錯誤訊息會列出完整的 import 鏈。
 - 已知結構債（`fast_path` 頂層 import 執行層、`local_actions` 是最大的樞紐、`catalog` 的循環）只記錄在 module-deps.md，要處理得另開計畫。
 - 第 2 條的例外清單、`fast_path` 的結構債與 `catalog` 的循環已由 [0029](0029-deps-converge.md) 收斂。
+- C2 的順序與 C3 的範圍、`local_actions` 是最大樞紐的結構債，已由 [0030](0030-router-feature-modules.md) 依功能拆模組後更新。

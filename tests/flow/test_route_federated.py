@@ -9,7 +9,7 @@ import pytest
 
 import mac_ai.router as r
 from mac_ai.assistant import command_record
-from mac_ai.router import local_actions, memory
+from mac_ai.router import memory, prefs_db
 from support.expect import URL
 from support.llm import forbid_llm
 from support.web import KEY as BRAVE_KEY
@@ -23,7 +23,7 @@ TITLES = ["周杰倫 - 維基百科，自由的百科全書", "周杰倫 Jay Cho
 @pytest.fixture(autouse=True)
 def _no_llm(monkeypatch):
     forbid_llm(monkeypatch, "聯合搜尋不該呼叫 LLM")
-    monkeypatch.setattr(local_actions, "_now", lambda: NOW)
+    monkeypatch.setattr(prefs_db, "_now", lambda: NOW)
 
 
 def say(text):

@@ -22,7 +22,7 @@ import pytest
 
 import mac_ai.router as r
 from mac_ai import config
-from mac_ai.router import actions, context
+from mac_ai.router import context, proc
 
 pytestmark = pytest.mark.app
 
@@ -78,7 +78,7 @@ def wait_for(cond, timeout: float = 6.0, interval: float = 0.2, what: str = ""):
 
 
 def front_app() -> str:
-    fc = context.read_front(actions._run)
+    fc = context.read_front(proc._run)
     return fc.app if fc else ""
 
 
@@ -242,7 +242,7 @@ def _player_state(pid: int) -> str:
 def test_youtube_play_pause_presses_player_button(safari, say):
     """改為按播放器按鈕（輔助使用介面）：以前送 k，中文輸入法下會被吃掉。以按鈕文字（暫停 (k)／播放 (k)）判定切換"""
     safari(YOUTUBE_VIDEO, "https://www.youtube.com/watch")
-    pid = context.read_front(actions._run).pid
+    pid = context.read_front(proc._run).pid
     before = wait_for(lambda: _player_state(pid), timeout=15, what="YouTube 播放器按鈕出現")
     step = ok_step(say("播放暫停"))
     assert step["context"]["method"] == "按鈕" and step["context"]["site"] == "YouTube"
@@ -530,7 +530,7 @@ def test_desktop_character_in_front_is_never_operated(say):
         time.sleep(2.0)
         osa(f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true')
         try:
-            wait_for(lambda: context.read_front(actions._run) is None and front_app() == "", timeout=5,
+            wait_for(lambda: context.read_front(proc._run) is None and front_app() == "", timeout=5,
                      what="桌面角色成為最前面的 App")
         except AssertionError:
             pytest.skip("桌面角色無法成為最前面的 App（視窗不接受焦點），這條路徑只有離線測試")

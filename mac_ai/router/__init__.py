@@ -7,10 +7,8 @@ import importlib
 import importlib.util
 
 _EXPORTS = {
-    "actions": (
-        "ExecContext", "adjust_screen_brightness", "browser_tab", "control_mac_app", "open_project", "read_screen",
-        "set_system_volume", "system_power_action", "web_search_or_open_url",
-    ),
+    "browser_tools": ("browser_tab", "web_search_or_open_url"),
+    "exec_context": ("ExecContext",),
     "fast_path": ("FastPathMatcher", "canonicalize_clause"),
     "lexicon": (
         "APP_KIND", "APP_MISHEARD", "LEXICON", "MAC_APP_ALIASES", "S2T", "TERM_MISHEARD", "build_hint_lines",
@@ -19,7 +17,11 @@ _EXPORTS = {
     "llm_client": ("LLMUnavailable", "reset_llm_breaker"),
     "normalize": ("normalize_utterance", "to_traditional", "zh_to_int"),
     "pipeline": ("process_choice", "process_voice_command"),
+    "screen_tools": ("read_screen",),
     "slow_path": ("execute_slow_path_llm", "plan_slow_path", "warmup_llm"),
+    "system_tools": (
+        "adjust_screen_brightness", "control_mac_app", "open_project", "set_system_volume", "system_power_action",
+    ),
     "tools": ("TOOLS_SCHEMA", "validate_tool_call"),
 }
 _SOURCE = {name: module for module, names in _EXPORTS.items() for name in names}
