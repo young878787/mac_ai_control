@@ -1,4 +1,4 @@
-"""第二層：依 Intent 執行本機動作（資料夾、檔案搜尋、選擇清單）。只讀 Intent.slots，不看原句。
+"""第二層：執行本機動作（資料夾、檔案搜尋、選擇清單）。只收工具參數，不看原句（Intent → 工具呼叫的對應表在 action_plan）。
 
 檔案搜尋用 Spotlight（mdfind），只搜家目錄且排除 ~/Library；預設只在 Finder 中顯示，
 使用者明說『打開』才開檔，而且可執行檔一律只顯示。這裡的工具只放在 LOCAL_TOOLS，
@@ -11,7 +11,7 @@ import sqlite3
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from mac_ai import config
 from mac_ai.config import CONTEXT_TIMEOUT_S, FILE_SEARCH_TIMEOUT_S, FIND_RESULTS_MAX
@@ -20,7 +20,6 @@ from mac_ai.router.actions import (
     EXTERNAL_TIMEOUT_S, LOCAL_TOOLS, POLL_TIMEOUT_S, _FAIL_PREFIXES, ExecContext, _dispatch, _skipped, front_app, front_context, front_site, mark_page,
     google_search_url, open_music_video, open_search_page, web_search_or_open_url,
 )
-from mac_ai.router.domain import Intent
 from mac_ai.router.lexicon import LEXICON
 from mac_ai.router.proc import _run
 from mac_ai import db as music_db
@@ -46,44 +45,6 @@ DANGEROUS_EXT = {
 _EXCLUDE_DIRS = {"node_modules", "__pycache__", ".venv", "venv", "site-packages"}
 _BUNDLE_SUFFIXES = (".app", ".framework", ".bundle")
 _MAX_SCAN = 20000  # 一次最多處理這麼多筆 mdfind 輸出（只比對類型的搜尋可能有幾十萬筆）
-
-
-# ---------- 對應表：(domain, 動詞) → 工具呼叫 ----------
-def _plan_app(i: Intent) -> List[Tuple[str, dict]]:
-    return [("control_mac_app", {"app_name": i.slots["app"], "action": "open"})]
-
-
-def _plan_project(i: Intent) -> List[Tuple[str, dict]]:
-    return [("open_project", {"project_name": i.slots["project_name"]})]
-
-
-def _plan_folder(i: Intent) -> List[Tuple[str, dict]]:
-    return [("open_folder", {"path_key": i.slots["path_key"]})]
-
-
-def _plan_web(i: Intent) -> List[Tuple[str, dict]]:
-    return [("web_search_or_open_url", {"query": i.slots["query"]})]
-
-
-def _plan_file(action: str) -> Callable[[Intent], List[Tuple[str, dict]]]:
-    def plan(i: Intent) -> List[Tuple[str, dict]]:
-        args = {k: v for k, v in i.slots.items() if v}
-        args["action"] = action
-        return [("find_file", args)]
-    return plan
-
-
-ACTION_TABLE: Dict[Tuple[str, str], Callable[[Intent], List[Tuple[str, dict]]]] = {}
-for _verb in ("find", "open", "search"):
-    ACTION_TABLE[("app", _verb)] = _plan_app
-    ACTION_TABLE[("project", _verb)] = _plan_project
-    ACTION_TABLE[("folder", _verb)] = _plan_folder
-    ACTION_TABLE[("web", _verb)] = _plan_web
-    ACTION_TABLE[("file", _verb)] = _plan_file("open" if _verb == "open" else "reveal")  # 只有明說『打開』才開檔
-
-
-def plan_actions(intent: Intent) -> List[Tuple[str, dict]]:
-    return ACTION_TABLE[(intent.domain, intent.verb)](intent)
 
 
 # ---------- 資料夾 ----------

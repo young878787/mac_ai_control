@@ -58,7 +58,7 @@
 | 新增一類語音指令（常見的） | `fast_path.py` 加 regex 與 `_r_*`，在 `match()` 的規則清單排對位置；`actions.py` 加執行函式並登錄 `AVAILABLE_FUNCTIONS`／`_dispatch`；加離線測試（命中、不命中、被守門擋下） |
 | 新增 LLM 可用工具（少見） | 先確認 Fast Path 做不到；`tools.py` 加 schema 與驗證；跑 `pytest -m live`（準確率與延遲）；注意 prompt cache；雲端自動沿用（`CLOUD_TOOLS` 由 `TOOLS_SCHEMA` 產生），再跑 `pytest -m cloud -s` |
 | 調雲端提示詞 | 只動 `cloud_client.CLOUD_SYSTEM_PROMPT`；用 `pytest -m cloud -s tests/real/test_cloud_live.py -k planning` 比改動前後的各類正確率與延遲，數字附在 commit 或計劃書 |
-| 新增本機（不給 LLM）工具 | 寫在 `local_actions.py`，登錄 `LOCAL_TOOLS`，在 `ACTION_TABLE` 加對應；不要放進 `TOOLS_SCHEMA` |
+| 新增本機（不給 LLM）工具 | 寫在 `local_actions.py`，登錄 `LOCAL_TOOLS`，在 `action_plan.ACTION_TABLE` 加對應；不要放進 `TOOLS_SCHEMA` |
 | 新增站內搜尋網站／常用功能快捷鍵／可開啟的網站 | 只改 `vocab/lexicon.json` 的 `sites`（`search_url` 站內搜尋、`home` 首頁、`aliases` 別名）／`app_shortcuts`（說法要整句完全相同才命中）；`home` 有填的網站，「打開／上／去＋名稱」會由 Fast Path（`_r_site`）開首頁，雲端／本機規劃的開網站呼叫也靠它放行（`slow_path.site_open_home`）；跑 `tests/flow/test_route_context.py`、`tests/unit/test_context.py` 與 `tests/unit/test_completeness.py`，確認新說法不是其他指令的前半句 |
 | 改點歌規則／接受規則 | 規則在 `fast_path._r_music`、詞庫 `music`（比對原句、純比對、不碰 IO；守門不放寬，先列誤觸發案例並加進 `tests/flow/test_route_music.py` 的反例）；改了要連動跑 `test_completeness.py`、`test_endpoint.py`、`test_route_music.py`。搜尋的接受規則與挑 MV 在 `youtube_client.accept_music`／`pick`：先用 `tests/fixtures/youtube/` 的真實回應或衍生案例補測試（已知風險：YouTube Music 回中文歌手名時，英文說法如「Jay Chou 晴天」對不到歌手而被拒、改播一般搜尋第一筆，見計畫書 §9）；動 `youtube_client` 不得碰資料庫與子程序，videoId 一律過 `valid_video_id`。偏好資料庫改 schema 要新增 Alembic revision（結尾 `PRAGMA user_version`），不改舊的 |
 | 調整範圍判斷 | 只動 `domain.py`（純函式）；要有 Intent 層的測試（`tests/unit/test_domain.py`、`tests/flow/test_route_find.py`） |
@@ -74,6 +74,7 @@
 
 - `macos-stt/` 是**獨立 git repo**（在 `.gitignore`），自有 venv、不在本 repo 提交範圍；語音授權必須在它的 `.app` bundle 內，只能經 `start.py serve` 啟動。
 - 不入版控、不要提交：`AI_models/`、`Rushia_hd/`（Live2D 模型，個人使用）、`desktop/vendor/`（Live2D Cubism Core 專有授權）、`desktop/node_modules/`、`logs/`、`data/`、`bench/synth/`、`*.wav`、`.env*`。不要修改 `.env`、production 設定或外部服務。
+- `mac_ai/router/__init__.py` 不在頂層 import 子模組：Python 載入任何 router 子模組前都會先執行它，熱路徑會跟著載入整個執行器與網路 client。新的對外名稱加進 `_EXPORTS`；`tests/runtime/test_import_footprint.py` 會檢查（[0029](../decisions/0029-deps-converge.md)）。
 - `ENDPOINT_MODE="client"`（預設）需要 `AI_models/silero_vad.onnx`；沒有這個檔案時才改成 `"server"`。
 - `WAKE_WORD_ENABLED` 預設 `False`；`--ui` 會強制啟用喚醒詞。
 - 本機專屬路徑（如 `project_roots`、`projects` 的 `path`）在 `vocab/lexicon.json`，改動前確認是否為使用者個人設定。

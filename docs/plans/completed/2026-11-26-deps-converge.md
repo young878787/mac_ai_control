@@ -1,6 +1,8 @@
 # 依賴收斂 P1、P2：底層工具歸位、比對與執行分開
 
-狀態：**草案，等使用者確認 §2 的 D1～D8 後才實作**。不改任何行為；只搬程式碼、改 import、改契約與文件。P3（`actions`／`local_actions` 依功能拆分）另見 [盤點計畫](2026-11-26-router-split-inventory.md)。
+> **歸檔（2026-11-26 結案）**：S0～S6 都已實作，目前有效的決策見 [ADR 0029](../../decisions/0029-deps-converge.md)。以下內文保留結案時的樣子，原檔名 `docs/plans/active/2026-11-26-deps-converge.md`。實作差異與結果見 §10。**結案時沒有做的**：R1（`pytest -m app` 真實 App）、R2（CI）、H1（語音實機）。
+
+狀態：**已結案（2026-11-26）**。原狀態：S0～S6 已實作（分支 `refactor/deps-converge`），自動化驗收通過；使用者已同意 D1～D8。不改任何行為；只搬程式碼、改 import、改契約與文件。P3（`actions`／`local_actions` 依功能拆分）另見 [盤點計畫](../active/2026-11-26-router-split-inventory.md)。
 
 ## 0. 目標與結論
 
@@ -154,10 +156,57 @@
 
 ## 7. 收尾（計畫結案時）
 
-- 新增 ADR 0028（依賴收斂：`proc`、`pinyin`、`action_plan` 三個模組的定位；`Match` 只保留資料；`__init__` 用到才 import；`catalog → proc` 例外的理由；刪掉 `catalog-lazy-actions-import` 規則）。
-- ADR 0025、0026 的「後果」各加一行指向 0028，比照 0025 → 0026 的做法。
+- 新增 ADR 0029（依賴收斂；0028 已被檔案行數上限用掉：`proc`、`pinyin`、`action_plan` 三個模組的定位；`Match` 只保留資料；`__init__` 用到才 import；`catalog → proc` 例外的理由；刪掉 `catalog-lazy-actions-import` 規則）。
+- ADR 0025、0026 的「後果」各加一行指向 0029，比照 0025 → 0026 的做法。
 - 本檔移到 `completed/`。
 
-## 10. 實測結果
+## 10. 實測結果（2026-11-26）
 
-（實作時填寫：分「已實際執行確認」與「尚未驗證」。）
+### 與計畫不同的地方
+
+1. **`FastPathMatcher.try_execute` 一併刪除**。§1.5 漏查：它把 `Match` 當函式呼叫，只有測試在用（沒有正式程式呼叫）。留著就解不掉 `fast_path → actions`。[2026-11-04 計畫](../completed/2026-11-04-multi-intent-fast-path.md) 寫過「`try_execute()` 保留」，這點由本次取代。
+2. **§1.5 的另外兩處漏查**：`test_route_slow.py::test_match_does_not_execute` 直接呼叫 `Match`；`test_completeness.py::test_classify_never_runs_actions` patch 了 `Match.run`。前者改用 `pipeline._run_match`，後者改 patch `actions._dispatch`（所有執行的單一入口）。`test_route_fast.py` 兩個測試改用 `match()`＋`_run_match`。
+3. **`slow_path` 改成頂層 import `local_actions`**。計畫沒想到：它原本靠 `fast_path → local_actions` 這條 import 才讓本機工具登錄起來，單獨走 `slow_path` 時 `LOCAL_TOOLS` 會是空的。先在 D6 的測試加 `slow_path` 重現（失敗），再修。
+4. `pipeline._run_match` 的 `ctx` 設為必填（三個呼叫端都有傳），沒有照 S4 留 `None` 的預設行為。
+5. 收尾的 ADR 編號改為 0029。
+6. `AGENTS.md`「不要碰」與 `coding-style.md` 的 `catalog` 條目，改寫成「`router/__init__.py` 不在頂層 import 子模組」（原本只寫刪除）。
+7. `test_music_prefs.py` 檢查模組原始碼的測試，同時檢查 `music_prefs` 和 `pinyin`，維持原本的涵蓋範圍。
+
+### 已實際執行確認
+
+| 項目 | 結果 |
+|---|---|
+| 基線（改動前） | `lint-imports` 5 kept，忽略數 C1 1／C3 1／C4 3／C5 2；L1 3065 passed；`pytest` 3367 passed、6 skipped；`test_import_footprint.py` 4 項失敗（符合預期） |
+| A1 契約 | 5 kept、0 broken；忽略數 C1 1、C2 0、C3 0、C4 1、C5 1 |
+| A2 突變 | (a) C3、C4、C5 BROKEN；(b) C4；(c) C5；(d) C3、C4；都和 §5.1 一致，檔案逐位元組還原 |
+| A3 循環 | grimp 讀實際 repo：0 組 |
+| A4、A5 | `test_import_footprint.py` 6 passed；另外暫時在 `__init__` 頂層 import `pipeline`，4 項失敗（測試守得住） |
+| A6 ast-grep | test 7 passed、scan 0 違規；兩個注入各被預期的規則抓到 |
+| A7 內容不變 | 搬移的 27 個定義 `ast.dump` 全部相同；其他有變動的定義只有 `_scan_installed`、`Match`、`FastPathMatcher`、`pipeline` 三個呼叫端、`plan_cloud` |
+| A8 文件 | `test_docs_flows.py` 45 passed；`module-deps.md` 依賴表和 grimp 比對 0 差異、0 遺漏 |
+| A9 回歸 | L1 3065 passed；`pytest` 3373 passed（基線＋新增 6 項）、6 skipped、0 failed；`ruff`、`ast-grep scan`、`lint-imports`、`npm run lint`、`typecheck` 通過；`node --test` 309 pass |
+| 全新行程冒煙 | 假的外部指令與網路、不讀 `.env`：開 App、音量、開資料夾、找檔案、挑清單都正確分派 |
+
+過程中 `pytest` 有一次出現 `test_xasr_server.py::test_unknown_http_path_is_404` 的 teardown 逾時（偶發，`testing.md` 已記載）；最後一次完整回歸沒有出現。
+
+**`scripts/check_file_lines.py` 仍然失敗**（改動前就失敗）：`attention.test.js` 1041、`local_actions.py` 973（原 1011）、`test_route_music.py` 1226。依 ADR 0028 由使用者另行處理。
+
+### A10 效能（同一台機器，各 3 次）
+
+| import | 改動前 | 改動後 |
+|---|---|---|
+| `router.lexicon` | 31 模組、58～59 ms | 4 模組、10～13 ms |
+| `wake` | 32 模組、58 ms | 5 模組、15 ms |
+| `stt.completeness` | 34 模組、62～99 ms | 15 模組、30～32 ms |
+| `router.fast_path` | 31 模組、58～60 ms | 11 模組、28～29 ms |
+
+這是一次性的啟動成本。正式程式 `main.py` 仍會載入全部模組，**啟動時間不會因此變短**。
+
+`bench/routing_latency.py`（`match()`，669 句）：p95 改動前 0.092～0.096 ms、改動後 0.093～0.095 ms，沒有差異（門檻 0.098 ms）。
+
+### 尚未驗證
+
+- R1：`pytest -m app`（真實 App，佔用螢幕）沒跑。
+- R2：CI（尚未 push）。`file-lines` job 預期仍是紅燈（上述既有超標）。
+- H1：語音實機。
+- `pytest -m live`、`-m cloud` 沒跑（沒有改提示詞、工具定義或雲端呼叫）。

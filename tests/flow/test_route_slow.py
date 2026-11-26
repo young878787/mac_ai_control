@@ -71,7 +71,7 @@ def test_pipeline_mixed_routes_unmatched_to_llm(monkeypatch, sh):
 def test_match_does_not_execute(sh):
     run = r.FastPathMatcher().match("開 Chrome")
     assert sh == []
-    run()
+    r.pipeline._run_match(run, r.ExecContext())
     assert sh == [["open", "-a", "Google Chrome"]]
 
 

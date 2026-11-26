@@ -13,6 +13,11 @@ from mac_ai.router.query_intent import parse_city_reply
 from mac_ai.router.slow_path import execute_chat_only, execute_slow_path_llm, local_miss_reply
 
 
+def _run_match(match: Match, ctx: ExecContext) -> List[str]:
+    """依序執行一個 Fast Path 比對結果的全部動作"""
+    return [run_tool(name, args, ctx) for name, args in match.actions]
+
+
 def _step_status(ctx: ExecContext) -> str:
     if ctx.status:
         return ctx.status
@@ -53,7 +58,7 @@ def _recover_slow_segment(clauses: List[str], matcher: FastPathMatcher, ctx: Exe
     for clause in clauses:
         cand = matcher.match(clause, candidates=True)
         if cand is not None:
-            logs += [f"[Fallback | {cand.note}] {r}" for r in cand.run(ctx)]
+            logs += [f"[Fallback | {cand.note}] {r}" for r in _run_match(cand, ctx)]
             ctx.status = "fallback"
         else:
             msg = f"⚠️ AI 服務無法使用（{err}），這句沒有處理：「{clause}」"
@@ -77,7 +82,7 @@ def _escalate_to_llm(text: str, step: dict, ctx: ExecContext, run: Match, matche
         legacy = matcher.match(text, whole=ctx.normalized, answer=False)
         if legacy is not None:
             print("↩️ [沒有雲端，照原本的路線]")
-            logs = legacy.run(ctx)
+            logs = _run_match(legacy, ctx)
             if ctx.escalate is not None:  # 原本的路線也可能轉交（例如找檔案 0 筆）
                 logs = logs + _escalate_to_llm(text, step, ctx, legacy, matcher)
             return logs
@@ -163,7 +168,7 @@ def process_voice_command(stt_text: str) -> dict:
         ctx.step, ctx.utterance, ctx.results, ctx.status, ctx.chat_done = step, text, [], None, False
         ctx.escalate, ctx.chat_hint = None, None
         if kind == "fast":
-            logs = run.run(ctx)
+            logs = _run_match(run, ctx)
             step["match"] = {"confidence": run.confidence, "note": run.note}
             if run.intent is not None:
                 step["intent"] = run.intent.to_log()

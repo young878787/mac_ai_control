@@ -39,10 +39,11 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | `mac_ai/services.py` | 子程序管理：沿用已健康的服務、`/health` 就緒檢查、SIGINT→SIGTERM→SIGKILL 收尾；`stt_service()`（macos-stt）與 `xasr_stt_service()`（缺模型檔就丟 `ServiceError`、ready 要求 `/health` 的 `engine` 是 `xasr`） |
 | `mac_ai/wake.py` | `WakeGate`：喚醒詞（預設關閉；`--ui` 開啟）＋ 60 秒會話，每句重新計時 |
 | `mac_ai/router/normalize.py` | NFKC、簡轉繁、誤聽詞、中文數字（只在數值語境）、疊詞 |
-| `mac_ai/router/fast_path.py` | `canonicalize_clause`、安全守門、各類 regex 規則 `_r_*`；天氣、搜尋、找的規則呼叫 `classify_query`，由 `_route_query` 換成動作；`answer_mode()`（包裝 `query_intent.answer_mode_of`）；回傳尚未執行的 `Match`（帶 `query`＝分類結果） |
+| `mac_ai/router/fast_path.py` | `canonicalize_clause`、安全守門、各類 regex 規則 `_r_*`；天氣、搜尋、找的規則呼叫 `classify_query`，由 `_route_query` 換成動作；`answer_mode()`（包裝 `query_intent.answer_mode_of`）；回傳只有資料的 `Match`（要呼叫的工具與參數，帶 `query`＝分類結果），由 `pipeline` 執行 |
 | `mac_ai/router/query_intent.py` | 查詢分類的唯一一處（[0023](docs/decisions/0023-query-routing.md)）：`classify_query` → `QueryIntent`（target knowledge／local／either、mode show／answer、evidence…），會變的事實 `verify_query`、開網頁或回答 `answer_mode_of`、「我住 X」`_home_city`、冷啟動後的縣市回答 `parse_city_reply`（[0024](docs/decisions/0024-home-city-and-answer-timeout.md)）；詞表在詞庫 `query_cues`；**純函式，不碰網路、LLM、子程序、資料庫、前景** |
 | `mac_ai/router/domain.py` | 第一層：範圍判斷（App／專案／資料夾／檔案／網頁），**純函式、無副作用** |
-| `mac_ai/router/local_actions.py` | 第二層：只讀 `Intent.slots` 執行（開資料夾、`mdfind`、選擇清單）；`ACTION_TABLE` 是 (domain, verb)→工具對應。也放點歌工具（`play_media`、`music_replace`、`music_feedback`、`music_top`）、天氣工具 `get_weather`（記縣市、預設依序是居住地→常問縣市→冷啟動、冷啟動時登記待答、呼叫 `weather_client`、結果放 `ctx.replies`）與 `remember_home`（背景記下居住地，接著只聊天）、長尾回答 `web_answer`（搜尋→雲端摘要→退回開搜尋頁；沒有搜尋金鑰時開搜尋頁或交給本機 AI）與 `open_source`、聯合搜尋 `federated_search`（mdfind 與 Brave 並行、合併清單、讀寫常搜名詞統計）與 `record_explicit_search`，以及前景不是媒體 App 時的背景音樂控制（`_background_control`）；`front_action` 成功後寫控制事件（`_record_control`） |
+| `mac_ai/router/local_actions.py` | 第二層：執行本機工具（開資料夾、`mdfind`、選擇清單）。也放點歌工具（`play_media`、`music_replace`、`music_feedback`、`music_top`）、天氣工具 `get_weather`（記縣市、預設依序是居住地→常問縣市→冷啟動、冷啟動時登記待答、呼叫 `weather_client`、結果放 `ctx.replies`）與 `remember_home`（背景記下居住地，接著只聊天）、長尾回答 `web_answer`（搜尋→雲端摘要→退回開搜尋頁；沒有搜尋金鑰時開搜尋頁或交給本機 AI）與 `open_source`、聯合搜尋 `federated_search`（mdfind 與 Brave 並行、合併清單、讀寫常搜名詞統計）與 `record_explicit_search`，以及前景不是媒體 App 時的背景音樂控制（`_background_control`）；`front_action` 成功後寫控制事件（`_record_control`） |
+| `mac_ai/router/action_plan.py` | 範圍判斷結果（`Intent`）→ 工具呼叫的對應表 `ACTION_TABLE`／`plan_actions`；純資料轉換，比對階段使用 |
 | `mac_ai/router/catalog.py` | 詞庫 App＋Spotlight 掃出的已安裝 App（快取，每指令開始檢查是否逾 60 秒） |
 | `mac_ai/router/context.py` | 前景視窗上下文：`lsappinfo` 讀最前面的 App（含 pid）、`osascript` 讀瀏覽器 host、`sites`／`app_shortcuts` 查表。**只在執行階段呼叫** |
 | `mac_ai/router/native.py` | 常用功能的底層執行：ctypes 直接呼叫輔助使用 API（視窗操作、按選單項目、按視窗裡的按鈕）與 CGEvent 送鍵（含媒體鍵，只允許 play／next／previous）；不經 osascript、不需額外套件、不拋例外 |
@@ -75,7 +76,7 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 
 ## 後端（`mac_ai/`）分層
 
-決策見 [0026](docs/decisions/0026-import-linter.md)。依賴只能往下；同一層的兩個模組互不 import。
+決策見 [0026](docs/decisions/0026-import-linter.md)、[0029](docs/decisions/0029-deps-converge.md)。依賴只能往下；同一層的兩個模組互不 import。
 
 | 層 | 模組 | 內容 | 可以 import |
 |---|---|---|---|

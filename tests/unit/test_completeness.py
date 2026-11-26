@@ -78,13 +78,12 @@ def test_stt_misheard_variants_still_count_as_commands():
 
 
 def test_classify_never_runs_actions(monkeypatch):
-    from mac_ai.router import fast_path
+    from mac_ai.router import actions
 
     def boom(*a, **k):
         raise AssertionError("分類不該執行動作")
 
-    monkeypatch.setattr(fast_path.Match, "run", boom)
-    monkeypatch.setattr(fast_path, "run_tool", boom)
+    monkeypatch.setattr(actions, "_dispatch", boom)  # 所有執行都經 run_tool → _dispatch
     assert classify("打開小算盤", wake_enabled=False) == COMPLETE
 
 
