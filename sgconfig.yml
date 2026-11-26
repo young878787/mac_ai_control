@@ -1,0 +1,8 @@
+# ast-grep：Python 的專案規則（ADR／紅線中看語法就能判斷的部分）。JS 由 desktop/ 的 ESLint 自訂規則負責。
+# 一律在 repo 根目錄執行（規則的 files／ignores 以這裡為基準），版本鎖定：
+#   uvx --from ast-grep-cli@0.51.2 ast-grep test    # 規則的 valid／invalid 案例
+#   uvx --from ast-grep-cli@0.51.2 ast-grep scan    # 掃描整個 repo
+ruleDirs:
+  - rules
+testConfigs:
+  - testDir: rule-tests

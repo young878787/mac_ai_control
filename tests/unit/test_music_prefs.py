@@ -413,7 +413,7 @@ def test_correct_skips_no_pinyin_segments_and_matches_case_insensitively(conn):
 
 # ---------- 定時整理：maintain、版本、排程 ----------
 def test_maintain_decays_deletes_low_keeps_liked(conn):
-    for name, vid in (("稻香", "a"), ("晴天", "b"), ("七里香", "c")):
+    for name, _vid in (("稻香", "a"), ("晴天", "b"), ("七里香", "c")):
         mp.learn_play(conn, query=name, source="cache", title="", channel="", artists=None, now=T0)
     mp.on_like(conn, "x", "七里香", T0)                     # 七里香 liked
     mp._bump_term(conn, "晴天", "title", T0, dweight=-0.99)  # 晴天 只剩 0.01

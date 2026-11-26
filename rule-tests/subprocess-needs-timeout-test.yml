@@ -1,0 +1,23 @@
+id: subprocess-needs-timeout
+valid:
+  - |
+    ok, err = _run(["open", "-a", app], EXTERNAL_TIMEOUT_S)
+  - |
+    ok, out = _run(cmd, timeout=POLL_TIMEOUT_S)
+  - |
+    p = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+  - |
+    proc = subprocess.Popen(cmd, stdout=log)
+  - |
+    state = await self._run(self.engine.new_stream)
+invalid:
+  - |
+    ok, err = _run(["open", "-a", app])
+  - |
+    ok, err = actions._run(["osascript", "-e", script])
+  - |
+    ps = subprocess.run(["ps", "-p", str(pid)], capture_output=True, text=True)
+  - |
+    out = subprocess.check_output(["mdfind", q])
+  - |
+    subprocess.call(["pmset", "sleepnow"])

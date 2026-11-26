@@ -44,11 +44,11 @@ def control_mac_app(app_name: str, action: str = "open") -> str:
     target_app = MAC_APP_ALIASES.get(normalized_key, app_name)
 
     if action == "open":
-        ok, err = _run(["open", "-a", target_app])
+        ok, err = _run(["open", "-a", target_app], EXTERNAL_TIMEOUT_S)
         return f"✅ 已開啟應用程式：{target_app}" if ok else f"❌ 開啟失敗：{target_app}（{err}）"
     elif action == "quit":
         script = f'tell application "{target_app}" to quit'
-        ok, err = _run(["osascript", "-e", script])
+        ok, err = _run(["osascript", "-e", script], EXTERNAL_TIMEOUT_S)
         return f"✅ 已關閉應用程式：{target_app}" if ok else f"❌ 關閉失敗：{target_app}（{err}）"
     return f"⚠️ 未知的動作：{action}"
 
@@ -58,13 +58,13 @@ def set_system_volume(level: Optional[int] = None, mute: Optional[bool] = None) 
     results = []
     if level is not None:
         clamped_level = max(0, min(100, int(level)))
-        ok, err = _run(["osascript", "-e", f"set volume output volume {clamped_level}"])
+        ok, err = _run(["osascript", "-e", f"set volume output volume {clamped_level}"], EXTERNAL_TIMEOUT_S)
         if not ok:
             return f"❌ 設定音量失敗（{err}）"
         results.append(f"音量設為 {clamped_level}%")
     if mute is not None:
         mute_str = "true" if mute else "false"
-        ok, err = _run(["osascript", "-e", f"set volume output muted {mute_str}"])
+        ok, err = _run(["osascript", "-e", f"set volume output muted {mute_str}"], EXTERNAL_TIMEOUT_S)
         if not ok:
             return f"❌ 設定靜音失敗（{err}）"
         results.append("已靜音" if mute else "已取消靜音")
@@ -76,7 +76,7 @@ def adjust_screen_brightness(direction: str, steps: int = 3) -> str:
     key_code = 144 if direction == "up" else 145
     steps = max(1, min(16, int(steps)))
     script = f'tell application "System Events" to repeat {steps} times\nkey code {key_code}\ndelay 0.05\nend repeat'
-    ok, err = _run(["osascript", "-e", script])
+    ok, err = _run(["osascript", "-e", script], EXTERNAL_TIMEOUT_S)
     action_text = "調亮" if direction == "up" else "調暗"
     return f"✅ 已將螢幕{action_text} {steps} 格" if ok else f"❌ 調整亮度失敗（{err}）"
 
@@ -91,7 +91,7 @@ def web_search_or_open_url(query: str, browser: Optional[str] = None) -> str:
         url = query
     else:
         url = google_search_url(query)
-    ok, err = _run(["open", "-a", browser, url] if browser else ["open", url])
+    ok, err = _run(["open", "-a", browser, url] if browser else ["open", url], EXTERNAL_TIMEOUT_S)
     return f"✅ 已開啟瀏覽器搜尋：{query}" if ok else f"❌ 開啟瀏覽器失敗（{err}）"
 
 
@@ -157,7 +157,7 @@ def browser_tab(action: str, browser: Optional[str] = None) -> str:
         return f"⚠️ 未知的分頁動作：{action}"
     target, err = _pick_tab_browser(browser)
     if target is None:
-        return f"❌ 找不到可操作的瀏覽器（支援 Safari、Google Chrome，請先開啟）" + (f"（{err}）" if err else "")
+        return "❌ 找不到可操作的瀏覽器（支援 Safari、Google Chrome，請先開啟）" + (f"（{err}）" if err else "")
     ok, err = _run(["osascript", "-e", _TAB_SCRIPTS[target][action]], EXTERNAL_TIMEOUT_S)
     return f"✅ {target}：{_TAB_DONE_TEXT[action]}" if ok else f"❌ 分頁操作失敗：{target}（{err}）"
 
@@ -258,21 +258,21 @@ def system_power_action(action: str) -> str:
     """控制深色模式、睡眠或鎖定螢幕"""
     if action == "toggle_dark_mode":
         script = 'tell application "System Events" to tell appearance preferences to set dark mode to not dark mode'
-        ok, err = _run(["osascript", "-e", script])
+        ok, err = _run(["osascript", "-e", script], EXTERNAL_TIMEOUT_S)
         return "✅ 已切換深色/淺色模式" if ok else f"❌ 切換深色模式失敗（{err}）"
     elif action in ("dark_mode_on", "dark_mode_off"):
         on = action == "dark_mode_on"
         script = f'tell application "System Events" to tell appearance preferences to set dark mode to {"true" if on else "false"}'
-        ok, err = _run(["osascript", "-e", script])
+        ok, err = _run(["osascript", "-e", script], EXTERNAL_TIMEOUT_S)
         if not ok:
             return f"❌ 設定深色模式失敗（{err}）"
         return "✅ 已開啟深色模式" if on else "✅ 已關閉深色模式（淺色）"
     elif action == "sleep":
-        ok, err = _run(["pmset", "sleepnow"])
+        ok, err = _run(["pmset", "sleepnow"], EXTERNAL_TIMEOUT_S)
         return "✅ 系統進入睡眠" if ok else f"❌ 睡眠失敗（{err}）"
     elif action == "lock_screen":
         script = 'tell application "System Events" to keystroke "q" using {control down, command down}'
-        ok, err = _run(["osascript", "-e", script])
+        ok, err = _run(["osascript", "-e", script], EXTERNAL_TIMEOUT_S)
         return "✅ 已鎖定螢幕" if ok else f"❌ 鎖定螢幕失敗（{err}）"
     return f"⚠️ 不支援的系統動作：{action}"
 
@@ -287,7 +287,7 @@ def open_project(project_name: str, editor: Optional[str] = None) -> str:
     if not os.path.isdir(path):
         return f"❌ 專案路徑不存在：{path}"
     target = editor or "Visual Studio Code"
-    ok, err = _run(["open", "-a", target, path])
+    ok, err = _run(["open", "-a", target, path], EXTERNAL_TIMEOUT_S)
     return f"✅ 已用 {target} 開啟專案：{name}" if ok else f"❌ 開啟專案失敗：{name}（{err}）"
 
 
@@ -369,7 +369,7 @@ def mark_page(ctx: ExecContext, res: str) -> None:
 PAGE_SETTLE_S = 1.0  # 開網頁後至少等這麼久才開始問「載入完了嗎」（避免讀到舊頁面的 loading=false）
 PAGE_LOAD_MAX_S = 8.0
 PAGE_FIXED_WAIT_S = 2.5  # 非 Chrome 無法查載入狀態，固定等待
-EXTERNAL_TIMEOUT_S = 15.0  # screencapture／sips 逾時
+EXTERNAL_TIMEOUT_S = 15.0  # 一般外部指令（open、osascript、pmset、screencapture、sips）的逾時上限；正常 1 秒內結束，卡住（如等授權對話框）時回失敗而不是一直擋住 command_worker
 POLL_TIMEOUT_S = 5.0  # 查 Chrome 載入狀態的 osascript 逾時（第一次可能跳出自動化授權）
 SCREEN_MAX_PX = 1280
 # 說到「頁面／網頁」就只截前景瀏覽器的視窗（被其他視窗擋住也截得到）；其餘（螢幕、截圖、畫面）截整個主螢幕
@@ -408,16 +408,20 @@ def _wait_for_page(ctx: ExecContext) -> None:
     if not pending:
         return
     elapsed = time.monotonic() - pending["t"]
+    # 以下 sleep 是例外（no-sleep-in-router）：同句剛開網頁、接著要讀畫面時才會等，而且有上限（PAGE_SETTLE_S＋PAGE_LOAD_MAX_S 或 PAGE_FIXED_WAIT_S）
     if ctx.last_browser == "Google Chrome":
         if PAGE_SETTLE_S - elapsed > 0:
+            # ast-grep-ignore: no-sleep-in-router
             time.sleep(PAGE_SETTLE_S - elapsed)
         deadline = time.monotonic() + PAGE_LOAD_MAX_S
         while time.monotonic() < deadline:
             ok, out = _run(["osascript", "-e", 'tell application "Google Chrome" to return loading of active tab of front window'], POLL_TIMEOUT_S)
             if not ok or out.lower() != "true":
                 break
+            # ast-grep-ignore: no-sleep-in-router
             time.sleep(0.3)
     elif PAGE_FIXED_WAIT_S - elapsed > 0:
+        # ast-grep-ignore: no-sleep-in-router
         time.sleep(PAGE_FIXED_WAIT_S - elapsed)
     ctx.page_pending = None
 

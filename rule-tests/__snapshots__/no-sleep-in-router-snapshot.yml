@@ -1,0 +1,39 @@
+id: no-sleep-in-router
+snapshots:
+  "def wait():\n    time.sleep(PAGE_FIXED_WAIT_S)\n":
+    labels:
+    - source: time.sleep(PAGE_FIXED_WAIT_S)
+      style: primary
+      start: 16
+      end: 45
+  "from time import sleep\ndef wait():\n    sleep(1)\n":
+    labels:
+    - source: sleep(1)
+      style: primary
+      start: 39
+      end: 47
+    - source: time
+      style: secondary
+      start: 5
+      end: 9
+    - source: sleep
+      style: secondary
+      start: 17
+      end: 22
+    - source: from time import sleep
+      style: secondary
+      start: 0
+      end: 22
+    - source: |
+        from time import sleep
+        def wait():
+            sleep(1)
+      style: secondary
+      start: 0
+      end: 48
+  "time.sleep(0.5)\n":
+    labels:
+    - source: time.sleep(0.5)
+      style: primary
+      start: 0
+      end: 15

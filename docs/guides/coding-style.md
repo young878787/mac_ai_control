@@ -66,6 +66,8 @@
 | 改 UI 協定 | `ui_bus.py`／`config.py` 與 `desktop/shared/contract.js`、`domain/`、`main/` 一起改（`tests/unit/test_ui_contract.py` 會比對合約、`desktop/test/ipc-channels.test.js` 比對 IPC 頻道），兩邊測試都要跑；跑 `python scripts/ui_demo.py --chat-test` |
 | 調聊天室主動展開的條件 | 只動 `config.EXPAND_*` 與 `pipeline.expand_reason`；案例在 `tests/flow/test_route_expand.py` |
 | 調桌面角色的注視／聆聽演出（擬人化） | 常數在 `desktop/renderer/animation/{ambient,face,mixer}.js` 與 `desktop/domain/attention.js`（來源與理由見 [擬人化計畫](../plans/completed/2026-11-20-humanize.md) §5、§12.3）；參數所有權在 `procedural.js`；跑 `node --test`（`motion-sim.test.js` 是 T2／T3 模擬指標）與 `python scripts/ui_demo.py --capture <dir>`（含情境比對）；改到幀迴圈、更新頻率或時序時才另跑 `python scripts/ui_motion.py`；以 PASS／FAIL 判定，人眼最準但不是通過條件（[0018](../decisions/0018-visual-checks-quantitative.md)）；指標定義與門檻在 `dev/motion-metrics.js`，不得為了過關放寬 |
+| 新增 Python 模組、改 import | 先決定屬於哪一層（`ARCHITECTURE.md`「後端分層」）；新的 `router/` 模組加進 `.importlinter` 的 C2（編排）或 C3（底層），並更新 `docs/flows/module-deps.md`；跑 `lint-imports` 與 `tests/unit/test_docs_flows.py`。違規時改依賴方向；**新增例外（`ignore_imports`）或放寬契約要先問使用者**（[0026](../decisions/0026-import-linter.md)） |
+| 新增／修改專案規則（紅線的語法檢查） | Python 寫在 `rules/<id>.yml`（`message` 寫 ADR 編號、`note` 寫正確做法，用 `files`／`ignores` 限範圍），在 `rule-tests/<id>-test.yml` 加 valid／invalid 各至少 2 例，跑 `ast-grep test -U` 更新快照，再跑 `ast-grep scan` 確認現有程式 0 違規（有違規先問使用者）；JS 寫成 `desktop/eslint-rules/` 的 ESLint 規則並加到 `desktop/test/eslint-rules.test.js`。分工與例外規則見 [0025](../decisions/0025-static-checks.md)；放寬既有規則先問使用者 |
 | 換桌面角色的 Live2D 模型／新增動作、表情、手勢的語意名稱 | `desktop/rig/` 新增（或改）一份 profile，把 `config.UI_MODEL_PATH` 指向新模型；語意名稱在 `domain/character.js` 的 `MOTIONS`／`EXPRESSIONS`／`GESTURES`，兩邊要一起改，`desktop/test/rig.test.js` 會檢查涵蓋度；`node --test` 與 `python scripts/ui_demo.py --capture <dir>` 都要跑 |
 
 ## 不要碰／注意

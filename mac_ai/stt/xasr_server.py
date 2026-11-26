@@ -206,13 +206,13 @@ class XasrServer:
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=self.config_timeout_s)
         except asyncio.TimeoutError:
-            raise ProtocolError("timed out waiting for config")
+            raise ProtocolError("timed out waiting for config") from None
         if isinstance(raw, bytes):
             raise ProtocolError("config must be a text JSON frame")
         try:
             cfg = json.loads(raw)
         except ValueError:
-            raise ProtocolError("config is not valid JSON")
+            raise ProtocolError("config is not valid JSON") from None
         if not isinstance(cfg, dict) or cfg.get("type") != "config":
             raise ProtocolError('first message must be {"type":"config",...}')
         lang = cfg.get("lang") or config.STT_LANG
@@ -227,7 +227,7 @@ class XasrServer:
             max_session_s = float(cfg.get("max_session_seconds", DEFAULT_MAX_SESSION_S))
             hints = [str(h) for h in (cfg.get("hints") or [])]
         except (TypeError, ValueError):
-            raise ProtocolError("invalid config field")
+            raise ProtocolError("invalid config field") from None
         return {"vad_flush_samples": int(vad_flush_s * SAMPLE_RATE), "max_session_samples": int(max_session_s * SAMPLE_RATE),
                 "hints": hints}
 

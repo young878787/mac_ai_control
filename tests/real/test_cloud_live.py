@@ -87,7 +87,7 @@ def plan_rows(configured):
     rows = []
     with MonkeyPatch.context() as mp:
         mp.setattr(config, "CLOUD_NO_CACHE", True)
-        for text, label, cat, _ in CORPUS:
+        for text, _label, cat, _ in CORPUS:
             step: dict = {}
             cloud_client.reset()  # 量測：每句獨立，前一句的逾時不能讓熔斷連帶影響後面的句子
             try:

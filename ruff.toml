@@ -1,0 +1,32 @@
+# Ruff：只開抓 bug 的規則（pyflakes、語法／陳述式錯誤、bugbear），不開格式化與純風格規則（UP、I、E501、ruff format），避免大量純格式 diff。
+# 版本鎖定：本機與 CI 都用 `uvx ruff@0.17.6 check .`。
+required-version = "==0.17.6"
+target-version = "py312"
+force-exclude = true
+extend-exclude = [
+    "archive",          # 唯讀參考
+    "macos-stt",        # 獨立 repo
+    "AI_models",
+    "Rushia_hd",
+    "Rushia_VRM_standard_pack",
+    "bench/synth",
+    "data",
+    "logs",
+    "desktop",          # JS，由 ESLint 負責
+]
+
+[lint]
+select = ["F", "E4", "E7", "E9", "B"]
+ignore = [
+    "E701",   # if x: return 這類單行寫法是專案既有風格
+    "E702",
+    "E731",   # 具名 lambda
+    "E741",   # l、I、O 變數名稱
+    "B905",   # zip() 補 strict= 會讓長度不一時改成拋錯，等於改行為
+]
+
+[lint.per-file-ignores]
+# 套件入口重新匯出子模組的名稱
+"**/__init__.py" = ["F401"]
+# pytest fixture 以 import 帶入再當參數名稱使用，會被誤報成重新定義；測試檔分段 import
+"tests/**" = ["F811", "E402"]

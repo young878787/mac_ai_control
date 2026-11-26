@@ -1,23 +1,25 @@
 # Slow Path：LLM 規劃與驗證
 
-Fast Path 沒命中的子句（slow 段），以及找檔案 0 筆後的轉交（`local_miss`），都由 `slow_path.execute_slow_path_llm` 處理。相關決策：[0007 G1](../decisions/0007-no-model-for-negation.md)、[0009 雲端](../decisions/0009-cloud-optional.md)、[0011 雲端工具](../decisions/0011-cloud-tools-and-site-open.md)、[0021](../decisions/0021-weather-answer.md)（`answer_mode`）、[0022 長尾回答](../decisions/0022-web-answer.md)、[0023 查詢路由](../decisions/0023-query-routing.md)（轉交走雲端、不憑記憶回答）、[0024](../decisions/0024-home-city-and-answer-timeout.md)（只聊天的一步）。
+Fast Path 沒命中的子句（slow 段），以及找檔案 0 筆後的轉交（`local_miss`），都由 `slow_path.execute_slow_path_llm` 處理。主流程見 [main-flow.md](main-flow.md)。相關決策：[0007 G1](../decisions/0007-no-model-for-negation.md)、[0009 雲端](../decisions/0009-cloud-optional.md)、[0011 雲端工具](../decisions/0011-cloud-tools-and-site-open.md)、[0021](../decisions/0021-weather-answer.md)（`answer_mode`）、[0022 長尾回答](../decisions/0022-web-answer.md)、[0023 查詢路由](../decisions/0023-query-routing.md)（轉交走雲端、不憑記憶回答）、[0024](../decisions/0024-home-city-and-answer-timeout.md)（只聊天的一步）。
 
 ```mermaid
 flowchart TD
-    In[slow 段原句] --> G{intent_guard<br/>local_miss 時不跑}
-    G -- no_action：任一子句否定／敘述 --> NA[回 NO_ACTION_REPLY<br/>不呼叫任何模型]
-    G -- 一般／info_question --> C{雲端可用？}
-    C -- 是 --> Cloud[_execute_cloud<br/>CLOUD_SYSTEM_PROMPT＋CLOUD_TOOLS]
-    Cloud -- CloudError --> Local
-    C -- 否 --> Local[plan_slow_path<br/>SYSTEM_PROMPT＋TOOLS_SCHEMA]
-    Cloud --> V[validate_calls]
-    Cloud -- 只回文字、原句是會變的事實 --> WA[改執行 web_answer<br/>不憑記憶回答]
-    Local --> V
-    V --> Exec[逐個 run_tool]
-    V -- 沒有 calls 也沒被拒 --> Fallback[看畫面補救 _is_look_at_screen<br/>或 chat_reply]
+    Input["slow 段原句"] --> Guard{"intent_guard<br/>local_miss 時不跑"}
+    Guard -- "no_action：任一子句否定／敘述" --> NoAction["回 NO_ACTION_REPLY<br/>不呼叫任何模型"]
+    Guard -- "一般／info_question" --> CloudReady{"雲端可用？"}
+    CloudReady -- "是" --> Cloud[["_execute_cloud<br/>CLOUD_SYSTEM_PROMPT＋CLOUD_TOOLS"]]
+    Cloud -- "CloudError" --> Local
+    CloudReady -- "否" --> Local[["plan_slow_path<br/>SYSTEM_PROMPT＋TOOLS_SCHEMA"]]
+    Cloud --> Validate
+    Cloud -- "只回文字、原句是會變的事實" --> WebAnswer["改執行 web_answer<br/>不憑記憶回答"]
+    Local --> Validate{"validate_calls"}
+    Validate -- "有通過的 calls" --> Exec["逐個 run_tool"]
+    Validate -- "沒有 calls 也沒被拒" --> Fallback["看畫面補救 _is_look_at_screen<br/>或 chat_reply"]
 ```
 
 ## D. execute_slow_path_llm
+
+階段：執行階段（`command_worker` 執行緒）；`intent_guard` 擋下時不呼叫任何模型。
 
 - **`intent_guard`**（`local_miss` 時不跑）
   - `no_action`（任一子句是否定／敘述）→ 回 `NO_ACTION_REPLY`，本機與雲端都不呼叫。
@@ -41,7 +43,9 @@ flowchart TD
 - 有雲端 → `plan_cloud(note=…)`：user 訊息最後附 `<note>`，system prompt 與工具不變。模型提出的工具呼叫與被拒絕的一律不執行（記在 `step["chat_dropped"]`），只採用文字；沒有文字回固定句。
 - 沒有雲端、熔斷、CloudError → 本機 `chat_reply(fallback=固定句)`，`chat_hint`＝note，不帶工具。
 
-## validate_calls（本機、雲端共用，依序）
+## K. validate_calls（本機、雲端共用，依序）
+
+階段：執行階段（`command_worker` 執行緒），在規劃之後、執行之前。
 
 1. 格式／JSON
 2. `validate_tool_call(schemas)`：唯一的信任邊界（未知工具或參數、缺必填、型別錯、enum 不符一律拒絕；App 必須在詞庫或已安裝清單；專案只從白名單解析）

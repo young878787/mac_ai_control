@@ -2,7 +2,7 @@
 
 Apple Silicon Mac 上的語音助手：麥克風 → 系統語音辨識（macos-stt；備用引擎 X-ASR）→ 路由 → 執行 macOS 動作。語音辨識、Fast Path、本機 LLM 都在本機；雲端模型是選用的加分（[0009](docs/decisions/0009-cloud-optional.md)）。
 
-流程細節：[docs/flows/main-flow.md](docs/flows/main-flow.md)、[docs/flows/slow-path.md](docs/flows/slow-path.md)。
+流程細節：[docs/flows/main-flow.md](docs/flows/main-flow.md)、[docs/flows/slow-path.md](docs/flows/slow-path.md)；模組依賴：[docs/flows/module-deps.md](docs/flows/module-deps.md)；圖的寫法：[docs/flows/README.md](docs/flows/README.md)。
 
 ## 延遲目標
 
@@ -70,6 +70,22 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | `mac_ai/stt/xasr_server.py`、`xasr_hotwords.py` | 備用辨識引擎：獨立子程序，說與 macos-stt 相同的 WS 協定 v1（`/stream`、`/health`），用 sherpa-onnx 串流解碼；`SherpaEngine` 包住模型，`XasrServer` 處理協定、錯誤碼、安全網 `server_vad`；熱詞由 `stt_hints.txt` 轉成 token（`encode_hotwords`）。**只被 `services.xasr_stt_service()` 以子程序啟動；`SttClient`、端點偵測、路由不知道引擎是哪一個**；`sherpa_onnx` 是延遲 import，macOS 預設路徑不需要安裝 |
 | `vocab/lexicon.json` | **詞庫單一來源**：App、別名、誤聽、動詞、資料夾、檔案類型、喚醒詞 |
 | `archive/` | 舊版單檔實作，**唯讀參考，不要改、不要 import** |
+
+## 後端（`mac_ai/`）分層
+
+決策見 [0026](docs/decisions/0026-import-linter.md)。依賴只能往下；同一層的兩個模組互不 import。
+
+| 層 | 模組 | 內容 | 可以 import |
+|---|---|---|---|
+| 1 | `assistant`、`services` | 收音迴圈與指令執行緒；啟動與清理子程序（STT、LLM server） | 以下全部 |
+| 2 | `stt/`、`ui_bus` | 收音、端點偵測、辨識引擎；桌面匯流排 | `wake`、`router`、`db`、`config` |
+| 3 | `wake` | 喚醒詞與會話 | `router`、`db`、`config` |
+| 4 | `router/` | 路由、規劃、執行；內部再分編排層（`pipeline` > `slow_path` > `fast_path` > `local_actions` > `actions`）與底層 | `db`、`config` |
+| 5 | `db/` | 點歌資料庫的 schema、migration、維護 CLI | `config`（例外：`db.rebuild` 用 `router.music_prefs`） |
+| 6 | `config` | 設定與常數 | 無 |
+
+- 規則寫在 `.importlinter`（import-linter，C1～C5：後端分層、router 編排順序、底層不往上依賴編排層、熱路徑不碰 IO、網路 client 只做網路與解析），本機與 CI 都會擋；函式內的 import 也算。
+- **新模組先決定層**；新的 `router/` 模組要加進 C2 或 C3（`tests/unit/test_docs_flows.py` 會檢查）。例外、唯一的循環與結構債見 [module-deps.md](docs/flows/module-deps.md)；新增或放寬契約、例外要先問使用者。
 
 ## 桌面前端（`desktop/`）分層
 

@@ -8,6 +8,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
+    "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json"
   },
   "dependencies": {
@@ -15,8 +16,11 @@
     "pixi.js": "6.5.10"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/node": "24.19.2",
     "electron": "45.2.3",
+    "eslint": "10.15.0",
+    "globals": "17.14.0",
     "typescript": "7.0.2"
   }
 }

@@ -1,0 +1,22 @@
+id: no-sleep-in-router
+language: python
+severity: error
+message: router 不得用 time.sleep 阻塞（command_worker 單執行緒，會擋住下一句）（紅線 12）
+note: |
+  需要等待時改用有上限的輪詢或逾時參數（例如 _run 的 timeout）；確實必要的短暫等待要有上限，
+  並在上一行加 `# ast-grep-ignore: no-sleep-in-router` 與理由。
+files:
+  - mac_ai/router/**/*.py
+rule:
+  any:
+    - pattern: time.sleep($$$)
+    - all:
+        - pattern: sleep($$$)
+        - inside:
+            stopBy: end
+            kind: module
+            has:
+              kind: import_from_statement
+              all:
+                - has: { field: module_name, regex: ^time$ }
+                - has: { field: name, regex: ^sleep\b }

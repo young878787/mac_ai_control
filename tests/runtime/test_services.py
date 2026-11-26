@@ -244,6 +244,21 @@ def test_kill_stt_backend_leaves_unrelated_process_alone(tmp_path, started):
     assert bystander.poll() is None
 
 
+def test_kill_stt_backend_ps_timeout_kills_nothing(tmp_path, started, monkeypatch):
+    """2026-11-26：ps 逾時就確認不了是不是 MacSTT，不送訊號"""
+    victim = spawn_sleeper(started, "/x/MacSTT.app/Contents/MacOS/macstt")
+    pid_file = tmp_path / "pid"
+    pid_file.write_text(str(victim.pid))
+
+    def hang(cmd, **kw):
+        assert kw["timeout"] == 2.0
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setattr(services.subprocess, "run", hang)
+    services.kill_stt_backend(str(pid_file))
+    assert victim.poll() is None
+
+
 @pytest.mark.parametrize("content", [None, "", "not-a-pid", "99999999"])
 def test_kill_stt_backend_ignores_missing_or_bad_pid_file(tmp_path, content):
     pid_file = tmp_path / "pid"

@@ -1,0 +1,21 @@
+id: urlopen-only-in-clients
+language: python
+severity: error
+message: 網路請求只能在各 client 模組裡發；LLM 呼叫一律走 llm_client._llm（ADR 0002，紅線 2）
+note: |
+  llm_client._llm 處理逾時、錯誤分類與熔斷；雲端走 cloud_client，搜尋／天氣／YouTube 走各自的 client。
+  新增外部服務時新增 client 模組並更新本規則的 ignores（等同改決策，先問使用者）。
+files:
+  - mac_ai/**/*.py
+ignores:
+  - mac_ai/router/llm_client.py
+  - mac_ai/router/cloud_client.py
+  - mac_ai/router/search_client.py
+  - mac_ai/router/weather_client.py
+  - mac_ai/router/youtube_client.py
+  - mac_ai/services.py
+rule:
+  kind: call
+  has:
+    field: function
+    regex: (^|\.)(urlopen|HTTPConnection|HTTPSConnection)$

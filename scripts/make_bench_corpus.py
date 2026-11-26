@@ -229,7 +229,7 @@ def human(out: Path) -> None:
         for _ in range(3):
             n += 1
             add(f"A{n:02d}", "A", text, seconds=7)
-    for i, (segs, pause) in enumerate(B_PATTERNS):
+    for i, (segs, _pause) in enumerate(B_PATTERNS):
         for j in range(2):
             add(f"B{2 * i + j + 1:02d}", "B", "".join(segs), seconds=9, note=f"pause|{' | '.join(segs)}")
     for i, (text, noise) in enumerate(C_ITEMS, 1):

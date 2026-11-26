@@ -1,0 +1,32 @@
+id: no-environ-write
+snapshots:
+  "from os import environ\nenviron[\"CWA_API_KEY\"] = key\n":
+    labels:
+    - source: environ["CWA_API_KEY"] = key
+      style: primary
+      start: 23
+      end: 51
+  "os.environ.setdefault(\"BRAVE_API_KEY\", key)\n":
+    labels:
+    - source: os.environ.setdefault("BRAVE_API_KEY", key)
+      style: primary
+      start: 0
+      end: 43
+  "os.environ.update(parse_env(text))\n":
+    labels:
+    - source: os.environ.update(parse_env(text))
+      style: primary
+      start: 0
+      end: 34
+  "os.environ[\"AI_API_KEY\"] = key\n":
+    labels:
+    - source: os.environ["AI_API_KEY"] = key
+      style: primary
+      start: 0
+      end: 30
+  "os.putenv(\"AI_API_KEY\", key)\n":
+    labels:
+    - source: os.putenv("AI_API_KEY", key)
+      style: primary
+      start: 0
+      end: 28

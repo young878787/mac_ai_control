@@ -1,7 +1,6 @@
 """WakeGate：喚醒詞、招呼詞、會話計時（注入時鐘）"""
 import pytest
 
-import mac_ai.router as r
 from mac_ai.stt.completeness import COMPLETE, INCOMPLETE, classify
 from mac_ai.wake import WakeGate, lexicon_wake_greetings, lexicon_wake_words, split_wake
 from support.clock import Clock

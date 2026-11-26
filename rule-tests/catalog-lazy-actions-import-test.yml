@@ -1,0 +1,21 @@
+id: catalog-lazy-actions-import
+valid:
+  - |
+    def _scan_installed():
+        from mac_ai.router.actions import _run
+        return _run(cmd, 5)
+  - |
+    def refresh():
+        from mac_ai.router import actions
+        actions.x()
+  - |
+    from mac_ai.router.lexicon import resolve_app
+invalid:
+  - |
+    from mac_ai.router.actions import _run
+  - |
+    from mac_ai.router import actions
+  - |
+    import mac_ai.router.actions
+  - |
+    from mac_ai.router import lexicon, actions as act
