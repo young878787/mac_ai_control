@@ -1,5 +1,5 @@
 // 動畫器：把狀態機的語意名稱演成模型的動作／表情／手勢（三個佇列）、管進退場，並在每個計算幀把所有參數疊好直到物理。
-// 語意名稱翻成模型名稱只在這裡做（查 rig profile）；不認得的選用表情照舊略過。時間由呼叫端經 advance(dt) 推進，不讀時鐘。
+// 語意名稱翻成模型名稱只在這裡做（查解析後的 rig，rig/check.js）；模型沒有的表情與手勢略過。時間由呼叫端經 advance(dt) 推進，不讀時鐘。
 // 每個計算幀的順序固定：預設值 → 動作 → 程序層（頭身眼眉）→ 表情 → 手勢 → 潛伏歪頭與進退場傾斜 → 物理 → 部件切換（pose3）。
 // 之後的軌跡記錄、頂點內插與 core.update() 由呼叫端接手（renderer/role/app.js）。
 
@@ -46,7 +46,7 @@ export function createAnimator({ rig, idle, noGesture, peekRatio, size, model, i
     activeMotion = name; activeSemantic = semantic;
   }
   function startExpression(semantic) {
-    const json = expressions[rig.expressions[semantic] ?? rig.optional[semantic]];
+    const json = expressions[rig.expressions[semantic]];
     if (!json) return;
     expressionQueue.startMotion(PIXI.live2d.CubismExpressionMotion.create(json), false, time);
   }

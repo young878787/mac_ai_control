@@ -4,7 +4,7 @@
 import { CHOICES_MAX, EXPAND_REASONS } from '../shared/contract.js';
 
 // 演出一律用語意名稱（驚訝、點頭…），不知道是哪個模型；語意名稱對應到模型裡的動作／表情／手勢名稱是 rig/ 的事。
-// 新增語意名稱要同步在 rig/ 的 profile 補對應（rig/check.js 的 checkRig 會檢查）。
+// 新增語意名稱要同步加進 rig/contract.js 的契約（rig/check.js 的 checkRig 會檢查）。
 export const MOTIONS = Object.freeze({
   idle: 'idle', surprised: 'surprised', curious: 'curious', nod: 'nod', shake: 'shake', happy: 'happy', talk: 'talk',
 });  // talk 只是說話的樣子（沒有聲音、不對嘴）；不用 Blink：它的頭身曲線全是 0，會把 Idle 的姿勢歸零，Idle 本身就會眨眼

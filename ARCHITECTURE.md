@@ -105,7 +105,7 @@ main.py ─┬─ mlx_vlm.server（本機 LLM，OpenAI 相容，APC_ENABLED=1）
 | 目錄 | 層 | 內容 | 可以 import |
 |---|---|---|---|
 | `shared/` | 資料 | 與後端的合約（訊息型別、上限、expand 原因）；後端是來源 | 無 |
-| `rig/` | 資料 | 各模型的事實：語意名稱→動作／表情／手勢名稱、參數 ID、版面、只播一次的動作（`fullrig03.js`、`hiyori.js`）；`index.js` 的 `rigFor` 依模型檔名挑 profile；`check.js` 的 `checkRig` 驗證 profile 涵蓋 domain 的每個語意名稱、必要項目在模型裡；換模型＝新增一份並登錄 | 無 |
+| `rig/` | 資料 | `contract.js`：所有模型共用的契約（語意名稱→約定的模型名稱、標準參數 ID、必要或選用）；`check.js` 的 `checkRig` 拿模型對契約檢查並回傳解析後的 rig；各模型的 profile 選填，只寫和約定不同的名稱、版面、只播一次的動作（`fullrig03.js`、`hiyori.js`），由 `index.js` 的 `rigFor` 依模型檔名挑 | 無 |
 | `domain/` | 純邏輯 | 角色狀態機（只說語意名稱）、注意力導演 `attention.js`（情境→注視計畫，亂數注入）、聊天室紀錄、幀率閘門；時間注入，不碰 DOM／PIXI／Node／Electron | `shared/` |
 | `renderer/engine/` | 渲染 | `stage`（Cubism Core 就緒、PIXI 應用程式、讀像素）、`load-model`（載模型並依固定順序裝修補、讀動作表情檔）、`loop`（rAF／停格計時器、逐幀統計）、PIXI／pixi-live2d-display 的修補（`compat/`，含 `render-orders`）、物理時鐘、頂點內插 | `rig/` |
 | `renderer/animation/` | 動畫 | 程序層（擬人化）：`mixer`（彈簧、角度上限）、`ambient`（頭身曲線、掃視、漂移）、`face`（眨眼、眼皮與眉毛事件）、`procedural`（依參數所有權寫參數陣列）、`animator`（語意名稱→動作／表情／手勢三個佇列、進退場、每個計算幀的參數疊加到物理與 pose3 部件切換）；時間、亂數與語意名稱由外部注入，不 import `domain/`（導演的計畫與 `idle`／`none` 名稱由 `app.js` 轉交） | `engine/`、`rig/` |

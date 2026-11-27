@@ -1,6 +1,6 @@
 # 0014 桌面前端分層，依賴只能往下
 
-- 狀態：採用
+- 狀態：採用（第 2 條被 [0033](0033-rig-contract.md) 修改：profile 改選填，契約集中在 `rig/contract.js`）
 - 日期：2026-11-20
 - 來源：[桌面前端分層整理](../plans/completed/2026-11-20-desktop-layering.md) §0、§1、§8 D1～D4
 

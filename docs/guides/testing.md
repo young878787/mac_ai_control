@@ -185,7 +185,7 @@ STT 語音實機沒有自動測試，M1～M3、W2 只能由你操作確認。Win
 | 改到 | 平常（L1） | 只在這些情況跑實機（L3） |
 |---|---|---|
 | 演出常數、注意力導演（`renderer/animation/`、`domain/attention.js`） | `node --test`（`motion-sim.test.js` 用 `dev/motion-metrics.js` 同一份指標模擬 T2／T3） | `python scripts/ui_demo.py --capture <dir>`（逐張比對動作、表情、手勢、情境）；改到幀迴圈、更新頻率或時序時才跑 `python scripts/ui_motion.py`（閒置 10 分鐘＋聆聽 10 輪，標準不縮短） |
-| 模型、rig profile、語意名稱 | `node --test`（`rig.test.js`） | `ui_demo.py --capture <dir>` |
+| 模型、契約（`rig/contract.js`）、rig profile、語意名稱 | `node --test`（`rig.test.js`） | `ui_demo.py --capture <dir>` |
 | 渲染迴圈、幀率、緩衝 | `node --test`（`frame-rate`／`render-buffers`／`physics-clock`） | `python scripts/ui_perf.py`（CPU、RSS、幀間隔） |
 | 聊天室、輸入框、選擇清單 | `node --test`（`chat`／`ipc-channels`） | `ui_demo.py --chat-test`／`--focus-test N`／`--choices-test`／`--interact-test` |
 

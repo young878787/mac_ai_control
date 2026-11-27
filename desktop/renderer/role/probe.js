@@ -18,7 +18,7 @@ export function createProbe({ rig, raw, P, controller, animator, stage, loop, at
   let cursor = null;
   const traceMs = (at) => Math.round((at - trace.t0) * 10) / 10;
 
-  const toRig = (snap) => ({ ...snap, expression: rig.expressions[snap.expression] ?? rig.optional[snap.expression] ?? snap.expression,
+  const toRig = (snap) => ({ ...snap, expression: rig.expressions[snap.expression] ?? snap.expression,
     gesture: rig.gestures[snap.gesture] ?? snap.gesture });
   const ui = {
     snapshot: () => toRig(controller.snapshot(Date.now())), poseT: animator.poseT, activeMotion: animator.activeMotion,

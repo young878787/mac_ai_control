@@ -13,7 +13,7 @@ globalThis.PIXI = { live2d: {
 
 function make({ once, partPose, calls = [] } = {}) {
   const names = { idle: 'Idle', nod: 'Nod' };
-  const rig = { motions: names, once, expressions: {}, optional: {}, gestures: {}, layout: { height: 420, region: { x: 0, y: 0, w: 100, h: 200 } } };
+  const rig = { motions: names, once, expressions: {}, gestures: {}, layout: { height: 420, region: { x: 0, y: 0, w: 100, h: 200 } } };
   const parameters = { values: new Float32Array(1), minimumValues: new Float32Array([-1]), maximumValues: new Float32Array([1]) };
   return createAnimator({ rig, idle: 'idle', noGesture: 'none', peekRatio: 0.3, size: { w: 360, h: 560 },
     model: { scale: { set() {} } }, internal: { width: 2048 }, core: 'core', raw: { parameters }, defaults: new Float32Array(1), ids: ['A'],

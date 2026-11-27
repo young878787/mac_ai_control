@@ -38,21 +38,19 @@ async function main() {
   const cfg = await desktop.config();
   if (!cfg.model) throw new Error('沒有指定模型（環境變數 MAC_AI_UI_MODEL）');
   const W = cfg.winW, H = cfg.winH;
-  // 狀態機只說語意名稱（domain/character.js）；rig/ 的 profile 把它對應到模型裡的名稱。除錯介面（__ui、動作軌跡）仍回報模型裡的名稱
-  const rig = rigFor(cfg.model);
-  const { height: MODEL_H, headFraction: HEAD_FRACTION } = rig.layout;   // 出場高度（px）、算「頭部」的比例
-  const NEEDED_MOTIONS = Object.values(rig.motions);
-  const NEEDED_EXPRESSIONS = Object.values(rig.expressions);
-  const OPTIONAL_EXPRESSIONS = Object.values(rig.optional);   // 缺了只警告，狀態機要求時不演
-  const GESTURE_EXPRESSIONS = Object.values(rig.gestures);    // 手勢層（手臂切換參數），和臉部表情分開排隊
   const stage = createStage({ view: $('stage'), width: W, height: H });
   const { app } = stage;
   const { model, internal, core, raw, settings, physicsJSON, poseJSON, base, defaults, ids } = await loadModel('app://ui' + cfg.model, stage, RENDER_OPT);
-  // profile 涵蓋度與模型內容：缺必要的動作／表情就拋錯，缺選用表情與手勢只警告（rig/check.js）
+  // 模型對契約檢查（rig/check.js）：名稱照 profile（選填）或約定；缺必要的動作或參數就拋錯，缺表情與手勢、沒有 profile 只警告。
+  // 狀態機只說語意名稱（domain/character.js），解析後的 rig 把它對應到模型裡的名稱。除錯介面（__ui、動作軌跡）仍回報模型裡的名稱
   const vocab = { motions: Object.values(MOTIONS), expressions: Object.values(EXPRESSIONS), gestures: Object.values(GESTURES).filter(g => g !== GESTURES.none) };
-  for (const w of checkRig(rig, settings, vocab, ids).warnings) console.warn(`[ui] ${w}`);
+  const { rig, warnings } = checkRig({ file: cfg.model.slice(cfg.model.lastIndexOf('/') + 1), model3: settings, paramIds: ids,
+    canvas: { width: internal.width, height: internal.height } }, vocab, rigFor(cfg.model));
+  for (const w of warnings) console.warn(`[ui] ${w}`);
+  const { height: MODEL_H, headFraction: HEAD_FRACTION } = rig.layout;   // 出場高度（px）、算「頭部」的比例
+  const NEEDED_MOTIONS = Object.values(rig.motions);
   const { motions, expressions } = await loadAssets(base, settings, { motions: NEEDED_MOTIONS,
-    expressions: [...NEEDED_EXPRESSIONS, ...OPTIONAL_EXPRESSIONS, ...GESTURE_EXPRESSIONS] });
+    expressions: [...Object.values(rig.expressions), ...Object.values(rig.gestures)] });   // 手勢也是表情檔（手臂切換參數），分開排隊
   const P = Object.fromEntries(Object.entries(rig.params).map(([key, id]) => [key, ids.indexOf(id)]));
   // 自己會眨眼的語意動作（眼皮曲線最小值 < 0.5，從 motion3.json 算，不寫死名稱）：這些動作播放時程序眨眼暫停
   const blinkMotions = new Set(Object.entries(rig.motions).filter(([, name]) => motionBlinks(motions[name])).map(([semantic]) => semantic));
