@@ -13,5 +13,6 @@ export const CONTRACT = Object.freeze({
 });
 export const REQUIRED = Object.freeze(['motions', 'params']);   // 其餘類別選用
 
-// 沒有 profile 時的版面：region 用整張畫布（checkRig 依畫布比例算），出場高度同 RushiaHD；headFraction 取 RushiaHD（0.30）與 hiyori（0.19）之間
-export const DEFAULT_LAYOUT = Object.freeze({ height: 420, headFraction: 0.25 });
+// 沒有 profile 時的版面：region 用整張畫布（checkRig 依畫布比例算），出場高度同 RushiaHD；headFraction 取 RushiaHD（0.30）與 hiyori（0.19）之間。
+// headCenter＝頭部中心離模型頂端的比例（游標、點擊的 dy 以它為基準），profile 的 layout 沒寫就用這個（RushiaHD 的值，ADR 0034）
+export const DEFAULT_LAYOUT = Object.freeze({ height: 420, headFraction: 0.25, headCenter: 0.16 });

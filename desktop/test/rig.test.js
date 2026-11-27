@@ -51,7 +51,18 @@ test('RushiaHD（fullrig03）：通過、沒有警告，名稱照約定、版面
   assert.deepEqual(rig.motions, CONTRACT.motions);
   assert.deepEqual(rig.expressions, CONTRACT.expressions);
   assert.deepEqual(rig.gestures, CONTRACT.gestures);
-  assert.equal(rig.layout, fullrig03.layout);
+  assert.deepEqual(rig.layout, { ...fullrig03.layout, headCenter: 0.16 });
+});
+
+test('layout.headCenter：profile 沒寫用約定的 0.16（原本寫死在 animator 的值），寫了用 profile 的，超出 0～1 拋錯', () => {
+  assert.equal(DEFAULT_LAYOUT.headCenter, 0.16);
+  assert.equal(check(conventional(), null).rig.layout.headCenter, 0.16);
+  assert.equal(check(hiyoriShape(), hiyori).rig.layout.headCenter, 0.16);
+  const layout = { ...fullrig03.layout, headCenter: 0.1 };
+  assert.equal(check(conventional(), { layout }).rig.layout.headCenter, 0.1);
+  for (const headCenter of [0, 1, -0.1, '0.2']) {
+    assert.throws(() => check(conventional(), { layout: { ...fullrig03.layout, headCenter } }), /layout\.headCenter/, String(headCenter));
+  }
 });
 
 test('缺必要動作：拋錯，訊息含缺哪一個、模型有的動作群組、怎麼配置', () => {

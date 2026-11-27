@@ -19,7 +19,7 @@ const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2)
  */
 export function createAnimator({ rig, idle, noGesture, peekRatio, size, model, internal, core, raw, defaults, ids, P, motions, expressions,
   eyeBlinkIds, lipSyncIds, physics, procedural, partPose = null }) {
-  const { height: MODEL_H, region: REGION } = rig.layout;
+  const { height: MODEL_H, region: REGION, headCenter: HEAD_CENTER } = rig.layout;
   const W = size.w;
   const IDLE = rig.motions[idle];
   const gestureNames = Object.values(rig.gestures);
@@ -75,7 +75,7 @@ export function createAnimator({ rig, idle, noGesture, peekRatio, size, model, i
     return Math.sin(Math.PI * k);                    // 過程中身體傾斜用
   }
   const topY = () => peekY + (outY - peekY) * poseT;
-  const headCenterY = () => topY() + 0.16 * MODEL_H;   // 頭部中心的 y（視窗座標），游標與點擊的 dy 以它為基準（上為正）
+  const headCenterY = () => topY() + HEAD_CENTER * MODEL_H;   // 頭部中心的 y（視窗座標，rig.layout.headCenter），游標與點擊的 dy 以它為基準（上為正）
 
   // ---------- 舊做法的游標視線（沒有程序層時） ----------
   let cursor = null, gx = 0, gy = 0;

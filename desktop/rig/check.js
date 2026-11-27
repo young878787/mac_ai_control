@@ -18,13 +18,14 @@ function checkProfile(profile, errors) {
   for (const name of profile.once || []) if (!Object.hasOwn(CONTRACT.motions, name)) errors.push(`profile 的 once 有契約沒有的動作：${name}`);
   const l = profile.layout;
   if (l && !(l.region?.w > 0 && l.region?.h > 0 && l.height > 0 && l.headFraction > 0)) errors.push('profile 的 layout 要有 region（x、y、w、h）、height、headFraction');
+  if (l && l.headCenter !== undefined && !(typeof l.headCenter === 'number' && l.headCenter > 0 && l.headCenter < 1)) errors.push('profile 的 layout.headCenter（選填）要在 0～1 之間');
 }
 
 /**
  * @param {{ file: string, model3: { FileReferences?: { Motions?: Record<string, unknown[]>, Expressions?: { Name: string }[] } },
  *           paramIds: string[], canvas: { width: number, height: number } }} model file＝模型檔名（訊息用）；canvas＝模型畫布大小
  * @param {{ motions: string[], expressions: string[], gestures: string[] }} vocab domain 用到的語意名稱
- * @param {any} [profile] 選填：motions／expressions／gestures／params 只寫和約定不同的名稱，layout、once 照 rig/hiyori.js
+ * @param {any} [profile] 選填：motions／expressions／gestures／params 只寫和約定不同的名稱，layout、once 照 rig/hiyori.js（layout.headCenter 選填）
  * @returns {{ rig: { motions: Record<string,string>, expressions: Record<string,string>, gestures: Record<string,string>,
  *             params: Record<string,string>, layout: any, once: string[] }, warnings: string[] }}
  */
@@ -38,7 +39,8 @@ export function checkRig(model, vocab, profile = null) {
 
   const { width, height } = model.canvas;
   const rig = { motions: {}, expressions: {}, gestures: {}, params: {}, once: profile?.once ?? [],
-    layout: profile?.layout ?? { ...DEFAULT_LAYOUT, region: { x: 0, y: 0, w: 2048, h: 2048 * height / width } } };   // region 以「畫布寬＝2048」表示（animator.js）
+    layout: profile?.layout ? { headCenter: DEFAULT_LAYOUT.headCenter, ...profile.layout }
+      : { ...DEFAULT_LAYOUT, region: { x: 0, y: 0, w: 2048, h: 2048 * height / width } } };   // region 以「畫布寬＝2048」表示（animator.js）
   for (const kind of Object.keys(KINDS)) rig[kind] = { ...CONTRACT[kind], ...profile?.[kind] };
 
   const refs = model.model3.FileReferences || {};
