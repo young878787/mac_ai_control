@@ -23,7 +23,7 @@
 
 - **語音辨識**交給 [macos-stt](#感謝)，它會呼叫 Apple 內建的 `SFSpeechRecognizer`，不需下載模型。也可以改用本機的 X-ASR（備用引擎，比較不準，Windows 的預設），見[備用辨識引擎](#備用辨識引擎x-asrwindows-預設)。
 - **語言模型**使用 `mlx_vlm.server` 載入的本地模型（預設 `AI_models/LFM3-VL-2B-MLX-4bit`）。
-- **雲端模型**（選用）：Slow Path 有金鑰時先問雲端（OpenAI 相容的 LiteLLM proxy），失敗、逾時、熔斷時同一步退回本機模型。雲端與本機用同一套驗證，雲端也不能繞過否定／敘述句守門；雲端另外多兩個工具：對目前視窗執行常用功能（「再往下」）與站內搜尋。
+- **雲端模型**（選用）：Slow Path 有金鑰時先問雲端（OpenAI 相容的 LiteLLM proxy），失敗、逾時、熔斷時同一步退回本機模型。雲端與本機用同一套驗證，雲端也不能繞過否定／敘述句守門；雲端另外多兩個工具：對目前視窗執行常用功能（「再往下」）與站內搜尋；有 `BRAVE_API_KEY` 時再多一個上網查證回答（見「長尾問題直接回答」）。
 - 模型不可用時，Fast Path 仍能執行常見指令。
 
 ## 需要搭配 macos-stt
@@ -281,7 +281,7 @@ python main.py --stt-engine xasr  # 語音辨識改用備用引擎 X-ASR（見�
 
 ```bash
 cd desktop
-npm install                                   # electron、pixi.js、pixi-live2d-display（版本已鎖定）；typescript、@types/node 只用在 npm run typecheck
+npm install                                   # electron、pixi.js、pixi-live2d-display（版本已鎖定）；typescript、@types/node 只用在 npm run typecheck，eslint、@eslint/js、globals 只用在 npm run lint
 ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/install.js   # npm 沒有下載到 Electron 執行檔時補這行
 ```
 
@@ -393,24 +393,46 @@ python scripts/acceptance.py list                   # 歷次結果
 
 真實 App 驗收只操作測試自己開的視窗，結束時關掉；第一次跑會要求「自動化」「輔助使用」「螢幕錄製」授權，缺授權的項目會 skip 並寫明原因。跑的時候不要動鍵盤滑鼠。
 
+改什麼該跑哪些測試，見 [docs/guides/testing.md](docs/guides/testing.md)。
+
+### 靜態檢查與 CI
+
+除了 `desktop/` 的指令，都在 repo 根目錄執行（`uvx` 需要 [uv](https://docs.astral.sh/uv/)）：
+
+```bash
+uvx ruff@0.17.6 check .                                          # Python lint（ruff.toml）
+uvx --from ast-grep-cli@0.51.2 ast-grep test                     # 專案規則本身的 valid／invalid 案例
+uvx --from ast-grep-cli@0.51.2 ast-grep scan                     # Python 專案規則（rules/）
+uvx --from import-linter==2.16 --with grimp==3.19 lint-imports   # 模組依賴契約（.importlinter）
+python3 scripts/check_file_lines.py                              # 程式檔（含測試）不超過 800 行
+cd desktop && npm run lint                                       # ESLint＋自訂規則（desktop/eslint-rules/）
+```
+
+GitHub Actions（`.github/workflows/lint.yml`）在 push 與 PR 時跑上面這些，加上 `npm run typecheck` 與 `node --test`。**CI 不跑 pytest**（依賴 `mlx` 等 Apple 限定套件），所以 CI 綠燈不代表 pytest 通過。分工與理由見 [0025](docs/decisions/0025-static-checks.md)、[0026](docs/decisions/0026-import-linter.md)、[0028](docs/decisions/0028-file-line-limit.md)。
+
 ## 專案結構
 
 | 路徑 | 說明 |
 |---|---|
 | `main.py` | 啟動入口：起服務、收音、主迴圈 |
 | `mac_ai/config.py` | 路徑、埠號、逾時等設定（單一來源） |
+| `mac_ai/assistant.py` | 主流程：辨識事件 → 喚醒詞閘門 → 指令佇列 → 依序執行 |
 | `mac_ai/services.py` | 背景服務的啟動、就緒檢查與關閉 |
 | `mac_ai/wake.py` | 喚醒詞閘門與會話 |
 | `mac_ai/ui_bus.py` | 桌面角色的事件匯流排（本機 WebSocket） |
-| `mac_ai/router/` | 正規化、Fast Path、Slow Path（雲端優先、退回本機 LLM；`cloud_client.py` 雲端呼叫與提示詞，`memory.py` 對話記憶）、動作執行；找東西分兩層：`domain.py`（範圍判斷，純函式）與 `find_tools.py`（執行；本機工具依功能分在 `*_tools.py`，由 `local_actions.py` 登錄），`catalog.py` 是已安裝 App／專案目錄，`choices.py` 是多筆結果的選擇清單，`context.py` 讀最前面的 App 與網站；點歌：`youtube_client.py`（InnerTube 搜尋）、`music_prefs.py`（偏好、計分、拼音矯正）；天氣：`weather_client.py`（氣象署→Open-Meteo）、`weather_prefs.py`（常問縣市）；長尾回答：`search_client.py`（Brave 搜尋）、`sources.py`（來源追問）；查詢分類：`query_intent.py`（純函式）、`search_prefs.py`（常搜名詞統計） |
+| `mac_ai/router/` | 路由與執行。流程：`normalize.py` 正規化 → `pipeline.py` 切句並依序走 `fast_path.py`（只比對、不執行）或 `slow_path.py`（雲端優先，退回本機；`cloud_client.py`、`llm_client.py`、`memory.py`）→ `actions.py` 分派工具 |
+| 〃 工具 | 依功能分在 `system_tools.py`、`browser_tools.py`、`front_tools.py`、`screen_tools.py`、`find_tools.py`、`music_tools.py`、`answer_tools.py`、`chat_tools.py`；本機工具由 `local_actions.py` 登錄，`exec_context.py` 是同一句共用的執行狀態 |
+| 〃 判斷與資料 | 找東西的範圍判斷 `domain.py`＋`action_plan.py`、查詢分類 `query_intent.py`、App／專案目錄 `catalog.py`、選擇清單 `choices.py`、前景讀取 `context.py`、底層操作 `native.py`；外部服務 `youtube_client.py`、`weather_client.py`、`search_client.py`（來源追問 `sources.py`）；偏好 `music_prefs.py`、`weather_prefs.py`、`search_prefs.py`、`profile_store.py`（居住地） |
 | `mac_ai/db/` | 偏好資料庫（`data/music.sqlite3`，點歌、天氣常問縣市、常搜名詞共用）的建立、備份與升級（Alembic migration）、從事件重算詞表（`rebuild.py`） |
 | `mac_ai/stt/` | 麥克風收音（`mic.py`）、STT WebSocket 用戶端（`client.py`）、神經網路 VAD（`vad.py`）、端點偵測（`endpoint.py`、`completeness.py`）、計時紀錄（`latency_log.py`）；備用辨識引擎的伺服器（`xasr_server.py`）與熱詞編碼（`xasr_hotwords.py`） |
 | `desktop/` | 桌面角色（Electron），依行程與層次分目錄：`main/`（視窗、匯流排連線、IPC）、`preload/`、`domain/`（角色狀態機、注意力導演、聊天室紀錄、幀率閘門，純邏輯）、`rig/`（模型資料）、`shared/`（與後端的合約）、`renderer/`（`engine/` 渲染、`animation/` 程序動畫、`role/` 與 `chat/` 畫面）、`dev/`（量測）；分層規則見 [ARCHITECTURE.md](ARCHITECTURE.md) |
-| `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與效能量測（`ui_perf.py`）；自動驗收的量化與比較（`acceptance.py`） |
-| `bench/` | 測試語料；`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單 |
+| `scripts/` | 端點偵測的測試語料產生、bench、真人錄音；桌面角色的示範（`ui_demo.py`）與量測（`ui_perf.py`、`ui_motion.py`）；自動驗收的量化與比較（`acceptance.py`）；紀錄檢視（`log_view.py`）；行數檢查（`check_file_lines.py`）；YouTube 測試資料重抓（`capture_youtube_fixtures.py`） |
+| `bench/` | 測試語料（`synth/` 可重新產生、不入版控，`human/manifest.csv` 是真人錄音清單）與延遲量測腳本（`routing_latency.py`、`web_answer.py`、`web_answer_latency.py`） |
 | `vocab/lexicon.json` | 喚醒詞、App 名稱、指令詞、常見誤辨識對照（單一來源） |
 | `vocab/stt_hints.txt` | 由 `build_vocab.py` 產生，餵給語音辨識當提示詞 |
-| `docs/` | `decisions/` 設計決策（ADR）、`flows/` 跨模組流程、`guides/` 測試與程式守則、`plans/` 實作計畫（`completed/` 為已結案）；AI 程式助手的入口是 `AGENTS.md` |
+| `rules/`、`rule-tests/`、`sgconfig.yml` | ast-grep 專案規則與其測試案例 |
+| `.importlinter`、`ruff.toml`、`.github/workflows/lint.yml` | 模組依賴契約、Python lint 設定、CI |
+| `docs/` | `decisions/` 設計決策（ADR，先看[索引](docs/decisions/README.md)）、`flows/` 跨模組流程與模組依賴、`guides/` 測試與程式守則、`plans/` 實作計畫（`completed/` 為已結案）；架構總覽在 [ARCHITECTURE.md](ARCHITECTURE.md)，AI 程式助手的入口是 [AGENTS.md](AGENTS.md) |
 | `tests/` | 分層測試：`unit/` 單元、`flow/` 整條路由、`runtime/` 真執行緒與 socket、`real/` live／cloud／app 實測；共用假物件與語料在 `support/` |
 
 修改 `vocab/lexicon.json` 後，`main.py` 啟動時會自動重新產生詞表；也可以手動執行 `python build_vocab.py`。
