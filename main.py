@@ -4,6 +4,7 @@
     python main.py --no-stt         只啟動 LLM 服務（例如跑 pytest -m live），不收音
     python main.py --text "打開小算盤"  直接送入文字指令後結束（不啟動任何服務、不檢查喚醒詞）
     python main.py --ui             同時顯示桌面角色（Electron）；此模式預設啟用喚醒詞
+    python main.py --ui --character hiyori   換一個桌面角色（預設 rushia）
     python main.py --stt-engine xasr   語音辨識改用備用引擎 X-ASR（預設：macOS 用 macos-stt，Windows 用 xasr）
 """
 import argparse
@@ -37,6 +38,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                    help=f"語音辨識引擎（預設 {config.STT_ENGINE}）：macos＝macos-stt（只能在 macOS）；xasr＝X-ASR（sherpa-onnx，比較不準的備用引擎）")
     p.add_argument("--device", type=int, default=None, help="麥克風輸入裝置編號（預設系統預設麥克風）")
     p.add_argument("--ui", action="store_true", help="顯示桌面角色（Electron）；此模式預設啟用喚醒詞")
+    p.add_argument("--character", choices=list(config.UI_CHARACTERS), default=None,
+                   help="桌面角色（搭配 --ui；預設 rushia）")
     return p.parse_args(argv)
 
 
@@ -75,8 +78,9 @@ def music_maintenance(music_db) -> MusicMaintenance:
 
 def run(args: argparse.Namespace) -> int:
     """啟動服務並進入主迴圈，直到 Ctrl+C（KeyboardInterrupt）。回傳結束碼；服務一律在離開前收掉"""
+    model = config.UI_CHARACTERS[args.character] if args.character else config.UI_MODEL_PATH
     if args.ui:
-        problem = check_ui_ready()
+        problem = check_ui_ready(model)
         if problem:
             print(f"❌ {problem}")
             return 1
@@ -146,7 +150,7 @@ def run(args: argparse.Namespace) -> int:
             except OSError as e:
                 print(f"❌ {e}")
                 return 1
-            ui = ui_service(bus.url, bus.health_url)
+            ui = ui_service(bus.url, bus.health_url, model)
             started.append(ui)
             try:
                 ui.start()

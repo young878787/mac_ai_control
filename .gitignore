@@ -44,6 +44,9 @@ desktop/vendor/
 Rushia_hd/
 Rushia_VRM_standard_pack
 
+# Live2D 官方範例模型 Hiyori（相容性測試用；受 Free Material License 與範例資料使用條款約束，不納入版控）
+Hiyori/
+
 # 點歌偏好資料庫（永久保存、含個人聽歌紀錄，不入版控；只限專案根目錄的 data/，含 WAL 與備份檔）
 /data/
 

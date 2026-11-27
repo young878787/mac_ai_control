@@ -1,4 +1,4 @@
-// 載入 Live2D 模型：讀 model3／physics JSON、建模型、依固定順序裝修補，並讀動作與表情檔。
+// 載入 Live2D 模型：讀 model3／physics／pose JSON、建模型、依固定順序裝修補，並讀動作與表情檔。
 import { bridgeRenderOrders } from './compat/render-orders.js';
 import { installDrawableColors } from './compat/drawable-colors.js';
 import { installRenderBuffers, installStateCache } from './compat/render-buffers.js';
@@ -20,6 +20,7 @@ export async function loadModel(url, stage, options) {
   const base = url.slice(0, url.lastIndexOf('/') + 1);
   const settings = await readJSON(url);
   const physicsJSON = await readJSON(base + settings.FileReferences.Physics);
+  const poseJSON = settings.FileReferences.Pose ? await readJSON(base + settings.FileReferences.Pose) : null;
   const model = await PIXI.live2d.Live2DModel.from(url, { autoUpdate: false, autoInteract: false, motionPreload: /** @type {any} */ ('NONE') });
   stage.app.stage.addChild(model);
   const internal = /** @type {any} */ (model.internalModel), core = internal.coreModel, raw = core.getModel();
@@ -31,7 +32,7 @@ export async function loadModel(url, stage, options) {
   internal.renderer.setClippingMaskBufferSize(1024);
   const defaults = Float32Array.from(raw.parameters.defaultValues);
   const ids = Array.from(raw.parameters.ids);
-  return { model, internal, core, raw, settings, physicsJSON, base, defaults, ids };
+  return { model, internal, core, raw, settings, physicsJSON, poseJSON, base, defaults, ids };
 }
 
 /**

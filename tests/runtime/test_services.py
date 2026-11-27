@@ -392,6 +392,16 @@ def test_find_electron_and_readiness_checks(tmp_path, monkeypatch):
     assert services.check_ui_ready() is None
 
 
+def test_ui_model_argument_overrides_the_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "UI_DIR", make_ui_dir(tmp_path))
+    monkeypatch.setattr(config, "UI_MODEL_PATH", tmp_path / "default.model3.json")
+    other = tmp_path / "other.model3.json"
+    assert str(other) in services.check_ui_ready(other)
+    other.write_text("{}")
+    assert services.check_ui_ready(other) is None
+    assert services.ui_service("ws://127.0.0.1:1/?token=t", "http://127.0.0.1:1/health", other).env["MAC_AI_UI_MODEL"] == str(other)
+
+
 def test_ui_service_is_ready_only_when_a_ui_client_is_connected(tmp_path, monkeypatch):
     monkeypatch.setenv("ELECTRON_RUN_AS_NODE", "1")  # 從 VS Code 終端機啟動時會有；留著 Electron 只會當 Node 跑
     monkeypatch.setattr(config, "UI_DIR", make_ui_dir(tmp_path))

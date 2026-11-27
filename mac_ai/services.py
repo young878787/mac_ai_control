@@ -204,19 +204,20 @@ def find_electron() -> Optional[Path]:
     return exe if exe.is_file() else None
 
 
-def check_ui_ready() -> Optional[str]:
-    """--ui 需要的檔案都在就回傳 None，否則回傳缺什麼與怎麼補"""
+def check_ui_ready(model: Optional[Path] = None) -> Optional[str]:
+    """--ui 需要的檔案都在就回傳 None，否則回傳缺什麼與怎麼補；model 沒給就用 config.UI_MODEL_PATH"""
     if find_electron() is None:
         return f"找不到 Electron，請先安裝：cd {config.UI_DIR} && npm install"
     core = config.UI_DIR / "vendor" / "live2dcubismcore.min.js"
     if not core.is_file():
         return f"找不到 Live2D Cubism Core：{core}（到 Live2D 官網下載 Cubism SDK for Web，把 Core/live2dcubismcore.min.js 放到這裡）"
-    if not config.UI_MODEL_PATH.is_file():
-        return f"找不到 Live2D 模型：{config.UI_MODEL_PATH}"
+    model = model or config.UI_MODEL_PATH
+    if not model.is_file():
+        return f"找不到 Live2D 模型：{model}"
     return None
 
 
-def ui_service(bus_url: str, bus_health_url: str) -> Service:
+def ui_service(bus_url: str, bus_health_url: str, model: Optional[Path] = None) -> Service:
     """Electron 桌面角色。連上事件匯流排（/health 的 clients ≥ 1）才算就緒"""
     return Service(
         name="UI（Electron）",
@@ -227,6 +228,6 @@ def ui_service(bus_url: str, bus_health_url: str) -> Service:
         ready=lambda health: health.get("clients", 0) >= 1,
         # 從 VS Code 等 Electron 程式的終端機啟動時，環境裡會有 ELECTRON_RUN_AS_NODE，不移除的話 Electron 只會當 Node 執行
         env={**{k: v for k, v in os.environ.items() if k != "ELECTRON_RUN_AS_NODE"},
-             "MAC_AI_UI_URL": bus_url, "MAC_AI_UI_MODEL": str(config.UI_MODEL_PATH),
+             "MAC_AI_UI_URL": bus_url, "MAC_AI_UI_MODEL": str(model or config.UI_MODEL_PATH),
              "MAC_AI_UI_LOG": str(config.UI_LOG), "MAC_AI_RUN_ID": RUN_ID},
     )

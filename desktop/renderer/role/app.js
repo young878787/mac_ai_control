@@ -6,7 +6,7 @@ import { CONTEXTS, createAttention } from '../../domain/attention.js';
 import { createFixedPhysics } from '../engine/physics-clock.js';
 import { createFrameGate } from '../../domain/frame-gate.js';
 import { checkRig } from '../../rig/check.js';
-import rig from '../../rig/fullrig03.js';
+import { rigFor } from '../../rig/index.js';
 import { nextRenderFrame } from '../engine/compat/render-buffers.js';
 import { createInterpolator } from '../engine/vertex-interp.js';
 import { createLoop } from '../engine/loop.js';
@@ -19,12 +19,6 @@ import { createPointer } from './pointer.js';
 import { createProbe } from './probe.js';
 import { createBubbles, createChoices, createInputBox, createQuick } from './widgets.js';
 
-const { height: MODEL_H, headFraction: HEAD_FRACTION } = rig.layout;   // 出場高度（px）、算「頭部」的比例
-// 狀態機只說語意名稱（domain/character.js）；rig/ 的 profile 把它對應到模型裡的名稱。除錯介面（__ui、動作軌跡）仍回報模型裡的名稱
-const NEEDED_MOTIONS = Object.values(rig.motions);
-const NEEDED_EXPRESSIONS = Object.values(rig.expressions);
-const OPTIONAL_EXPRESSIONS = Object.values(rig.optional);   // 缺了只警告，狀態機要求時不演
-const GESTURE_EXPRESSIONS = Object.values(rig.gestures);    // 手勢層（手臂切換參數），和臉部表情分開排隊
 // 幀率（計畫書 §6.2）：要畫就逐 vsync 畫（60 fps）；潛伏時頭髮物理收尾就停格（0 fps），停格期間只用計時器更新狀態機與泡泡
 const MIN_FRAME_MS = 12;                          // 120 Hz 螢幕上 rAF 會到 120 次／秒，間隔小於這個值的那次跳過，維持 60 fps
 // 收尾判斷（物理輸出每步最大變化量）。2026-11-20 實測：Idle 本身就讓頭髮持續擺動（p95 0.048、最大 0.09），事件造成的擺動不比它大；
@@ -44,9 +38,16 @@ async function main() {
   const cfg = await desktop.config();
   if (!cfg.model) throw new Error('沒有指定模型（環境變數 MAC_AI_UI_MODEL）');
   const W = cfg.winW, H = cfg.winH;
+  // 狀態機只說語意名稱（domain/character.js）；rig/ 的 profile 把它對應到模型裡的名稱。除錯介面（__ui、動作軌跡）仍回報模型裡的名稱
+  const rig = rigFor(cfg.model);
+  const { height: MODEL_H, headFraction: HEAD_FRACTION } = rig.layout;   // 出場高度（px）、算「頭部」的比例
+  const NEEDED_MOTIONS = Object.values(rig.motions);
+  const NEEDED_EXPRESSIONS = Object.values(rig.expressions);
+  const OPTIONAL_EXPRESSIONS = Object.values(rig.optional);   // 缺了只警告，狀態機要求時不演
+  const GESTURE_EXPRESSIONS = Object.values(rig.gestures);    // 手勢層（手臂切換參數），和臉部表情分開排隊
   const stage = createStage({ view: $('stage'), width: W, height: H });
   const { app } = stage;
-  const { model, internal, core, raw, settings, physicsJSON, base, defaults, ids } = await loadModel('app://ui' + cfg.model, stage, RENDER_OPT);
+  const { model, internal, core, raw, settings, physicsJSON, poseJSON, base, defaults, ids } = await loadModel('app://ui' + cfg.model, stage, RENDER_OPT);
   // profile 涵蓋度與模型內容：缺必要的動作／表情就拋錯，缺選用表情與手勢只警告（rig/check.js）
   const vocab = { motions: Object.values(MOTIONS), expressions: Object.values(EXPRESSIONS), gestures: Object.values(GESTURES).filter(g => g !== GESTURES.none) };
   for (const w of checkRig(rig, settings, vocab, ids).warnings) console.warn(`[ui] ${w}`);
@@ -61,10 +62,11 @@ async function main() {
   const attention = PROCEDURAL ? createAttention({ random: createRandom((Math.random() * 2 ** 32) >>> 0) }) : null;
   let context = null;                               // 導演最近一次決定的情境名稱（軌跡與除錯用）
   const physics = createFixedPhysics(PIXI.live2d.CubismPhysics.create(physicsJSON), core, physicsJSON);
+  const partPose = poseJSON ? PIXI.live2d.CubismPose.create(poseJSON) : null;   // 例如 hiyori 的兩組手臂
   const eyeBlinkIds = settings.Groups?.find(g => g.Name === 'EyeBlink')?.Ids || [];
   const lipSyncIds = settings.Groups?.find(g => g.Name === 'LipSync')?.Ids || [];
   const animator = createAnimator({ rig, idle: MOTIONS.idle, noGesture: GESTURES.none, peekRatio: PEEK_RATIO, size: { w: W, h: H },
-    model, internal, core, raw, defaults, ids, P, motions, expressions, eyeBlinkIds, lipSyncIds, physics, procedural });
+    model, internal, core, raw, defaults, ids, P, motions, expressions, eyeBlinkIds, lipSyncIds, physics, procedural, partPose });
   const topY = animator.topY;
 
   // ---------- 狀態機與介面 ----------

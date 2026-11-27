@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { MOTIONS, EXPRESSIONS, GESTURES } from '../domain/character.js';
 import { checkRig } from '../rig/check.js';
 import rig from '../rig/fullrig03.js';
+import hiyori from '../rig/hiyori.js';
+import { rigFor } from '../rig/index.js';
 
 const vocab = {
   motions: Object.values(MOTIONS), expressions: Object.values(EXPRESSIONS),
@@ -72,4 +74,28 @@ test('profile 本身：語意名稱沒有多餘的、不載入 Blink、版面與
   for (const k of ['angleX', 'angleY', 'angleZ', 'bodyZ', 'eyeX', 'eyeY', 'eyeOpen',
     'bodyX', 'bodyY', 'eyeROpen', 'browLY', 'browRY', 'browLX', 'browRX', 'browLForm', 'browRForm', 'browLAngle', 'browRAngle', 'breath']) assert.ok(rig.params[k], k);
   assert.ok(rig.layout.height > 0 && rig.layout.headFraction > 0 && rig.layout.region.h > 0);
+});
+
+/** hiyori_pro 的形狀：只有這幾個動作群組，沒有任何表情 */
+const hiyoriModel3 = () => ({ FileReferences: { Motions: Object.fromEntries(
+  ['Idle', 'Flick', 'FlickDown', 'FlickUp', 'Tap', 'Tap@Body', 'Flick@Body'].map(n => [n, [{ File: `${n}.motion3.json` }]])) } });
+
+test('hiyori 的 profile：模型沒有任何表情也通過，表情與手勢只回傳警告', () => {
+  const { warnings } = checkRig(hiyori, hiyoriModel3(), vocab, Object.values(hiyori.params));
+  assert.equal(warnings.length, vocab.expressions.length + vocab.gestures.length);
+});
+
+test('hiyori 的 profile：語意名稱齊全、版面與參數齊全；反應動作只播一次，待機與說話維持循環', () => {
+  assert.deepEqual(Object.keys(hiyori.motions).sort(), vocab.motions.slice().sort());
+  assert.deepEqual(Object.keys(hiyori.optional).sort(), vocab.expressions.slice().sort());
+  assert.deepEqual(Object.keys(hiyori.gestures).sort(), vocab.gestures.slice().sort());
+  assert.deepEqual(Object.keys(hiyori.params).sort(), Object.keys(rig.params).sort());
+  assert.deepEqual(hiyori.once.slice().sort(), vocab.motions.filter(n => n !== 'idle' && n !== 'talk').sort());
+  assert.ok(hiyori.layout.height > 0 && hiyori.layout.headFraction > 0 && hiyori.layout.region.h > 0);
+});
+
+test('rigFor：依模型檔名挑 profile，沒列到的模型沿用 fullrig03', () => {
+  assert.equal(rigFor('/model/hiyori_pro_t11.model3.json'), hiyori);
+  assert.equal(rigFor('/model/RushiaHD.model3.json'), rig);
+  assert.equal(rigFor('/model/other.model3.json'), rig);
 });

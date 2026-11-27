@@ -189,9 +189,9 @@ def ui_env(env, monkeypatch):
     log, cfg = env
     cfg["ui"] = {}
     cfg["bus"] = {}
-    monkeypatch.setattr(main, "check_ui_ready", lambda: cfg.get("ui_problem"))
+    monkeypatch.setattr(main, "check_ui_ready", lambda model: cfg.get("ui_problem"))
     monkeypatch.setattr(main, "UiBus", lambda **kw: FakeBus(log, **cfg["bus"]))
-    monkeypatch.setattr(main, "ui_service", lambda url, health: FakeService("ui", log, **cfg["ui"]))
+    monkeypatch.setattr(main, "ui_service", lambda url, health, model: cfg.setdefault("ui_models", []).append(model) or FakeService("ui", log, **cfg["ui"]))
     monkeypatch.setattr(main, "run_voice_loop", lambda mic, execute, stop, **kw: log.append(("voice_loop", sorted(kw), kw.get("gate"), kw.get("bus"))))
     return log, cfg
 
@@ -230,6 +230,18 @@ def test_ui_bus_port_in_use_exits_and_cleans_up(ui_env, capsys):
     assert main.main(["--ui"]) == 1
     assert ("stop_all", ["llm", "stt"]) in log
     assert "Address already in use" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv, character", [(["--ui"], "rushia"), (["--ui", "--character", "hiyori"], "hiyori")])
+def test_ui_character_flag_picks_the_model(ui_env, argv, character):
+    _, cfg = ui_env
+    assert main.main(argv) == 0
+    assert cfg["ui_models"] == [main.config.UI_CHARACTERS[character]]
+
+
+def test_unknown_character_is_rejected():
+    with pytest.raises(SystemExit):
+        main.parse_args(["--ui", "--character", "nobody"])
 
 
 def test_without_ui_flag_nothing_ui_related_happens(ui_env):

@@ -4,7 +4,7 @@
 
 - 範例：「打開小算盤」「關掉 Safari」
 - 喚醒詞（終端機模式預設關閉）：**露西婭**（別名：露醬、露西亞）。要啟用，把 `mac_ai/config.py` 的 `WAKE_WORD_ENABLED` 改成 `True`，之後須說「露西婭 打開小算盤」才會執行（喚醒詞前可以加一個招呼詞，如「嘿露西亞」，詞表在 `vocab/lexicon.json` 的 `wake_words.greetings`）。喚醒後進入 60 秒的**會話**（`WAKE_SESSION_S`）：期間每一句都不用再說喚醒詞，每說一句重新計時；逾時後要再喊一次
-- 桌面角色（`python main.py --ui`）：Rushia（Live2D）常駐螢幕右下角，平常從下緣探頭，喚醒時出場、依執行結果做動作並以泡泡顯示；可用快捷鍵叫出輸入框打字；點角色可開「聊天室」視窗，看圖、聊天等長回覆會自動展開。此模式預設啟用喚醒詞。見下方「桌面角色」
+- 桌面角色（`python main.py --ui`）：Rushia（Live2D，可用 `--character hiyori` 換成官方範例模型）常駐螢幕右下角，平常從下緣探頭，喚醒時出場、依執行結果做動作並以泡泡顯示；可用快捷鍵叫出輸入框打字；點角色可開「聊天室」視窗，看圖、聊天等長回覆會自動展開。此模式預設啟用喚醒詞。見下方「桌面角色」
 
 ## 運作方式
 
@@ -288,7 +288,10 @@ ls node_modules/electron/dist >/dev/null 2>&1 || node node_modules/electron/inst
 另外兩樣東西不入版控，需自行準備：
 
 - **Live2D Cubism Core**：到 [Live2D 官網](https://www.live2d.com/en/sdk/download/web/) 下載 Cubism SDK for Web，把 `Core/live2dcubismcore.min.js` 放到 `desktop/vendor/`（專有授權，不可散布）。Core 5.x 與 6.x 都可用；6.x 會由 `desktop/renderer/engine/compat/render-orders.js` 的 `bridgeRenderOrders` 補上 pixi-live2d-display 0.4.0 讀不到的繪製順序。
-- **模型**：`Rushia_hd/runtime-fullrig03/RushiaHD.model3.json`（路徑在 `mac_ai/config.py` 的 `UI_MODEL_PATH`）。
+- **模型**：`Rushia_hd/runtime-fullrig03/RushiaHD.model3.json`（預設）。
+- **另一個角色（選用）**：`python main.py --ui --character hiyori`。到 [Live2D 範例頁](https://www.live2d.com/en/learn/sample/momose-hiyori/) 下載 Hiyori，解壓到專案根目錄的 `Hiyori/`（用 `hiyori_pro`；不入版控，使用前需同意頁面上的授權與使用條款）。Hiyori 沒有表情檔，只做動作，不換表情與手勢。
+
+角色與模型路徑的對照在 `mac_ai/config.py` 的 `UI_CHARACTERS`。
 
 `python main.py --ui` 啟動時會檢查以上三樣，缺什麼就印出怎麼補。
 

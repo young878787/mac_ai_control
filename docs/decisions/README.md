@@ -20,7 +20,7 @@ ADR 只記「為什麼」：背景、實測、使用者的決定（[0031](0031-a
 | [0010](0010-cloud-key-handling.md) | 雲端設定放 .env，金鑰只在 cloud_client 讀 | 採用 | 雲端 | — | `rule:secret-read-scope`、`rule:no-environ-write` |
 | [0011](0011-cloud-tools-and-site-open.md) | 雲端專用工具 front_action／site_search；開網站「只放寬」 | 採用 | 雲端 | 0022 | `test:tests/flow/test_route_cloud.py` |
 | [0012](0012-chat-window-expand.md) | 聊天室是獨立視窗，主動展開不搶焦點 | 採用 | 桌面 | — | `eslint:no-window-show`、`test:tests/flow/test_route_expand.py` |
-| [0013](0013-fullrig03-cpu-budget.md) | fullrig03 定版模型；CPU 5% 指整台電腦；Electron 路線甲 | 採用 | 桌面 | — | `script:scripts/ui_perf.py` |
+| [0013](0013-fullrig03-cpu-budget.md) | fullrig03 定版模型；CPU 5% 指整台電腦；Electron 路線甲 | 採用 | 桌面 | 0032 | `script:scripts/ui_perf.py` |
 | [0014](0014-desktop-layers.md) | 桌面前端分層，依賴只能往下 | 採用 | 桌面 | — | `test:desktop/test/layers.test.js` |
 | [0015](0015-humanize-procedural.md) | 擬人化：程序層接管頭身眼眉，用指標判定「無機械感」 | 採用 | 桌面 | 0018 | `test:desktop/test/motion-metrics.test.js`、`test:desktop/test/motion-sim.test.js` |
 | [0016](0016-docs-structure.md) | 文件結構：指示牌、架構、ADR、流程、計畫、指南 | 採用 | 文件 | 0031 | `test:tests/unit/test_docs_index.py` |
@@ -39,3 +39,4 @@ ADR 只記「為什麼」：背景、實測、使用者的決定（[0031](0031-a
 | [0029](0029-deps-converge.md) | 依賴收斂：比對與執行分開、底層工具歸位 | 採用 | 工具鏈 | — | `test:tests/runtime/test_import_footprint.py`、`contract:C4` |
 | [0030](0030-router-feature-modules.md) | router 的執行器依功能分模組 | 採用 | 工具鏈 | — | `contract:C2`、`contract:C3` |
 | [0031](0031-adr-rationale-only.md) | ADR 只記理由；現行規則以指南與自動檢查為準 | 採用 | 文件 | — | `test:tests/unit/test_docs_index.py` |
+| [0032](0032-switchable-character.md) | 桌面角色可切換；Hiyori 只做動作、支援 pose3 | 採用 | 桌面 | — | `test:desktop/test/rig.test.js`、`test:desktop/test/animator.test.js` |

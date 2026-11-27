@@ -1,6 +1,6 @@
 # 0013 fullrig03 定版模型；CPU 5% 指整台電腦；Electron 路線甲
 
-- 狀態：採用
+- 狀態：採用（第 1 條被 [0032](0032-switchable-character.md) 修改）
 - 日期：2026-11-20
 - 來源：[桌面角色模型升級（fullrig03）](../plans/completed/2026-11-20-fullrig03-model.md) §2 A1～A7、§3.3～3.5
 

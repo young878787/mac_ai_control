@@ -182,7 +182,11 @@ UI_COMMAND_MAX_CHARS = 200  # 從 UI 打字送來的指令最長字數
 EXPAND_MIN_ACTIONS = 2  # 一句話執行了這麼多個動作（chat_reply 不算）就算複雜功能，result 事件帶 expand=complex，聊天室主動展開
 EXPAND_REPLY_CHARS = 20  # 回覆總字數超過這個數（泡泡放不下）也算複雜功能（2026-11-18 使用者定）
 UI_DIR = ROOT / "desktop"
-UI_MODEL_PATH = ROOT / "Rushia_hd" / "runtime-fullrig03" / "RushiaHD.model3.json"
+UI_CHARACTERS = {  # --character 可選的角色；用哪份 rig profile 由 desktop/rig/index.js 依模型檔名決定
+    "rushia": ROOT / "Rushia_hd" / "runtime-fullrig03" / "RushiaHD.model3.json",
+    "hiyori": ROOT / "Hiyori" / "hiyori_pro" / "runtime" / "hiyori_pro_t11.model3.json",
+}
+UI_MODEL_PATH = UI_CHARACTERS["rushia"]  # 沒指定 --character 時用的模型
 UI_START_TIMEOUT_S = 30.0  # 等 Electron 連上事件匯流排
 
 LLM_START_TIMEOUT_S = 90.0

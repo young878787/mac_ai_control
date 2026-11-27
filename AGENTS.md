@@ -63,7 +63,7 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 ## 不要碰
 
 - `archive/`：唯讀參考，不改、不 import。`macos-stt/`：獨立 repo，不在本 repo 提交範圍。
-- 不入版控：`AI_models/`、`Rushia_hd/`、`desktop/vendor/`、`desktop/node_modules/`、`logs/`、`data/`、`bench/synth/`、`*.wav`、`.env*`。
+- 不入版控：`AI_models/`、`Rushia_hd/`、`Hiyori/`、`desktop/vendor/`、`desktop/node_modules/`、`logs/`、`data/`、`bench/synth/`、`*.wav`、`.env*`。
 - 不修改 `.env`、production 設定或外部服務。`vocab/lexicon.json` 的 `project_roots`、`projects.path` 是個人設定。
 - `mac_ai/router/__init__.py` 不在頂層 import 子模組（熱路徑會跟著載入整個執行器）；新的對外名稱加進 `_EXPORTS`。（0029）
 

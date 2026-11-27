@@ -1,6 +1,6 @@
 // 動畫器：把狀態機的語意名稱演成模型的動作／表情／手勢（三個佇列）、管進退場，並在每個計算幀把所有參數疊好直到物理。
 // 語意名稱翻成模型名稱只在這裡做（查 rig profile）；不認得的選用表情照舊略過。時間由呼叫端經 advance(dt) 推進，不讀時鐘。
-// 每個計算幀的順序固定：預設值 → 動作 → 程序層（頭身眼眉）→ 表情 → 手勢 → 潛伏歪頭與進退場傾斜 → 物理。
+// 每個計算幀的順序固定：預設值 → 動作 → 程序層（頭身眼眉）→ 表情 → 手勢 → 潛伏歪頭與進退場傾斜 → 物理 → 部件切換（pose3）。
 // 之後的軌跡記錄、頂點內插與 core.update() 由呼叫端接手（renderer/role/app.js）。
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -11,12 +11,14 @@ const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2)
  * @param {{ rig: any, idle: string, noGesture: string, peekRatio: number, size: { w: number, h: number },
  *           model: any, internal: any, core: any, raw: any, defaults: Float32Array, ids: string[], P: Record<string, number>,
  *           motions: Record<string, any>, expressions: Record<string, any>, eyeBlinkIds: string[], lipSyncIds: string[],
- *           physics: { evaluate(core: any, dt: number): number | null }, procedural: any }} deps
+ *           physics: { evaluate(core: any, dt: number): number | null }, procedural: any,
+ *           partPose?: { updateParameters(core: any, dt: number): void } | null }} deps
  *   idle／noGesture：domain 的語意名稱（待機動作、收回手勢）；motions／expressions：以模型裡的名稱為 key 的 JSON；
- *   P：參數鍵 → 參數索引（-1＝模型沒有）；procedural：程序層（null＝舊做法：Idle 全權＋游標視線）
+ *   P：參數鍵 → 參數索引（-1＝模型沒有）；procedural：程序層（null＝舊做法：Idle 全權＋游標視線）；
+ *   partPose：pose3.json 的部件切換（例如兩組手臂只顯示一組；null＝模型沒有）。rig.once 列出的語意動作不管動作檔的 Loop，只播一次
  */
 export function createAnimator({ rig, idle, noGesture, peekRatio, size, model, internal, core, raw, defaults, ids, P, motions, expressions,
-  eyeBlinkIds, lipSyncIds, physics, procedural }) {
+  eyeBlinkIds, lipSyncIds, physics, procedural, partPose = null }) {
   const { height: MODEL_H, region: REGION } = rig.layout;
   const W = size.w;
   const IDLE = rig.motions[idle];
@@ -38,7 +40,7 @@ export function createAnimator({ rig, idle, noGesture, peekRatio, size, model, i
     const name = rig.motions[semantic], json = motions[name];
     if (!json) return;
     const motion = PIXI.live2d.CubismMotion.create(json);
-    motion.setIsLoop(!!json.Meta.Loop); motion.setIsLoopFadeIn(false);
+    motion.setIsLoop(!!json.Meta.Loop && !rig.once?.includes(semantic)); motion.setIsLoopFadeIn(false);
     motion.setEffectIds(eyeBlinkIds, lipSyncIds);
     motionQueue.startMotionPriority(motion, false, 3);
     activeMotion = name; activeSemantic = semantic;
@@ -109,7 +111,9 @@ export function createAnimator({ rig, idle, noGesture, peekRatio, size, model, i
       add(P.angleX, 30 * gx); add(P.angleY, 20 * gy); add(P.eyeX, gx); add(P.eyeY, gy);
     }
     add(P.angleZ, 6 * lean + 8 * tilt); add(P.bodyZ, 3 * lean + 5 * tilt);
-    return physics.evaluate(core, cdt);
+    const delta = physics.evaluate(core, cdt);
+    partPose?.updateParameters(core, cdt);
+    return delta;
   }
 
   return {
