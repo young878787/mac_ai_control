@@ -59,6 +59,7 @@ live／cloud／app 實測與驗收腳本只在對照表寫到時才跑，見 `do
 15. 辨識引擎的切換點是 WS 協定：`xasr_server` 與 macos-stt 行為要一致，`SttClient`、端點偵測、`EP_*` 不為單一引擎改；CPU 門檻用整機百分比；Windows 只在 macOS 上模擬過，不可說成實機驗證。（0020）〔擋：`test:tests/runtime/test_xasr_server.py`〕
 16. 後端依賴只能往下：`.importlinter` 的 C1～C5（分層、router 編排順序、熱路徑不碰 IO、網路 client 不碰資料庫與子程序，函式內 import 也算）。新模組先決定層，新的 `router/` 模組加進 C2 或 C3；新增 `ignore_imports` 或放寬契約先問使用者，依賴消失就刪例外並同步 `module-deps.md`。（0026）〔擋：`contract:C1`～`contract:C5`〕
 17. 程式檔（含測試）不超過 800 行（`scripts/check_file_lines.py`）。超過時依職責拆到既有模組；需要新模組先向使用者提計畫，確認後再拆；不得調高上限或加排除。（0028）〔擋：`script:scripts/check_file_lines.py`〕
+18. 桌面角色的前端（`renderer/`、`domain/`、`dev/`）不寫死模型：模型裡的名稱只從解析後的 rig 拿，模型差異寫在 `desktop/rig/`（契約或 profile），不出現特定模型的名字。（0033、0034）〔擋：`eslint:model-agnostic`、`test:desktop/test/model-agnostic.test.js`〕
 
 ## 不要碰
 

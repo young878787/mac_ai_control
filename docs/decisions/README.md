@@ -40,4 +40,5 @@ ADR 只記「為什麼」：背景、實測、使用者的決定（[0031](0031-a
 | [0030](0030-router-feature-modules.md) | router 的執行器依功能分模組 | 採用 | 工具鏈 | — | `contract:C2`、`contract:C3` |
 | [0031](0031-adr-rationale-only.md) | ADR 只記理由；現行規則以指南與自動檢查為準 | 採用 | 文件 | — | `test:tests/unit/test_docs_index.py` |
 | [0032](0032-switchable-character.md) | 桌面角色可切換；Hiyori 只做動作、支援 pose3 | 採用 | 桌面 | 0033 | `test:desktop/test/rig.test.js`、`test:desktop/test/animator.test.js` |
-| [0033](0033-rig-contract.md) | 模型契約統一：checkRig 拿模型對契約檢查，profile 選填 | 採用 | 桌面 | — | `test:desktop/test/rig.test.js` |
+| [0033](0033-rig-contract.md) | 模型契約統一：checkRig 拿模型對契約檢查，profile 選填 | 採用 | 桌面 | 0034 | `test:desktop/test/rig.test.js` |
+| [0034](0034-model-agnostic-frontend.md) | 前端不寫死模型：lint 擋常值，換名模型測試擋執行時的寫死 | 採用 | 桌面 | — | `eslint:model-agnostic`、`test:desktop/test/model-agnostic.test.js` |

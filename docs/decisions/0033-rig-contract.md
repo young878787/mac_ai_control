@@ -1,6 +1,6 @@
 # 0033 模型契約統一：checkRig 拿模型對契約檢查，profile 選填
 
-- 狀態：採用（修改 [0014](0014-desktop-layers.md) 第 2 條、[0032](0032-switchable-character.md) 第 3 條）
+- 狀態：採用（修改 [0014](0014-desktop-layers.md) 第 2 條、[0032](0032-switchable-character.md) 第 3 條；第 4 條被 [0034](0034-model-agnostic-frontend.md) 修改）
 - 日期：2026-11-27
 - 來源：[計畫書](../plans/completed/2026-11-27-rig-contract.md)；使用者 2026-11-27 的決定（契約集中一處、profile 選填並警告、表情全部選用、參數維持必要）
 

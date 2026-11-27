@@ -16,7 +16,7 @@ python scripts/acceptance.py run [--app] [--live] [--cloud] && python scripts/ac
 cd desktop && node --test                 # 桌面角色狀態機／路徑白名單／分層規則／IPC 頻道
 cd desktop && npm run typecheck           # 桌面前端型別檢查（JSDoc＋checkJs）
 uvx ruff@0.17.6 check .                   # Python lint（設定 ruff.toml，版本鎖定；只開抓 bug 的規則，不做格式化）
-cd desktop && npm run lint                # ESLint＋自訂規則（eslint-rules/：no-window-show、secure-web-preferences、ipc-channel-literal、bus-loopback-only）
+cd desktop && npm run lint                # ESLint＋自訂規則（eslint-rules/：no-window-show、secure-web-preferences、ipc-channel-literal、bus-loopback-only、model-agnostic）
 uvx --from ast-grep-cli@0.51.2 ast-grep test   # Python 專案規則（rules/）的 valid／invalid 案例；改了規則才需要，CI 每次都跑
 uvx --from ast-grep-cli@0.51.2 ast-grep scan   # 專案規則掃描（repo 根目錄執行；規則與依據見 ADR 0025）
 uvx --from import-linter==2.16 --with grimp==3.19 lint-imports   # 模組依賴契約 C1～C5（repo 根目錄執行，讀 .importlinter；見 ADR 0026）
@@ -185,7 +185,7 @@ STT 語音實機沒有自動測試，M1～M3、W2 只能由你操作確認。Win
 | 改到 | 平常（L1） | 只在這些情況跑實機（L3） |
 |---|---|---|
 | 演出常數、注意力導演（`renderer/animation/`、`domain/attention.js`） | `node --test`（`motion-sim.test.js` 用 `dev/motion-metrics.js` 同一份指標模擬 T2／T3） | `python scripts/ui_demo.py --capture <dir>`（逐張比對動作、表情、手勢、情境）；改到幀迴圈、更新頻率或時序時才跑 `python scripts/ui_motion.py`（閒置 10 分鐘＋聆聽 10 輪，標準不縮短） |
-| 模型、契約（`rig/contract.js`）、rig profile、語意名稱 | `node --test`（`rig.test.js`） | `ui_demo.py --capture <dir>` |
+| 模型、契約（`rig/contract.js`）、rig profile、語意名稱 | `node --test`（`rig.test.js`、`model-agnostic.test.js`） | `ui_demo.py --capture <dir>` |
 | 渲染迴圈、幀率、緩衝 | `node --test`（`frame-rate`／`render-buffers`／`physics-clock`） | `python scripts/ui_perf.py`（CPU、RSS、幀間隔） |
 | 聊天室、輸入框、選擇清單 | `node --test`（`chat`／`ipc-channels`） | `ui_demo.py --chat-test`／`--focus-test N`／`--choices-test`／`--interact-test` |
 
