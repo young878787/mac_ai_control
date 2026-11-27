@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeIdle, analyzeListening, blinkStarts, columns, cursorSpans, gazeShifts, headSpeeds, judgeIdle, judgeListening, listeningWindows, loopRepeat } from '../dev/motion-metrics.js';
+import { IDLE_LIMITS, LISTEN_LIMITS, analyzeIdle, analyzeListening, blinkStarts, columns, cursorSpans, gazeShifts, headSpeeds, judgeIdle, judgeListening, listeningWindows, loopRepeat } from '../dev/motion-metrics.js';
 
 const COLS = ['t', 'angleX', 'angleY', 'angleZ', 'eyeX', 'eyeY', 'eyeOpen', 'motion'];
 const smooth = (u) => { const c = Math.min(1, Math.max(0, u)); return 3 * c * c - 2 * c * c * c; };
@@ -239,4 +239,11 @@ test('循環重複度當通過條件（D7）：r < 0.5 才過；游標排除的�
   const skipped = analyzeIdle(t).loopRepeat;
   assert.ok(raw.r >= 0.5, `raw r ${raw.r}`);
   assert.ok(skipped.r < 0.5, `skipped r ${skipped.r}`);
+});
+
+// 紅線 14（ADR 0015、0018）：門檻不得為了過關放寬。要調整（含收緊）先問使用者，確認後同時改這裡
+test('擬人化門檻釘住 2026-11-27 的值', () => {
+  assert.deepEqual({ ...IDLE_LIMITS }, { slowFraction: 0.15, longestStillS: 2, saccade90Ms: 90, loopRepeat: 0.5, cursorSkipFraction: 0.1 });
+  assert.deepEqual({ ...LISTEN_LIMITS }, { arriveMs: 150, arriveRounds: 0.9, holdFraction: 0.95, headSpeedRatio: 0.5, blinkRateRatio: 1.3 });
+  assert.ok(Object.isFrozen(IDLE_LIMITS) && Object.isFrozen(LISTEN_LIMITS));
 });

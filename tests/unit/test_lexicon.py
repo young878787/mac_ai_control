@@ -1,5 +1,6 @@
-"""詞庫 schema（kind／projects／term_misheard／s2t／fillers）、build_vocab 產物與詞庫自洽檢查"""
+"""詞庫 schema（kind／projects／term_misheard／s2t／fillers）、build_vocab 產物、詞庫自洽檢查與常用功能的安全範圍"""
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -128,3 +129,55 @@ def test_build_vocab_outputs(tmp_path):
     tk.load_userdict(str(tmp_path / "userdict.txt"))
     assert "科索" in tk.lcut("打開科索")
     assert "谷歌瀏覽器" in tk.lcut("開谷歌瀏覽器")
+
+
+# ---------- 常用功能 app_shortcuts 的安全範圍（紅線 8，ADR 0008、0019） ----------
+_PAGING_CODES = {116, 121}  # Page Up／Page Down：唯一允許不帶 ⌘ 送出的按鍵
+_FORBIDDEN_CODES = {12, 51, 117}  # Q（⌘Q 結束程式）、Delete、Forward Delete
+_FORBIDDEN_WORDS = re.compile(r"結束|退出|刪除|刪掉|垃圾|quit|exit|delete|trash|remove", re.IGNORECASE)
+
+
+def check_shortcuts(shortcuts: list[dict]) -> list[str]:
+    """送按鍵只允許 ⌘ 組合鍵與翻頁鍵；不放結束程式、刪除類（說法 phrases 不檢查：「退出全螢幕」是合法說法）"""
+    errors = []
+    for s in shortcuts:
+        sid = s["id"]
+        if _FORBIDDEN_WORDS.search(f"{sid} {s['label']}"):
+            errors.append(f"{sid}：名稱像結束程式或刪除類")
+        for b in s["bindings"]:
+            mods = b.get("mods", [])
+            if "code" in b and "command" not in mods and not (b["code"] in _PAGING_CODES and not mods):
+                errors.append(f"{sid}：按鍵 {b['code']} {mods} 不是 ⌘ 組合鍵或翻頁鍵")
+            if b.get("code") in _FORBIDDEN_CODES or str(b.get("char", "")).upper() == "Q":
+                errors.append(f"{sid}：按鍵 {b.get('code')}／{b.get('char')} 是結束程式或刪除類")
+            if "char" in b and "command" not in mods:
+                errors.append(f"{sid}：選單快捷鍵 {b['char']!r} 沒有 ⌘")
+            if b.get("window", "close") not in {"close", "minimize", "fullscreen"}:
+                errors.append(f"{sid}：未知的視窗操作 {b['window']!r}")
+            texts = [b.get("script", ""), b.get("button", ""), json.dumps(b.get("path", []), ensure_ascii=False)]
+            if any(_FORBIDDEN_WORDS.search(t) for t in texts):
+                errors.append(f"{sid}：選單、按鈕或指令像結束程式或刪除類")
+    return errors
+
+
+def test_app_shortcuts_stay_in_safe_range():
+    shortcuts = json.loads((ROOT / "vocab" / "lexicon.json").read_text(encoding="utf-8"))["app_shortcuts"]
+    assert len(shortcuts) > 10 and check_shortcuts(shortcuts) == []
+
+
+@pytest.mark.parametrize("binding", [
+    {"char": "K", "code": 40, "mods": []},               # 沒有 ⌘ 的字元鍵（注音輸入法會吃掉）
+    {"code": 50, "mods": ["control"]},                   # ⌃`
+    {"code": 116, "mods": ["shift"]},                    # 翻頁鍵只允許單獨送
+    {"char": "Q", "code": 12, "mods": ["command"]},      # ⌘Q 結束程式
+    {"code": 51, "mods": ["command"]},                   # ⌘Delete 丟到垃圾桶
+    {"path": [["檔案", "File"], ["丟到垃圾桶", "Move to Trash"]]},
+    {"script": "quit"},
+    {"window": "zoom"},
+])
+def test_app_shortcuts_counterexamples(binding):
+    assert check_shortcuts([{"id": "x", "label": "x", "bindings": [{"when": {}, **binding}]}])
+
+
+def test_app_shortcuts_forbidden_name():
+    assert check_shortcuts([{"id": "quit_app", "label": "結束程式", "bindings": []}])

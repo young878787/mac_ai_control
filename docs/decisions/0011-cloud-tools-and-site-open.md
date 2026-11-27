@@ -1,6 +1,6 @@
 # 0011 雲端專用工具 front_action／site_search；開網站「只放寬」
 
-- 狀態：採用
+- 狀態：採用（第 1 條的「只開放兩個工具」被 [0022](0022-web-answer.md) 第 9 條取代：有搜尋金鑰時多 `web_answer`）
 - 日期：2026-11-16（開網站）、2026-11-17（雲端工具）
 - 來源：[端雲協同](../plans/completed/2026-11-15-cloud-hybrid.md) §14.2；commit `c7508ad`；AGENTS 原 §5.19～5.20
 

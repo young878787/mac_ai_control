@@ -1,6 +1,6 @@
 # 程式守則與常見修改
 
-「快」「準」兩組守則是本專案的紅線；背後的實測與理由見 `docs/decisions/`。兩者衝突時準確優先，但不能讓 Fast Path 退化成要等 LLM。
+「快」「準」兩組守則是本專案的紅線，**現行規則以本檔為準**；背後的實測與理由見 `docs/decisions/`（ADR 只記理由，[0031](../decisions/0031-adr-rationale-only.md)；先看[索引](../decisions/README.md)）。兩者衝突時準確優先，但不能讓 Fast Path 退化成要等 LLM。
 
 ## 「快」的守則
 
@@ -49,6 +49,21 @@
 18. **「它／剛剛那個」的對象守門**（`slow_path.target_error`，本機與雲端共用）：句子有代名詞而模型決定了 App／專案時，對象必須出現在本句，或最近幾輪（`memory.STORE`）／同句前面步驟成功的操作裡，否則拒絕。**`剛剛`開頭的說法（「把剛剛開的關掉」）會被 G1 當成敘述擋下，這是既有的安全決策，不要為了代名詞放寬 G1。**
 19. **雲端也不能繞過任何守門**：雲端的 `tool_calls` 走 `validate_calls`（`validate_tool_call` → 對象守門 → 搜尋意圖守門 → 本機優先導向）；`LOCAL_TOOLS` 對雲端同樣看不到，**唯二例外**（2026-11-17 使用者同意）是 `cloud_client.CLOUD_ONLY_TOOLS`：`front_action(id)`（id 限詞庫有說法的常用功能、不收 `fallback`；句子有「關掉／關閉／退出…」時不得是 `minimize`〔`_CLOSE_RE`〕，「收起來」最小化可以）與 `site_search(query)`（過搜尋意圖守門與本機導向後換成 `context_search` 執行），驗證用 `CLOUD_SCHEMAS`、本機規劃一律拒絕；`info_question` 一樣丟掉 `STATE_TOOLS`（含 `front_action`）。
 20. **開網站的放行是「只放寬、不改變既有結果」**：`_search_intent_error` 原本會拒絕的 `web_search_or_open_url`，只有同時符合（句子沒有搜尋字詞、不是資訊提問、有開啟動詞、只明說一個詞庫網站〔名稱／別名，「YouTube Music」不算〕、query 的網域屬於該網站）才放行，而且**改成網站首頁**（不用模型給的網址，避免深層連結）；原本放行的（有搜尋字詞、字面網址）原樣不動。
+21. **天氣直接回答**（理由見 [0021](../decisions/0021-weather-answer.md)、[0023](../decisions/0023-query-routing.md)、[0024](../decisions/0024-home-city-and-answer-timeout.md)）：
+   - 一句話只有一種結果：開網頁或直接回答，由 `fast_path.answer_mode` 依原句決定，LLM 不決定；明說要看畫面（瀏覽器、上網、google 一下、在 X 搜尋…）→ 開網頁，兩種線索同時出現時開網頁優先。「搜尋台北天氣」「找台北天氣」是回答。
+   - 窄規則 `_r_weather` 整句符合才命中，產生 `get_weather(city, day, part)`；strong 主題（天氣、會不會下雨、下雨嗎、下雨機率、氣溫、溫度）單獨就算，weak（幾度、多少度）要同時說縣市或時間；「下雨」一定要帶疑問。句首可以先有語氣詞（那麼、好那、那、好、嗯、欸、對了），但後面一定要接幫我、查／告訴我、縣市或時間；「我住 X」後面接天氣也收（另說了不同縣市就不收）。不收：打開天氣、天氣之子、今天天氣好熱、兩個不同的縣市或時間、超過 36 小時。
+   - 規則在 `_blocked` 之後，只豁免提問這一關；否定、敘述照舊擋下、不呼叫任何模型。`match()` 不碰網路、資料庫、子程序，也不看金鑰。
+   - 來源：有 `CWA_API_KEY` 先查氣象署，沒有金鑰、失敗、逾時或缺時段改查 Open-Meteo，各自逾時 `WEATHER_TIMEOUT_S`；兩個都失敗回 `❌ 查不到`，**不開網頁**。不經過 LLM，回覆結尾標來源。
+   - 沒說縣市時的預設順序：明說 → 居住地 `profile.home_city` → 統計常問（`weather_prefs.default_city`）→ 冷啟動（`COLD_START_MESSAGE`）。只記句子明說的縣市，用預設補上的不記。
+   - 冷啟動接續：`weather_followup.STORE` 只放記憶體 60 秒、每句開頭 `take()`；緊接著的那一句只有一個子句、`parse_city_reply` 認得是縣市回答時，接著回答原本的 day／part 並記成居住地。待答狀態由 pipeline 判斷，不放進 Fast Path 規則。
+22. **長尾回答 `web_answer` 的啟用與退路**（理由見 [0022](../decisions/0022-web-answer.md)、[0023](../decisions/0023-query-routing.md)、[0024](../decisions/0024-home-city-and-answer-timeout.md)）：
+   - `AI_API_KEY` 與 `BRAVE_API_KEY` 都有 → `web_answer`；有雲端、沒有搜尋金鑰 → 開 Google 搜尋頁並回 ⚠️（`step["web_fallback"]="no_search_key"`）；兩把都沒有 → 與沒有這個功能時逐字相同（`ctx.escalate` 後 `match(answer=False)` 重比）。本機 LLM 永遠看不到 `web_answer`。
+   - 會變的事實（人物、新聞、比分賽果、營業時間、價格）一律查證，不憑記憶回答：雲端只回文字而原句符合 `query_intent.verify_query` 時改執行 `web_answer`。
+   - 摘錄是不可信的資料：放在 user 訊息的 `<search_results>` 並跳脫，回答那次不帶工具。任何一步失敗（搜尋、雲端、被截斷、摘錄沒有答案）都退回開 Google 搜尋頁並回 ⚠️，不謊稱查到。
+   - 依摘錄回答那次的逾時上限 `WEB_ANSWER_TIMEOUT_S`＝10 秒、逾時不熔斷（`trip_on_timeout=False`）；最差約 24 秒會擋住下一句（使用者 2026-11-25 接受）。
+23. **常駐資料 `profile`**（理由見 [0024](../decisions/0024-home-city-and-answer-timeout.md)）：
+   - **只記使用者明說的**（`source`＝`said`「我住 X」或 `cold_start_reply`），不從統計推，不給模型寫入工具；只在 `command_worker` 讀寫，只在本機，不送雲端、不進對話記憶。
+   - 「我住 X」（`query_intent._home_city`，在 `_blocked` 之後；原句含不、沒、以前、之前、曾、嗎、？或主詞是別人都不收）→ 本機工具 `remember_home` 在背景記下，同一步只聊天：雲端或本機的 `chat` 都**丟棄模型提出的所有工具呼叫**，只採用文字；資料庫沒準備好或寫入失敗回 ⚠️，不說已記住。
 
 ## 常見修改怎麼做
 
@@ -56,7 +71,7 @@
 |---|---|
 | 新增 App／別名／誤聽詞／資料夾／檔案類型 | 只改 `vocab/lexicon.json`（別重複寫在程式裡）；misheard 條目要標 `source`（`observed` 實測／`seed` 預設）；再跑詞庫相關測試 |
 | 新增一類語音指令（常見的） | `fast_path.py` 加 regex 與 `_r_*`，在 `match()` 的規則清單排對位置；執行函式寫在對應功能的 `*_tools.py`（系統 `system_tools`、瀏覽器 `browser_tools`…），在 `actions.py` 登錄 `AVAILABLE_FUNCTIONS`／`_dispatch`；加離線測試（命中、不命中、被守門擋下） |
-| 新增 LLM 可用工具（少見） | 先確認 Fast Path 做不到；`tools.py` 加 schema 與驗證；跑 `pytest -m live`（準確率與延遲）；注意 prompt cache；雲端自動沿用（`CLOUD_TOOLS` 由 `TOOLS_SCHEMA` 產生），再跑 `pytest -m cloud -s` |
+| 新增 LLM 可用工具（少見） | 先確認 Fast Path 做不到；會讓 `TOOLS_SCHEMA` 變大，超過 `tests/unit/test_tools.py` 的字數上限（紅線 2）要先問使用者；有意改 `SYSTEM_PROMPT`／`TOOLS_SCHEMA` 後更新同檔的 `PREFIX_SHA256`；`tools.py` 加 schema 與驗證；跑 `pytest -m live`（準確率與延遲）；注意 prompt cache；雲端自動沿用（`CLOUD_TOOLS` 由 `TOOLS_SCHEMA` 產生），再跑 `pytest -m cloud -s` |
 | 調雲端提示詞 | 只動 `cloud_client.CLOUD_SYSTEM_PROMPT`；用 `pytest -m cloud -s tests/real/test_cloud_live.py -k planning` 比改動前後的各類正確率與延遲，數字附在 commit 或計劃書 |
 | 新增本機（不給 LLM）工具 | 寫在對應功能的模組（`find_tools`、`front_tools`、`music_tools`、`answer_tools`；都不合適就先提計畫），在 `local_actions.py` 登錄 `LOCAL_TOOLS`，在 `action_plan.ACTION_TABLE` 加對應；不要放進 `TOOLS_SCHEMA` |
 | 新增站內搜尋網站／常用功能快捷鍵／可開啟的網站 | 只改 `vocab/lexicon.json` 的 `sites`（`search_url` 站內搜尋、`home` 首頁、`aliases` 別名）／`app_shortcuts`（說法要整句完全相同才命中）；`home` 有填的網站，「打開／上／去＋名稱」會由 Fast Path（`_r_site`）開首頁，雲端／本機規劃的開網站呼叫也靠它放行（`slow_path.site_open_home`）；跑 `tests/flow/test_route_context.py`、`tests/unit/test_context.py` 與 `tests/unit/test_completeness.py`，確認新說法不是其他指令的前半句 |
@@ -78,13 +93,4 @@
 - `ENDPOINT_MODE="client"`（預設）需要 `AI_models/silero_vad.onnx`；沒有這個檔案時才改成 `"server"`。
 - `WAKE_WORD_ENABLED` 預設 `False`；`--ui` 會強制啟用喚醒詞。
 - 本機專屬路徑（如 `project_roots`、`projects` 的 `path`）在 `vocab/lexicon.json`，改動前確認是否為使用者個人設定。
-- 文件結構與放置規則見 [0016](../decisions/0016-docs-structure.md)。
-
-## 工作流程偏好（使用者的全域規則摘要）
-
-- 全程使用**繁體中文（臺灣用語）**；程式碼識別字、指令、錯誤訊息保留原文。回覆先給結論，簡潔。
-- 簡單、低風險任務直接做；涉及多檔案、架構、資料流、public API／schema、行為變更、效能或安全性的**複雜任務，先在對話中提計畫，等確認再實作**。
-- 只改完成需求所必須的內容；符合既有命名、風格與註解密度；不順手重構、不加未要求的功能、不新增 dependency（必要時先說明）。
-- 功能設計方向、產品行為、資料契約、互動流程、驗收標準由使用者決定；發現與既有設計衝突或可能偏離時立即停下提出。
-- 不主動產出 .md／文件檔；不 commit、push、開 PR，除非使用者要求；commit 訊息沿用既有 `feat:`／`fix:`／`docs:` 一行摘要風格，**不加** `Co-Authored-By: Claude` 或任何 AI 署名。
-- 回報分開寫「已實際執行確認」與「尚未驗證」，禁止聲稱未執行的測試已通過。
+- 文件結構與放置規則見 [0016](../decisions/0016-docs-structure.md)、[0031](../decisions/0031-adr-rationale-only.md)。

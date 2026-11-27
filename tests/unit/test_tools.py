@@ -1,8 +1,11 @@
 """TOOLS_SCHEMA 與 validate_tool_call（唯一的信任邊界）：未知工具／參數、型別、enum、專案白名單、LLM 看不到的內部工具"""
+import hashlib
+import json
+
 import pytest
 
 import mac_ai.router as r
-from mac_ai.router import tools
+from mac_ai.router import slow_path, tools
 
 
 # ---------- 工具參數驗證 ----------
@@ -70,3 +73,22 @@ def test_internal_tools_are_not_visible_to_llm(name, args):
     實測 browser_tab 放進清單，『開深色模式』會被 4bit 模型誤判成 toggle_dark_mode"""
     assert name not in {t["function"]["name"] for t in r.TOOLS_SCHEMA}
     assert r.validate_tool_call(name, args)[1] == f"未知工具：{name}"
+
+
+# ---------- 快取前綴（紅線 2，ADR 0002） ----------
+# 有意改 SYSTEM_PROMPT 或 TOOLS_SCHEMA 時：先照紅線 2 跑 pytest -m live 比對準確率與延遲，再更新這裡的 hash；
+# 字數上限是 2026-11-27 的實際值，只能往下調（「不增大」），放寬先問使用者
+PREFIX_SHA256 = "68f233086ff99f46abcd79f047d527b1408c0affa7c89b9a05d59661c666b11e"
+SYSTEM_PROMPT_MAX_CHARS = 155
+TOOLS_SCHEMA_MAX_CHARS = 2462
+
+
+def test_prompt_prefix_is_byte_stable():
+    """送給本機 LLM 的前綴（system＋tools，序列化方式同 llm_client 的 json.dumps）逐字不變"""
+    prefix = (slow_path.SYSTEM_PROMPT + json.dumps(tools.TOOLS_SCHEMA)).encode()
+    assert hashlib.sha256(prefix).hexdigest() == PREFIX_SHA256
+
+
+def test_prompt_prefix_does_not_grow():
+    assert len(slow_path.SYSTEM_PROMPT) <= SYSTEM_PROMPT_MAX_CHARS
+    assert len(json.dumps(tools.TOOLS_SCHEMA, ensure_ascii=False)) <= TOOLS_SCHEMA_MAX_CHARS
