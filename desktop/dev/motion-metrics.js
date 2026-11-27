@@ -150,11 +150,12 @@ export function cursorSpans(trace) {
 
 const connectedSeconds = (c) => { let s = 0; for (let i = 1; i < c.t.length; i++) s += stepS(c, i); return s; };
 
-/** 閒置指標（B3）。trace＝一段只有閒置的軌跡 */
+/** 閒置指標（B3）。trace＝一段只有閒置的軌跡；trace.idle＝待機動作的模型名稱（role/probe.js 從 rig 填） */
 export function analyzeIdle(trace) {
   const all = columns(trace), skip = cursorSpans(trace);
   const c = keepRows(all, (i) => !inside(skip, all.t[i]));
-  const idleIndex = trace.motions.indexOf('Idle');
+  const idleIndex = trace.motions.indexOf(trace.idle);
+  if (idleIndex < 0) throw new Error(`軌跡的 idle（${trace.idle}）不在 motions 裡`);
   let seconds = 0, slow = 0, run = 0, longest = 0, center = 0, eyeMaxSpeed = 0;
   for (let i = 1; i < c.t.length; i++) {
     const dt = stepS(c, i);

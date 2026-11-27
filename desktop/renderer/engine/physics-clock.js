@@ -23,7 +23,7 @@ export function createFixedPhysics(solver, core, physicsJson) {
   let remainder = 0;
   let inputCache, previousOutput, currentOutput;
   const diagnostics = {
-    implementation: 'RushiaHD fixed-step adapter over the unchanged Pixi CubismPhysics solver',
+    implementation: 'Fixed-step adapter over the unchanged Pixi CubismPhysics solver',
     simulationHz: 60,
     outputLatencySeconds: STEP,
     inputIds: inputs,

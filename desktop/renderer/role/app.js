@@ -53,7 +53,7 @@ async function main() {
     expressions: [...Object.values(rig.expressions), ...Object.values(rig.gestures)] });   // 手勢也是表情檔（手臂切換參數），分開排隊
   const P = Object.fromEntries(Object.entries(rig.params).map(([key, id]) => [key, ids.indexOf(id)]));
   // 自己會眨眼的語意動作（眼皮曲線最小值 < 0.5，從 motion3.json 算，不寫死名稱）：這些動作播放時程序眨眼暫停
-  const blinkMotions = new Set(Object.entries(rig.motions).filter(([, name]) => motionBlinks(motions[name])).map(([semantic]) => semantic));
+  const blinkMotions = new Set(Object.entries(rig.motions).filter(([, name]) => motionBlinks(motions[name], rig.params.eyeOpen)).map(([semantic]) => semantic));
   const procedural = PROCEDURAL ? createProcedural({ index: P, defaults, minimums: raw.parameters.minimumValues, maximums: raw.parameters.maximumValues,
     seed: (Math.random() * 2 ** 32) >>> 0, blinkMotions }) : null;
   // 注意力導演（§4.4）：亂數用另一個 seed，時鐘和程序層相同（animator.time * 1000）

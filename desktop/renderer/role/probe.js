@@ -39,13 +39,13 @@ export function createProbe({ rig, raw, P, controller, animator, stage, loop, at
       alphaCorner: ui.alphaAt(2, 2), perf: ui.perf(), drawables: ui.drawables };
   };
   ui.submitText = (text) => { $('input').value = text; $('input-box').requestSubmit(); };   // 在輸入框填字並送出（走真正的 submit 路徑）
-  // start 開始記錄；stop 回傳 { cols, motions, contexts, rows, marks, cursor, halfRate, truncated } 並清空，沒在記錄回傳 null
+  // start 開始記錄；stop 回傳 { cols, motions, idle, contexts, rows, marks, cursor, halfRate, truncated } 並清空，沒在記錄回傳 null；idle＝待機動作的模型名稱
   ui.motionTrace = (cmd) => {
     if (cmd === 'start') { trace = { t0: performance.now(), rows: [], marks: [], cursor: { px: 0, moves: 0, at: [] }, truncated: false }; return true; }
     if (cmd !== 'stop' || !trace) return null;
     const { rows, marks, cursor: moved, truncated } = trace;
     trace = null;
-    return { cols: TRACE_COLS, motions, contexts, rows, marks, cursor: moved, halfRate, truncated };
+    return { cols: TRACE_COLS, motions, idle: rig.motions.idle, contexts, rows, marks, cursor: moved, halfRate, truncated };
   };
 
   return {

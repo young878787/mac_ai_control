@@ -80,7 +80,7 @@ function simulate({ seed, hz, recordMs, events = [] }) {
   controller.handle({ type: 'session', remaining_s: 3600 }, clock);   // 讓角色出場，與 ui_motion.py 相同
   while (clock < WARMUP_MS) frame(false);
   while (clock < WARMUP_MS + recordMs) frame(true);
-  return { cols: COLS, motions: MOTIONS, contexts: [...CONTEXTS], rows, marks, cursor: { px: 0, moves: 0, at: [] }, halfRate: hz === 30, truncated: false };
+  return { cols: COLS, motions: MOTIONS, idle: 'Idle', contexts: [...CONTEXTS], rows, marks, cursor: { px: 0, moves: 0, at: [] }, halfRate: hz === 30, truncated: false };
 }
 
 /** T3 的事件：每輪 8 s 內每秒一則 partial，輪末一則 heard（ignored），輪間閒置 10 s */

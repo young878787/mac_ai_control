@@ -19,14 +19,14 @@ const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, v
 const seedFrom = (random) => Math.floor(random() * 4294967296) >>> 0;
 
 /**
- * 這個動作自己會不會眨眼：motion3.json 裡某條曲線（預設左眼開合）的端點最小值 < 0.5。
+ * 這個動作自己會不會眨眼：motion3.json 裡眼皮曲線（id＝rig.params.eyeOpen，左眼開合）的端點最小值 < 0.5。
  * 只看端點（起點與每段的終點）；貝茲的控制點只影響形狀，不算（控制點低於 0.5 但端點都不低於就是 false）。
  * Segments 格式：先是起點 (t, v)，之後每段 = 類型 ＋ 點：0 線性、2 stepped、3 inverse stepped 各 1 個點，1 貝茲 3 個點。
  * @param {{ Curves?: { Id: string, Segments?: number[] }[] }} json
- * @param {string} [id]
+ * @param {string} id 曲線的參數 ID（模型裡的名稱）
  * @returns {boolean}
  */
-export function motionBlinks(json, id = 'ParamEyeLOpen') {
+export function motionBlinks(json, id) {
   const segments = json?.Curves?.find(curve => curve.Id === id)?.Segments;
   if (!Array.isArray(segments) || segments.length < 2) return false;
   let minimum = segments[1];

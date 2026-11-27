@@ -296,40 +296,41 @@ test('debug：回傳上一次取樣', () => {
 });
 
 // ---------- motionBlinks ----------
-const curve = (segments, Id = 'ParamEyeLOpen') => ({ Curves: [{ Target: 'Parameter', Id, Segments: segments }] });
+const EYE = 'ParamEyeLOpen';
+const curve = (segments, Id = EYE) => ({ Curves: [{ Target: 'Parameter', Id, Segments: segments }] });
 
 test('motionBlinks：線性（類型 0）終點低於 0.5 → true，不低於 → false', () => {
-  assert.equal(motionBlinks(curve([0, 1, 0, 0.5, 0.2, 0, 1, 1])), true);
-  assert.equal(motionBlinks(curve([0, 1, 0, 0.5, 0.6, 0, 1, 1])), false);
+  assert.equal(motionBlinks(curve([0, 1, 0, 0.5, 0.2, 0, 1, 1]), EYE), true);
+  assert.equal(motionBlinks(curve([0, 1, 0, 0.5, 0.6, 0, 1, 1]), EYE), false);
 });
 
 test('motionBlinks：貝茲（類型 1）只看端點；控制點低於 0.5 但端點都不低於 → false', () => {
-  assert.equal(motionBlinks(curve([0, 1, 1, 0.3, 0.0, 0.6, 0.0, 1, 1])), false);
-  assert.equal(motionBlinks(curve([0, 1, 1, 0.3, 1, 0.6, 1, 1, 0.1])), true);
-  assert.equal(motionBlinks(curve([0, 1, 1, 0.3, 1, 0.6, 1, 1, 1, 0, 2, 0.2])), true);   // 貝茲後面接線性：確認 7 個數字對齊
+  assert.equal(motionBlinks(curve([0, 1, 1, 0.3, 0.0, 0.6, 0.0, 1, 1]), EYE), false);
+  assert.equal(motionBlinks(curve([0, 1, 1, 0.3, 1, 0.6, 1, 1, 0.1]), EYE), true);
+  assert.equal(motionBlinks(curve([0, 1, 1, 0.3, 1, 0.6, 1, 1, 1, 0, 2, 0.2]), EYE), true);   // 貝茲後面接線性：確認 7 個數字對齊
 });
 
 test('motionBlinks：stepped（類型 2）與 inverse stepped（類型 3）取的是值，不是時間', () => {
-  assert.equal(motionBlinks(curve([0, 1, 2, 1, 0.2])), true);
-  assert.equal(motionBlinks(curve([0, 1, 3, 1, 0.3])), true);
-  assert.equal(motionBlinks(curve([0, 1, 2, 0.1, 1])), false);   // 時間 0.1 很小，但值是 1
-  assert.equal(motionBlinks(curve([0, 1, 3, 0.1, 0.9, 2, 0.2, 1])), false);
+  assert.equal(motionBlinks(curve([0, 1, 2, 1, 0.2]), EYE), true);
+  assert.equal(motionBlinks(curve([0, 1, 3, 1, 0.3]), EYE), true);
+  assert.equal(motionBlinks(curve([0, 1, 2, 0.1, 1]), EYE), false);   // 時間 0.1 很小，但值是 1
+  assert.equal(motionBlinks(curve([0, 1, 3, 0.1, 0.9, 2, 0.2, 1]), EYE), false);
 });
 
 test('motionBlinks：起點低於 0.5 也算；剛好 0.5 不算；混合四種類型', () => {
-  assert.equal(motionBlinks(curve([0, 0.2, 0, 1, 1])), true);
-  assert.equal(motionBlinks(curve([0, 0.5, 0, 1, 0.5])), false);
-  assert.equal(motionBlinks(curve([0, 1, 0, 0.2, 1, 1, 0.4, 1, 0.6, 1, 0.8, 1, 2, 1, 1, 3, 1.2, 0.0])), true);
-  assert.equal(motionBlinks(curve([0, 1, 0, 0.2, 1, 1, 0.4, 0, 0.6, 0, 0.8, 1, 2, 1, 1, 3, 1.2, 1])), false);
+  assert.equal(motionBlinks(curve([0, 0.2, 0, 1, 1]), EYE), true);
+  assert.equal(motionBlinks(curve([0, 0.5, 0, 1, 0.5]), EYE), false);
+  assert.equal(motionBlinks(curve([0, 1, 0, 0.2, 1, 1, 0.4, 1, 0.6, 1, 0.8, 1, 2, 1, 1, 3, 1.2, 0.0]), EYE), true);
+  assert.equal(motionBlinks(curve([0, 1, 0, 0.2, 1, 1, 0.4, 0, 0.6, 0, 0.8, 1, 2, 1, 1, 3, 1.2, 1]), EYE), false);
 });
 
-test('motionBlinks：指定曲線 ID、沒有這條曲線或資料殘缺都回 false，不拋錯', () => {
+test('motionBlinks：看指定的曲線 ID、沒有這條曲線或資料殘缺都回 false，不拋錯', () => {
   const json = curve([0, 1, 0, 1, 0.1], 'ParamEyeROpen');
-  assert.equal(motionBlinks(json), false);                      // 預設看左眼，這份只有右眼
+  assert.equal(motionBlinks(json, EYE), false);                 // 看左眼，這份只有右眼
   assert.equal(motionBlinks(json, 'ParamEyeROpen'), true);
-  assert.equal(motionBlinks({ Curves: [] }), false);
-  assert.equal(motionBlinks({}), false);
-  assert.equal(motionBlinks(null), false);
-  assert.equal(motionBlinks(curve([])), false);
-  assert.equal(motionBlinks(curve([0, 1, 9, 1, 0.1])), false);   // 不認得的類型：停止解析
+  assert.equal(motionBlinks({ Curves: [] }, EYE), false);
+  assert.equal(motionBlinks({}, EYE), false);
+  assert.equal(motionBlinks(null, EYE), false);
+  assert.equal(motionBlinks(curve([]), EYE), false);
+  assert.equal(motionBlinks(curve([0, 1, 9, 1, 0.1]), EYE), false);   // 不認得的類型：停止解析
 });

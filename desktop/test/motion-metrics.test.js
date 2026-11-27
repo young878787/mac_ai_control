@@ -21,7 +21,7 @@ function make(seconds, fn, { hz = 60, marks = [], skip = () => false } = {}) {
     const v = fn(sec);
     rows.push([+(sec * 1000).toFixed(3), v.x ?? 0, v.y ?? 0, v.z ?? 0, v.ex ?? 0.3, v.ey ?? 0.2, v.eo ?? 1, v.m ?? 0]);
   }
-  return { cols: COLS, motions: ['Idle', 'Nod'], rows, marks, cursor: { px: 0, moves: 0 }, halfRate: false, truncated: false };
+  return { cols: COLS, motions: ['Idle', 'Nod'], idle: 'Idle', rows, marks, cursor: { px: 0, moves: 0 }, halfRate: false, truncated: false };
 }
 
 test('頭部完全不動 → 全程靜止、最長靜止＝整段', () => {
