@@ -24,6 +24,8 @@ export default [
   // 主程序、開發工具、測試、lint 設定：Node
   { files: ['main/**', 'dev/**', 'test/**', 'eslint-rules/**', 'eslint.config.js'], languageOptions: { globals: globals.node } },
   { files: ['main/**'], rules: { 'local/no-window-show': 'error' } },
+  // 前端不寫死模型：模型裡的名稱只在 rig/ 寫（ADR 0034）
+  { files: ['renderer/**', 'domain/**', 'dev/**'], rules: { 'local/model-agnostic': 'error' } },
   // 預載腳本：CommonJS（sandbox 下的 require）
   { files: ['preload/**/*.cjs'], languageOptions: { sourceType: 'commonjs', globals: globals.node } },
   // 畫面程序：瀏覽器＋全域載入的套件

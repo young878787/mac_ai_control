@@ -89,6 +89,30 @@ tester.run('bus-loopback-only', rule('bus-loopback-only'), {
   ],
 });
 
+tester.run('model-agnostic', rule('model-agnostic'), {
+  valid: [
+    'const i = P.angleX; const id = rig.params.eyeOpen;',
+    'animator.startMotion(MOTIONS.idle); const name = rig.motions[semantic];',
+    "startExpression('happy'); startExpression('neutral'); const s = 'surprised';",   // 和語意名稱相同的約定名稱不算
+    "const blink = settings.Groups.find(g => g.Name === 'EyeBlink'); const lip = 'LipSync';",   // Live2D 標準群組名稱
+    "import { rigFor } from '../../rig/index.js'; import { checkRig } from '../../rig/check.js'; import { CONTRACT } from '../rig/contract.js';",
+    "const msg = 'Parameter'; const p = 'Param';",                                    // 不是 Param／Part＋大寫開頭的 ID
+    '// RushiaHD 的 Idle 會把 ParamAngleX 拉到 14 度（註解不擋）\nconst x = 1;',
+  ],
+  invalid: [
+    { code: "const i = ids.indexOf('ParamAngleX');", errors: [{ messageId: 'param' }] },
+    { code: "const id = 'PartArmA';", errors: [{ messageId: 'param' }] },
+    { code: 'const id = `ParamEye${side}Open`;', errors: [{ messageId: 'param' }] },
+    { code: "if (activeMotion === 'Idle') stop();", errors: [{ messageId: 'convention' }] },
+    { code: "play('Nod'); show('star_eyes'); raise('arm_l_up');", errors: 3 },
+    { code: "import fullrig03 from '../../rig/fullrig03.js';", errors: [{ messageId: 'character' }, { messageId: 'profile' }] },   // 依位置：先識別字、後路徑
+    { code: "const p = await import('../rig/hiyori.js');", errors: [{ messageId: 'profile' }] },
+    { code: "export { default } from '../rig/other.js';", errors: [{ messageId: 'profile' }] },
+    { code: "const isRushia = model === 'RushiaHD.model3.json';", errors: [{ messageId: 'character' }, { messageId: 'character' }] },
+    { code: 'const HIYORI_HEAD = 0.1;', errors: [{ messageId: 'character' }] },
+  ],
+});
+
 test('eslint.config.js 有套用自訂規則：main/ 擋 .show()，其他目錄不擋；各目錄都擋非本機網址', async () => {
   const eslint = new ESLint({ cwd: ROOT });
   const ids = async (code, file) => (await eslint.lintText(code, { filePath: path.join(ROOT, file) }))[0].messages.map(m => m.ruleId);
@@ -100,4 +124,10 @@ test('eslint.config.js 有套用自訂規則：main/ 擋 .show()，其他目錄�
   assert.deepEqual(await ids("const { ipcRenderer } = require('electron');\nipcRenderer.send(\"ready\");\n", 'preload/x.cjs'), ['local/ipc-channel-literal']);
   // 純邏輯層沒有環境全域變數
   assert.deepEqual(await ids('export const w = window.innerWidth;\n', 'domain/x.js'), ['no-undef']);
+  // 前端不寫死模型：renderer／domain／dev 擋，rig／test 不擋（模型裡的名稱本來就寫在那裡）
+  const literal = "export const id = 'ParamAngleX';\n";
+  for (const file of ['renderer/animation/x.js', 'renderer/role/x.js', 'renderer/engine/x.js', 'domain/x.js', 'dev/x.js']) {
+    assert.deepEqual(await ids(literal, file), ['local/model-agnostic'], file);
+  }
+  for (const file of ['rig/x.js', 'test/x.js']) assert.deepEqual(await ids(literal, file), [], file);
 });
